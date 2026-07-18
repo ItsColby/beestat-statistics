@@ -1,0 +1,64 @@
+import_statistics:
+  name: Import Beestat statistics
+  description: Sync Beestat runtime data, refresh native Beestat sensors, and import derived daily external statistics into Home Assistant Recorder.
+  fields:
+    point_lookback_days:
+      name: Point lookback days
+      description: Number of recent local days of 5-minute sensor history to aggregate into daily room and air-quality statistics.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 366
+          step: 1
+          mode: box
+    skip_sync:
+      name: Skip Beestat sync
+      description: Skip Beestat runtime, thermostat, and sensor sync calls before importing.
+      required: false
+      default: false
+      selector:
+        boolean: {}
+get_configuration:
+  name: Get Beestat configuration
+  description: Return the complete non-secret saved overrides and effective local Beestat mapping without changing integration state or contacting Beestat.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Beestat Statistics configuration entry to inspect.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+rebuild_statistics:
+  name: Rebuild Beestat statistics
+  description: Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally limited to one thermostat and local date range.
+  fields:
+    thermostat_id:
+      name: Thermostat ID
+      description: Optional configured Beestat thermostat ID to rebuild. Omit to rebuild all configured thermostats and sensors.
+      required: false
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    start_date:
+      name: Start date
+      description: Optional first local date to write back to Recorder after rebuilding cumulative values from the full baseline.
+      required: false
+      selector:
+        date: {}
+    end_date:
+      name: End date
+      description: Optional last local date to write back to Recorder after rebuilding cumulative values from the full baseline.
+      required: false
+      selector:
+        date: {}
+    skip_sync:
+      name: Skip Beestat sync
+      description: Skip Beestat runtime, thermostat, and sensor sync calls before rebuilding.
+      required: false
+      default: false
+      selector:
+        boolean: {}

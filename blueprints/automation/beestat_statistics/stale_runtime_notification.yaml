@@ -1,0 +1,49 @@
+blueprint:
+  name: Beestat runtime data stale notification
+  description: Notify when a Beestat runtime summary lag sensor stays above the selected threshold.
+  domain: automation
+  author: ItsColby
+  homeassistant:
+    min_version: 2026.7.1
+  input:
+    lag_sensor:
+      name: Runtime summary lag sensor
+      description: Beestat runtime summary lag-days sensor to monitor.
+      selector:
+        entity:
+          filter:
+            domain: sensor
+            device_class: duration
+    threshold_days:
+      name: Stale threshold
+      description: Trigger when the lag is greater than this many days.
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 14
+          step: 1
+          unit_of_measurement: days
+          mode: box
+    stale_for:
+      name: Stale duration
+      description: How long the lag must remain above the threshold before notifying.
+      default:
+        hours: 1
+      selector:
+        duration: {}
+    notify_action:
+      name: Notification action
+      description: Action sequence to run when the selected Beestat data is stale.
+      selector:
+        action: {}
+
+mode: single
+
+triggers:
+  - trigger: numeric_state
+    entity_id: !input lag_sensor
+    above: !input threshold_days
+    for: !input stale_for
+
+actions: !input notify_action

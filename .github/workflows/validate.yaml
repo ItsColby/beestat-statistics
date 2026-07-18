@@ -1,0 +1,81 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python -m unittest discover -s tests
+      - run: python -m compileall -q custom_components/beestat_statistics tests scripts
+      - run: python scripts/check_public_safety.py
+      - name: Validate JSON metadata
+        run: >-
+          python -c "import json, pathlib;
+          [json.loads(pathlib.Path(path).read_text(encoding='utf-8'))
+          for path in
+          ['custom_components/beestat_statistics/manifest.json',
+          'custom_components/beestat_statistics/translations/en.json',
+          'custom_components/beestat_statistics/icons.json',
+          'hacs.json',
+          'docs/beestat-api-surface.json']]"
+      - name: Check trailing whitespace
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          paths = [
+              path
+              for root in ("custom_components", "tests", "blueprints", ".github", "scripts", "docs")
+              for path in Path(root).rglob("*")
+              if path.is_file()
+              and "__pycache__" not in path.parts
+              and path.suffix in {".json", ".md", ".py", ".yaml", ".yml"}
+          ]
+          paths.extend(Path(path) for path in ("README.md", "hacs.json"))
+          failures = []
+          for path in paths:
+              for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  if line.endswith((" ", "\t")):
+                      failures.append(f"{path}:{lineno}")
+          if failures:
+              raise SystemExit("Trailing whitespace:\n" + "\n".join(failures))
+          PY
+
+  home-assistant:
+    name: Home Assistant integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python -m pip install -r requirements-ha-test.txt
+      - run: pytest tests/test_config_flow_ha.py -q
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hacs/action@main
+        with:
+          category: integration

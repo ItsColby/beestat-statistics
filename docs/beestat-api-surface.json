@@ -1,0 +1,165 @@
+{
+  "integration_decisions": [
+    {
+      "decision": "used",
+      "reason": "The integration needs Beestat cloud/history data refreshed before reading native entities or importing Recorder statistics.",
+      "surface": "runtime.sync, thermostat.sync, sensor.sync"
+    },
+    {
+      "decision": "used",
+      "reason": "These are the narrow metadata reads that support Home Assistant device matching, status sensors, and options-flow discovery.",
+      "surface": "thermostat.read_id, sensor.read_id"
+    },
+    {
+      "decision": "used",
+      "reason": "Point-history reads are windowed and feed daily Home Assistant external statistics.",
+      "surface": "runtime_thermostat.read, runtime_sensor.read"
+    },
+    {
+      "decision": "used",
+      "reason": "Summary rows are windowed for normal imports once Home Assistant Recorder has a prior cumulative seed; the importer keeps a full-baseline fallback for new installs, missing seeds, and rebuilds.",
+      "surface": "runtime_thermostat_summary.read_id with date attributes"
+    },
+    {
+      "decision": "not_used",
+      "reason": "These Beestat comparison/profile features are not local HA state, are cached app analysis paths, and would broaden the integration beyond history import/status enrichment.",
+      "surface": "thermostat.get_metrics, thermostat.generate_profile"
+    },
+    {
+      "decision": "used",
+      "reason": "When Home Assistant records a filter change, the integration can dismiss matching active Beestat filter alerts so Beestat's alert state follows the local acknowledgement.",
+      "surface": "thermostat.dismiss_alert"
+    },
+    {
+      "decision": "not_used",
+      "reason": "Restoring alerts and broad thermostat updates would make this statistics integration a general Beestat control surface. Direct filter metadata updates are also avoided because Beestat sync owns that field and can overwrite local writes.",
+      "surface": "thermostat.restore_alert, thermostat.update"
+    }
+  ],
+  "schema_version": 1,
+  "snapshot": {
+    "captured_at": "2026-07-05T17:54:59.399176+00:00",
+    "commit_date": "2026-05-25T12:13:42Z",
+    "commit_message": "Fixed runtime_thermostat_summary->read not supporting date ranges",
+    "commit_sha": "9000337eba6d98fdfdf462abf1b488779d19a3a5"
+  },
+  "source": {
+    "api_docs_url": "https://api.beestat.io/doc",
+    "app_repo_url": "https://github.com/beestat/app",
+    "branch": "master",
+    "repo": "beestat/app"
+  },
+  "watch_paths": [
+    "api/cora/api.php",
+    "api/cora/crud.php",
+    "api/index.php",
+    "api/runtime.php",
+    "api/runtime_sensor.php",
+    "api/runtime_thermostat.php",
+    "api/runtime_thermostat_summary.php",
+    "api/sensor.php",
+    "api/thermostat.php"
+  ],
+  "watched_files": {
+    "api/cora/api.php": {
+      "blob_sha": "cf3ec545cde707031bd356a4746dd48c673a1d03",
+      "checks": {},
+      "exposed": null
+    },
+    "api/cora/crud.php": {
+      "blob_sha": "7e3c4cbd0c561dc972a09c64cc9e6899c1778ea8",
+      "checks": {
+        "read_id_forwards_attributes": true
+      },
+      "exposed": null
+    },
+    "api/index.php": {
+      "blob_sha": "c6ae4a735042e1e4a43ad5c34977138fdffa6960",
+      "checks": {},
+      "exposed": null
+    },
+    "api/runtime.php": {
+      "blob_sha": "b3fc9f61491db9c1d84d1b1070df9b7a17ba3353",
+      "checks": {},
+      "exposed": {
+        "private": [
+          "sync",
+          "download",
+          "download_glenwood_report"
+        ],
+        "public": []
+      }
+    },
+    "api/runtime_sensor.php": {
+      "blob_sha": "19f3334cf5f5fe538109e72ada7ef0d546628f40",
+      "checks": {
+        "sensor_divides_temperature_tenths": true,
+        "sensor_normalizes_air_quality": true,
+        "sensor_window_rejects_over_31_days": true
+      },
+      "exposed": {
+        "private": [
+          "read"
+        ],
+        "public": []
+      }
+    },
+    "api/runtime_thermostat.php": {
+      "blob_sha": "7630f2828026d7828e8d1a7240b128b2658c7e83",
+      "checks": {
+        "runtime_divides_temperature_tenths": true,
+        "runtime_window_rejects_over_31_days": true
+      },
+      "exposed": {
+        "private": [
+          "read"
+        ],
+        "public": []
+      }
+    },
+    "api/runtime_thermostat_summary.php": {
+      "blob_sha": "1e148ffdb30d6da2cf86ded59c336e4b8059d84f",
+      "checks": {
+        "date_range_adjusts_lower_bound": true,
+        "date_range_adjusts_upper_bound": true,
+        "summary_divides_temperature_tenths": true
+      },
+      "exposed": {
+        "private": [
+          "read_id",
+          "sync"
+        ],
+        "public": []
+      }
+    },
+    "api/sensor.php": {
+      "blob_sha": "989cf4f9b1fd64d1639e83af7bfb00eb8df07ed9",
+      "checks": {},
+      "exposed": {
+        "private": [
+          "read_id",
+          "sync"
+        ],
+        "public": []
+      }
+    },
+    "api/thermostat.php": {
+      "blob_sha": "a8d0faab312dbe6a3bdcff89f2c7c039b0ad9002",
+      "checks": {},
+      "exposed": {
+        "private": [
+          "read_id",
+          "sync",
+          "dismiss_alert",
+          "restore_alert",
+          "set_reported_system_types",
+          "generate_profile",
+          "generate_profiles",
+          "get_metrics",
+          "update"
+        ],
+        "public": []
+      }
+    }
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "services": {
+    "get_configuration": "mdi:code-json"
+  },
+  "entity": {
+    "binary_sensor": {
+      "active_alert": {
+        "default": "mdi:alert-circle-outline",
+        "state": {
+          "off": "mdi:check-circle-outline",
+          "on": "mdi:alert-circle"
+        }
+      },
+      "equipment_alert": {
+        "default": "mdi:alert-circle-outline",
+        "state": {
+          "off": "mdi:check-circle-outline",
+          "on": "mdi:alert-circle"
+        }
+      },
+      "filter_due": {
+        "default": "mdi:air-filter",
+        "state": {
+          "off": "mdi:air-filter",
+          "on": "mdi:air-filter-alert"
+        }
+      },
+      "filter_due_soon": {
+        "default": "mdi:air-filter",
+        "state": {
+          "off": "mdi:air-filter",
+          "on": "mdi:air-filter-alert"
+        }
+      },
+      "cloud_data_stale": {
+        "default": "mdi:cloud-clock",
+        "state": {
+          "off": "mdi:cloud-check",
+          "on": "mdi:cloud-alert"
+        }
+      },
+      "homekit_mapping_incomplete": {
+        "default": "mdi:home-search",
+        "state": {
+          "off": "mdi:home-check",
+          "on": "mdi:home-alert"
+        }
+      },
+      "statistics_import_partial": {
+        "default": "mdi:database-alert",
+        "state": {
+          "off": "mdi:database-check",
+          "on": "mdi:database-alert"
+        }
+      },
+      "runtime_summary_stale": {
+        "default": "mdi:calendar-clock",
+        "state": {
+          "off": "mdi:calendar-check",
+          "on": "mdi:calendar-alert"
+        }
+      },
+      "sensor_in_use": {
+        "default": "mdi:account-outline",
+        "state": {
+          "off": "mdi:account-outline",
+          "on": "mdi:account-check"
+        }
+      }
+    },
+    "button": {
+      "import_statistics": {
+        "default": "mdi:database-import"
+      },
+      "mark_filter_changed": {
+        "default": "mdi:air-filter"
+      },
+      "refresh_runtime": {
+        "default": "mdi:sync"
+      }
+    },
+    "date": {
+      "filter_changed_date": {
+        "default": "mdi:air-filter"
+      }
+    },
+    "sensor": {
+      "active_alert_count": {
+        "default": "mdi:alert-circle-outline",
+        "range": {
+          "0": "mdi:check-circle-outline",
+          "1": "mdi:alert-circle"
+        }
+      },
+      "active_alert_category": {
+        "default": "mdi:alert-decagram-outline",
+        "state": {
+          "equipment": "mdi:alert-circle",
+          "maintenance": "mdi:wrench-clock",
+          "none": "mdi:check-circle-outline",
+          "unknown": "mdi:alert-decagram-outline"
+        }
+      },
+      "active_sensor_count": {
+        "default": "mdi:account-off-outline",
+        "range": {
+          "0": "mdi:account-off-outline",
+          "1": "mdi:account-check"
+        }
+      },
+      "cloud_data_end": {
+        "default": "mdi:cloud-clock"
+      },
+      "cloud_data_lag_minutes": {
+        "default": "mdi:cloud-alert",
+        "range": {
+          "0": "mdi:cloud-check",
+          "30": "mdi:cloud-clock",
+          "120": "mdi:cloud-alert"
+        }
+      },
+      "current_comfort_profile": {
+        "default": "mdi:home-thermometer"
+      },
+      "filter_recent_runtime_hours_per_day": {
+        "default": "mdi:clock-outline"
+      },
+      "filter_remaining_runtime_hours": {
+        "default": "mdi:timer-sand"
+      },
+      "filter_runtime_due_date": {
+        "default": "mdi:calendar-clock"
+      },
+      "filter_max_age_due_date": {
+        "default": "mdi:calendar-alert"
+      },
+      "filter_due_date": {
+        "default": "mdi:calendar-check"
+      },
+      "filter_days_remaining": {
+        "default": "mdi:calendar-clock"
+      },
+      "filter_runtime_hours": {
+        "default": "mdi:air-filter"
+      },
+      "metadata_sync_last_success": {
+        "default": "mdi:cloud-sync"
+      },
+      "next_scheduled_comfort_profile_time": {
+        "default": "mdi:calendar-arrow-right"
+      },
+      "runtime_summary_lag_days": {
+        "default": "mdi:calendar-remove",
+        "range": {
+          "0": "mdi:calendar-check",
+          "2": "mdi:calendar-clock",
+          "4": "mdi:calendar-alert"
+        }
+      },
+      "runtime_summary_latest_date": {
+        "default": "mdi:calendar-check"
+      },
+      "runtime_summary_row_count": {
+        "default": "mdi:table"
+      },
+      "runtime_sync_last_success": {
+        "default": "mdi:sync"
+      },
+      "scheduled_comfort_profile": {
+        "default": "mdi:calendar-clock"
+      },
+      "statistics_imported_rows": {
+        "default": "mdi:database-import"
+      },
+      "statistics_imported_series": {
+        "default": "mdi:chart-multiple"
+      },
+      "statistics_last_import_success": {
+        "default": "mdi:database-check"
+      },
+      "statistics_source_rows": {
+        "default": "mdi:database-search"
+      },
+      "statistics_skipped_windows": {
+        "default": "mdi:database-alert"
+      },
+      "status": {
+        "default": "mdi:cloud-question",
+        "state": {
+          "error": "mdi:cloud-alert",
+          "ok": "mdi:cloud-check",
+          "unknown": "mdi:cloud-question"
+        }
+      }
+    }
+  }
+}

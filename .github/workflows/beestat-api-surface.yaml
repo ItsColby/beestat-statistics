@@ -1,0 +1,20 @@
+name: Beestat API Surface
+
+on:
+  schedule:
+    - cron: "17 10 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check upstream Beestat API surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: python scripts/check_beestat_api_surface.py

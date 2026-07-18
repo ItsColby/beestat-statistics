@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a Beestat Statistics problem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not paste API keys, raw unredacted diagnostics, or screenshots that expose
+        private Home Assistant entity names.
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: The Beestat Statistics version shown by HACS or manifest.json.
+      placeholder: v2026.7.15
+    validations:
+      required: true
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: 2026.7.1
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install method
+      options:
+        - HACS
+        - Manual custom_components copy
+        - Development checkout
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the visible problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the smallest steps that reproduce the issue.
+      placeholder: |
+        1. Open ...
+        2. Press ...
+        3. See ...
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics and logs
+      description: >-
+        Attach Home Assistant diagnostics from the integration page and relevant
+        Home Assistant log lines. Confirm they are redacted before posting.
+      render: text
