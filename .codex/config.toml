@@ -1,0 +1,5 @@
+# Project-local activation only. Complete MCP definitions remain in the
+# maintainer's private Codex setup.
+
+[mcp_servers.home-assistant]
+enabled = true
