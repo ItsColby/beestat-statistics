@@ -134,15 +134,11 @@
         "description": "Use Beestat as a secondary cloud/history surface. Existing Ecobee HomeKit entities remain the primary live/control source and are enriched automatically when they match Beestat thermostats and room sensors.",
         "data": {
           "api_key": "Beestat API key",
-          "api_base": "Beestat API URL",
-          "point_lookback_days": "Point-history lookback days",
-          "scan_interval_seconds": "Import interval seconds"
+          "api_base": "Beestat API URL"
         },
         "data_description": {
           "api_key": "API key from Beestat. It is stored in the Home Assistant config entry and used only for Beestat API calls.",
-          "api_base": "Optional Beestat API base URL. Keep the default unless Beestat changes its API host or you are testing a compatible endpoint.",
-          "point_lookback_days": "Number of recent local days of point-history data to aggregate into Recorder statistics. Larger values import more history and take longer.",
-          "scan_interval_seconds": "How often Home Assistant syncs Beestat and imports Recorder statistics. The minimum is 300 seconds."
+          "api_base": "Optional Beestat API base URL. Keep the default unless Beestat changes its API host or you are testing a compatible endpoint."
         }
       },
       "reconfigure": {
@@ -168,13 +164,16 @@
           "api_key": "Enter a current Beestat API key. Reauthentication requires a non-empty key.",
           "api_base": "Beestat API base URL to validate the new key against."
         }
+      },
+      "account_change_confirm": {
+        "title": "Confirm Beestat account change",
+        "description": "The validated API key belongs to a different Beestat account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this account change and history boundary are intentional."
       }
     },
     "error": {
       "api_key_required": "Enter a Beestat API key.",
       "invalid_auth": "Beestat rejected this API key.",
       "cannot_connect": "Unable to connect to Beestat with this API key.",
-      "wrong_account": "This Beestat key appears to belong to a different account.",
       "unknown": "Unexpected error while validating the Beestat connection."
     },
     "abort": {
@@ -265,9 +264,10 @@
     "step": {
       "init": {
         "title": "Beestat Statistics options",
-        "description": "Choose what to configure. Timing controls import cadence and mapping pins Beestat rows to existing HomeKit/Ecobee entities.",
+        "description": "Choose which Beestat sources are exposed, tune import timing, or pin Beestat rows to existing HomeKit/Ecobee entities.",
         "menu_options": {
           "timing": "Import timing",
+          "source_scope": "Choose Beestat sources",
           "thermostat_mapping": "Map a thermostat",
           "sensor_mapping": "Map a room sensor"
         }
@@ -283,6 +283,22 @@
           "point_lookback_days": "Number of recent local days of point-history data to aggregate into Recorder statistics. Larger values import more history and take longer.",
           "scan_interval_seconds": "How often Home Assistant syncs Beestat and imports Recorder statistics. The minimum is 300 seconds."
         }
+      },
+      "source_scope": {
+        "title": "Choose Beestat sources",
+        "description": "Select the Beestat thermostats and room sensors this entry exposes and imports. Newly discovered active sources are included automatically unless you explicitly exclude them. Existing Recorder statistics are not deleted when a source is excluded.",
+        "data": {
+          "included_thermostat_ids": "Included thermostats",
+          "included_sensor_ids": "Included room sensors"
+        },
+        "data_description": {
+          "included_thermostat_ids": "Thermostats to expose as entities and include in future statistics imports.",
+          "included_sensor_ids": "Room sensors to expose as entities and include in future statistics imports."
+        }
+      },
+      "source_scope_confirm": {
+        "title": "Confirm source exclusions",
+        "description": "This excludes {thermostat_count} currently included thermostat(s) and {sensor_count} currently included room sensor(s). Their native entities stop updating after reload and future statistics imports omit them. Recorder statistics already imported remain available."
       },
       "thermostat_mapping": {
         "title": "Map a Beestat thermostat",

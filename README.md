@@ -36,12 +36,13 @@ Use this Beestat integration as the secondary cloud/history surface for data Hom
 
 The preferred configuration path is the Home Assistant UI. The options flow exposes:
 
+- included Beestat thermostats and room sensors
 - point-history lookback days
 - import interval seconds
 - thermostat mapping overrides
 - room-sensor mapping overrides
 
-The integration is intentionally single-entry. One Beestat Statistics config entry covers all discovered Beestat thermostats and room sensors for the configured account, while YAML imports can still update that existing entry for backward compatibility.
+Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
 
 YAML remains supported as an import/backward-compatibility route:
 
@@ -64,7 +65,7 @@ Configuration fields:
 - `point_lookback_days`: number of recent local days to import from Beestat point-history resources. Defaults to 45 and is capped at 366.
 - `scan_interval`: YAML import interval. Defaults to 6 hours. UI options expose this as `scan_interval_seconds` with a 300-second minimum.
 
-By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched.
+By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched. Open the integration options and choose **Choose Beestat sources** to include only a subset. Newly discovered active sources remain included by default; explicit exclusions are preserved across discovery refreshes. Excluding a source stops its native entities from updating and omits it from future statistics imports, but does not delete external Recorder statistics already imported for it.
 
 Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Ambiguous duplicate name matches are left as Beestat-only fallback devices; use advanced overrides to pin those.
 
@@ -86,7 +87,7 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. YAML remains available for recovery, import, and bulk setups.
+For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
 
 Advanced thermostat override fields:
 
@@ -115,7 +116,7 @@ Advanced room-sensor override fields:
 - `include_temperature`, `include_air_quality`, `include_co2`, `include_voc`: override which Beestat point-history fields are imported as Recorder statistics.
 - `enabled`: set to `false` to ignore a Beestat room sensor.
 
-To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats so reconfigure and reauthentication can warn before switching the integration to a different Beestat account.
+To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation before replacing the connection with a key from a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
 
 ## Entities
 
@@ -169,7 +170,7 @@ Per-thermostat alert binary sensors expose whether Beestat/Ecobee reports any ac
 
 The integration creates a Home Assistant service device for Beestat. Thermostat and room-sensor enrichment entities attach to existing HomeKit/Ecobee devices when possible without rewriting the HomeKit device name, manufacturer, model, or configuration link; otherwise, Beestat fallback devices are created. Keep local Ecobee/HomeKit devices and entities as the primary source for current state and control.
 
-New Beestat thermostats or sensors discovered after setup are added on the next successful runtime refresh or statistics import.
+New active Beestat thermostats or sensors discovered after setup are added on the next successful runtime refresh or statistics import unless they were explicitly excluded. Sources reported inactive by Beestat can be deliberately selected in **Choose Beestat sources**; that selection is stored explicitly so it survives refreshes.
 
 Diagnostic, profile, mapping, and alert-detail state attributes are available in current Home Assistant state but are excluded from Recorder history to avoid retaining noisy metadata on every state write.
 
@@ -177,7 +178,7 @@ The Status sensor attributes include HomeKit mapping counts for thermostats and 
 
 If a Beestat-only fallback device disappears from current Beestat metadata, Home Assistant can remove that stale Beestat device manually from the device page. Shared HomeKit/Ecobee devices are not removed by this integration.
 
-If an advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. Update or remove the override and reload the integration.
+If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override and reload the integration.
 
 When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list.
 
@@ -266,7 +267,8 @@ Removing the integration stops future imports and removes the integration's nati
 - Check the Beestat Statistics **Status** sensor first. Its attributes include the latest error, runtime fetch time, summary row count, import mode/window/fallback details, automatic filter-alert dismissal results, and latest import row count.
 - If summary dates lag, press **Refresh Runtime** or call `beestat_statistics.import_statistics` without `skip_sync`.
 - If Home Assistant asks for reauthentication, enter a current Beestat API key in the reauth flow.
-- If automatic HomeKit mapping misses a thermostat or room sensor, add an advanced YAML override with the Beestat ID and the corresponding HomeKit entity ID.
+- If a thermostat or room sensor is absent, check **Choose Beestat sources** in the integration options.
+- If automatic HomeKit mapping misses an included thermostat or room sensor, use **Map a thermostat** or **Map a room sensor** in the integration options. Use advanced YAML only for recovery or bulk configuration.
 - If a filter forecast is unavailable, check the thermostat **Filter changed date**, **Filter runtime hours**, and **Filter recent runtime hours per day** entities first.
 - If an existing install is upgraded from a release where runtime/cloud stale problem sensors were disabled by default, the integration enables only those integration-disabled stale diagnostic entities during setup. User-disabled entities remain disabled.
 

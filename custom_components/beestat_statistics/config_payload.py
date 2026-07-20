@@ -8,18 +8,19 @@ from typing import Any
 
 from .const import (
     API_BASE,
-    CONF_FILTER_CHANGED_DATE,
-    CONF_CLIMATE_ENTITY_ID,
-    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_API_BASE,
+    CONF_CLIMATE_ENTITY_ID,
+    CONF_ENABLED,
+    CONF_FILTER_CHANGED_ENTITY_ID,
+    CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_LIFETIME_RUNTIME_HOURS,
+    CONF_FILTER_MAX_AGE_DAYS,
+    CONF_FILTER_NOTICE_DAYS,
     CONF_ID,
     CONF_INCLUDE_AIR_QUALITY,
     CONF_INCLUDE_CO2,
     CONF_INCLUDE_TEMPERATURE,
     CONF_INCLUDE_VOC,
-    CONF_FILTER_LIFETIME_RUNTIME_HOURS,
-    CONF_FILTER_MAX_AGE_DAYS,
-    CONF_FILTER_NOTICE_DAYS,
     CONF_MOTION_ENTITY_ID,
     CONF_OCCUPANCY_ENTITY_ID,
     CONF_POINT_LOOKBACK_DAYS,
@@ -220,6 +221,73 @@ def update_sensor_override_options(
             CONF_INCLUDE_VOC,
         ),
     )
+
+
+def update_source_scope_options(
+    data: Mapping[str, Any],
+    options: Mapping[str, Any],
+    *,
+    known_thermostat_ids: tuple[int, ...],
+    enabled_thermostat_ids: tuple[int, ...],
+    known_sensor_ids: tuple[int, ...],
+    enabled_sensor_ids: tuple[int, ...],
+    explicitly_enabled_thermostat_ids: tuple[int, ...] = (),
+    explicitly_enabled_sensor_ids: tuple[int, ...] = (),
+) -> dict[str, Any]:
+    """Return options with discovered Beestat source scope updated."""
+
+    new_options = dict(options)
+    _set_source_scope_options(
+        new_options,
+        data,
+        options,
+        CONF_THERMOSTATS,
+        known_thermostat_ids,
+        enabled_thermostat_ids,
+        explicitly_enabled_thermostat_ids,
+    )
+    _set_source_scope_options(
+        new_options,
+        data,
+        options,
+        CONF_SENSORS,
+        known_sensor_ids,
+        enabled_sensor_ids,
+        explicitly_enabled_sensor_ids,
+    )
+    return new_options
+
+
+def _set_source_scope_options(
+    new_options: dict[str, Any],
+    data: Mapping[str, Any],
+    options: Mapping[str, Any],
+    key: str,
+    known_ids: tuple[int, ...],
+    enabled_ids: tuple[int, ...],
+    explicitly_enabled_ids: tuple[int, ...],
+) -> None:
+    """Update enabled flags while preserving mapping fields and unknown rows."""
+
+    source = options.get(key) if key in options else data.get(key)
+    items = [dict(item) for item in _override_items(source)]
+    enabled = set(enabled_ids)
+    explicitly_enabled = set(explicitly_enabled_ids)
+    for item_id in sorted(set(known_ids)):
+        item = _find_override_item(items, item_id)
+        if item_id in enabled:
+            if item_id in explicitly_enabled:
+                item[CONF_ENABLED] = True
+            else:
+                item.pop(CONF_ENABLED, None)
+        else:
+            item[CONF_ENABLED] = False
+
+    items = [item for item in items if set(item) != {CONF_ID}]
+    if items or key in data:
+        new_options[key] = items
+    else:
+        new_options.pop(key, None)
 
 
 def _update_override_options(

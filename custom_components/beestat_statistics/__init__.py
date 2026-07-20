@@ -65,6 +65,7 @@ from .const import (
     ATTR_START_DATE,
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_ENABLED,
     CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -209,7 +210,7 @@ THERMOSTAT_SCHEMA = vol.Schema(
             CONF_FILTER_NOTICE_DAYS,
             default=DEFAULT_FILTER_NOTICE_DAYS,
         ): vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_FILTER_NOTICE_DAYS)),
-        vol.Optional("enabled", default=True): cv.boolean,
+        vol.Optional(CONF_ENABLED, default=True): cv.boolean,
     }
 )
 
@@ -226,7 +227,7 @@ SENSOR_SCHEMA = vol.Schema(
         vol.Optional(CONF_INCLUDE_AIR_QUALITY): cv.boolean,
         vol.Optional(CONF_INCLUDE_CO2): cv.boolean,
         vol.Optional(CONF_INCLUDE_VOC): cv.boolean,
-        vol.Optional("enabled", default=True): cv.boolean,
+        vol.Optional(CONF_ENABLED, default=True): cv.boolean,
     }
 )
 

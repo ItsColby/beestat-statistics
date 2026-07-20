@@ -104,6 +104,7 @@ class ConfigModelTest(unittest.TestCase):
                 "homeassistant.helpers.entity_registry",
             )
         }
+        self._install_fake_homeassistant_modules(devices={}, entries=[])
 
     def tearDown(self) -> None:
         for key, module in self._old_modules.items():
@@ -272,6 +273,39 @@ class ConfigModelTest(unittest.TestCase):
                 "binary_sensor.room_sensor_b_occupancy",
                 "binary_sensor.room_sensor_b_motion",
             ),
+        )
+
+    def test_disabled_resources_are_excluded_from_runtime_and_repairs(self) -> None:
+        config_data = {
+            "thermostats": [
+                {
+                    "id": 1001,
+                    "enabled": False,
+                    "climate_entity_id": "sensor.wrong_domain",
+                }
+            ],
+            "sensors": [
+                {
+                    "id": 2002,
+                    "enabled": False,
+                    "temperature_entity_id": "binary_sensor.wrong_domain",
+                }
+            ],
+        }
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=({"id": 2002, "name": "Room Sensor A"},),
+            config_data=config_data,
+        )
+
+        self.assertEqual(config.thermostats, ())
+        self.assertEqual(config.sensors, ())
+        self.assertEqual(config_model.configured_override_entity_ids(config_data), ())
+        self.assertEqual(
+            config_model.configured_override_entity_domain_errors(config_data),
+            (),
         )
 
     def test_thermostat_override_can_set_native_filter_changed_date(self) -> None:

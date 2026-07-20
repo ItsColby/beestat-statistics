@@ -36,6 +36,7 @@ from .config_payload import (
     merge_import_options,
     options_from_user_input,
     split_entry_payload,
+    update_source_scope_options,
     update_sensor_override_options,
     update_thermostat_override_options,
 )
@@ -57,8 +58,10 @@ from .const import (
     CONF_OCCUPANCY_ENTITY_ID,
     CONF_POINT_LOOKBACK_DAYS,
     CONF_SCAN_INTERVAL_SECONDS,
+    CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_THERMOSTAT_ID,
+    CONF_THERMOSTATS,
     CONFIG_ENTRY_MINOR_VERSION,
     CONFIG_ENTRY_UNIQUE_ID,
     CONFIG_ENTRY_VERSION,
@@ -145,14 +148,6 @@ DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
         vol.Optional(CONF_API_BASE, default=API_BASE): API_BASE_SELECTOR,
-        vol.Optional(
-            CONF_POINT_LOOKBACK_DAYS,
-            default=DEFAULT_POINT_LOOKBACK_DAYS,
-        ): POINT_LOOKBACK_SELECTOR,
-        vol.Optional(
-            CONF_SCAN_INTERVAL_SECONDS,
-            default=DEFAULT_SCAN_INTERVAL_SECONDS,
-        ): SCAN_INTERVAL_SELECTOR,
     }
 )
 
@@ -172,9 +167,13 @@ OPTIONS_SCHEMA = vol.Schema(
 
 OPTIONS_MENU = {
     "timing": "Import timing",
+    "source_scope": "Choose Beestat sources",
     "thermostat_mapping": "Map a thermostat",
     "sensor_mapping": "Map a room sensor",
 }
+
+_CONF_INCLUDED_THERMOSTAT_IDS = "included_thermostat_ids"
+_CONF_INCLUDED_SENSOR_IDS = "included_sensor_ids"
 
 
 class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -182,6 +181,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = CONFIG_ENTRY_VERSION
     MINOR_VERSION = CONFIG_ENTRY_MINOR_VERSION
+    _pending_entry: config_entries.ConfigEntry | None = None
+    _pending_data: dict[str, Any] | None = None
+    _pending_options: dict[str, Any] | None = None
 
     @staticmethod
     @callback
@@ -268,6 +270,38 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             require_api_key=True,
         )
 
+    async def async_step_account_change_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Confirm an intentional switch to a different Beestat account."""
+
+        if self._pending_entry is None or self._pending_data is None:
+            if self.source == config_entries.SOURCE_RECONFIGURE:
+                return await self.async_step_reconfigure()
+            return await self.async_step_reauth_confirm()
+
+        if user_input is not None:
+            entry = self._pending_entry
+            data = self._pending_data
+            options = self._pending_options or {}
+            self._pending_entry = None
+            self._pending_data = None
+            self._pending_options = None
+            await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
+            self._abort_if_unique_id_mismatch()
+            return self.async_update_reload_and_abort(
+                entry,
+                data=data,
+                options=options,
+                reload_even_if_entry_is_unchanged=False,
+            )
+
+        return self.async_show_form(
+            step_id="account_change_confirm",
+            data_schema=vol.Schema({}),
+        )
+
     async def async_step_import(
         self,
         import_config: dict[str, Any],
@@ -331,26 +365,29 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("Unexpected exception validating Beestat setup")
                     errors["base"] = "unknown"
                 else:
+                    if account_fingerprint is not None:
+                        data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+                    elif CONF_ACCOUNT_FINGERPRINT in entry.data:
+                        data_updates[CONF_ACCOUNT_FINGERPRINT] = entry.data[
+                            CONF_ACCOUNT_FINGERPRINT
+                        ]
                     if _wrong_account(entry.data, account_fingerprint):
-                        errors["base"] = "wrong_account"
-                    else:
-                        if account_fingerprint is not None:
-                            data_updates[CONF_ACCOUNT_FINGERPRINT] = (
-                                account_fingerprint
-                            )
-                        elif CONF_ACCOUNT_FINGERPRINT in entry.data:
-                            data_updates[CONF_ACCOUNT_FINGERPRINT] = entry.data[
-                                CONF_ACCOUNT_FINGERPRINT
-                            ]
-                    if errors:
-                        return self.async_show_form(
-                            step_id=step_id,
-                            data_schema=_connection_data_schema(
-                                entry.data,
-                                allow_blank_api_key=not require_api_key,
-                            ),
-                            errors=errors,
-                        )
+                        self._pending_entry = entry
+                        self._pending_data = {
+                            key: value
+                            for key, value in entry.data.items()
+                            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
+                        }
+                        self._pending_data.update(data_updates)
+                        self._pending_options = {
+                            key: value
+                            for key, value in entry.options.items()
+                            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
+                        }
+                        return await self.async_step_account_change_confirm()
+                    self._pending_entry = None
+                    self._pending_data = None
+                    self._pending_options = None
                     await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
                     self._abort_if_unique_id_mismatch()
                     return self.async_update_reload_and_abort(
@@ -374,6 +411,9 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
+    _pending_scope_options: dict[str, Any] | None = None
+    _pending_scope_removed_thermostats = 0
+    _pending_scope_removed_sensors = 0
 
     async def async_step_init(
         self,
@@ -406,6 +446,103 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 OPTIONS_SCHEMA,
                 self.config_entry.options,
             ),
+        )
+
+    async def async_step_source_scope(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Choose which discovered Beestat resources are exposed and imported."""
+
+        thermostat_options = _thermostat_options(self.config_entry)
+        sensor_options = _sensor_options(self.config_entry)
+        enabled_thermostats, enabled_sensors = _source_scope_defaults(
+            self.config_entry
+        )
+        if user_input is not None:
+            selected_thermostats = {
+                int(value)
+                for value in user_input.get(_CONF_INCLUDED_THERMOSTAT_IDS, ())
+            }
+            selected_sensors = {
+                int(value)
+                for value in user_input.get(_CONF_INCLUDED_SENSOR_IDS, ())
+            }
+            new_options = update_source_scope_options(
+                self.config_entry.data,
+                self.config_entry.options,
+                known_thermostat_ids=_option_ids(thermostat_options),
+                enabled_thermostat_ids=tuple(sorted(selected_thermostats)),
+                explicitly_enabled_thermostat_ids=tuple(
+                    sorted(
+                        selected_thermostats
+                        & _inactive_resource_ids(
+                            self.config_entry,
+                            rows_attribute="thermostat_rows",
+                        )
+                    )
+                ),
+                known_sensor_ids=_option_ids(sensor_options),
+                enabled_sensor_ids=tuple(sorted(selected_sensors)),
+                explicitly_enabled_sensor_ids=tuple(
+                    sorted(
+                        selected_sensors
+                        & _inactive_resource_ids(
+                            self.config_entry,
+                            rows_attribute="sensor_rows",
+                        )
+                    )
+                ),
+            )
+            removed_thermostats = len(enabled_thermostats - selected_thermostats)
+            removed_sensors = len(enabled_sensors - selected_sensors)
+            if removed_thermostats or removed_sensors:
+                self._pending_scope_options = new_options
+                self._pending_scope_removed_thermostats = removed_thermostats
+                self._pending_scope_removed_sensors = removed_sensors
+                return await self.async_step_source_scope_confirm()
+            return self.async_create_entry(data=new_options)
+
+        return self.async_show_form(
+            step_id="source_scope",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        _CONF_INCLUDED_THERMOSTAT_IDS,
+                        default=[str(item) for item in sorted(enabled_thermostats)],
+                    ): _select_selector(thermostat_options, multiple=True),
+                    vol.Required(
+                        _CONF_INCLUDED_SENSOR_IDS,
+                        default=[str(item) for item in sorted(enabled_sensors)],
+                    ): _select_selector(sensor_options, multiple=True),
+                }
+            ),
+            errors=(
+                {}
+                if thermostat_options or sensor_options
+                else {"base": "no_discovered_items"}
+            ),
+        )
+
+    async def async_step_source_scope_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Confirm removal of currently exposed Beestat resources."""
+
+        if self._pending_scope_options is None:
+            return await self.async_step_source_scope()
+        if user_input is not None:
+            options = self._pending_scope_options
+            self._pending_scope_options = None
+            return self.async_create_entry(data=options)
+        return self.async_show_form(
+            step_id="source_scope_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "thermostat_count": str(self._pending_scope_removed_thermostats),
+                "sensor_count": str(self._pending_scope_removed_sensors),
+            },
         )
 
     async def async_step_thermostat_mapping(
@@ -691,39 +828,152 @@ def _select_selector(
     options: list[SelectOptionDict],
     *,
     custom_value: bool = False,
+    multiple: bool = False,
 ) -> SelectSelector:
     return SelectSelector(
         SelectSelectorConfig(
-            options=options or [SelectOptionDict(value="", label="No discovered items")],
+            options=(
+                options
+                if options or multiple
+                else [SelectOptionDict(value="", label="No discovered items")]
+            ),
             custom_value=custom_value,
+            multiple=multiple,
         )
     )
 
 
 def _thermostat_options(entry: config_entries.ConfigEntry) -> list[SelectOptionDict]:
-    runtime = getattr(entry, "runtime_data", None)
-    data = runtime.coordinator.data if runtime is not None else None
-    thermostats = data.config.thermostats if data is not None else ()
-    return [
-        SelectOptionDict(
-            value=str(thermostat.thermostat_id),
-            label=f"{thermostat.name} ({thermostat.thermostat_id})",
-        )
-        for thermostat in thermostats
-    ]
+    return _resource_options(
+        entry,
+        rows_attribute="thermostat_rows",
+        config_attribute="thermostats",
+        config_id_attribute="thermostat_id",
+        override_key=CONF_THERMOSTATS,
+        fallback_label="Thermostat",
+    )
 
 
 def _sensor_options(entry: config_entries.ConfigEntry) -> list[SelectOptionDict]:
+    return _resource_options(
+        entry,
+        rows_attribute="sensor_rows",
+        config_attribute="sensors",
+        config_id_attribute="sensor_id",
+        override_key=CONF_SENSORS,
+        fallback_label="Sensor",
+    )
+
+
+def _resource_options(
+    entry: config_entries.ConfigEntry,
+    *,
+    rows_attribute: str,
+    config_attribute: str,
+    config_id_attribute: str,
+    override_key: str,
+    fallback_label: str,
+) -> list[SelectOptionDict]:
+    """Return discovered plus saved resource choices, including disabled rows."""
+
     runtime = getattr(entry, "runtime_data", None)
     data = runtime.coordinator.data if runtime is not None else None
-    sensors = data.config.sensors if data is not None else ()
-    return [
-        SelectOptionDict(
-            value=str(sensor.sensor_id),
-            label=f"{sensor.name} ({sensor.sensor_id})",
-        )
-        for sensor in sensors
-    ]
+    labels: dict[int, str] = {}
+    inactive: set[int] = set()
+    configured = getattr(data.config, config_attribute, ()) if data is not None else ()
+    for item in configured:
+        item_id = int(getattr(item, config_id_attribute))
+        labels[item_id] = str(item.name)
+    rows = getattr(data, rows_attribute, ()) if data is not None else ()
+    for row in rows:
+        item_id = _resource_row_id(row)
+        if item_id is None:
+            continue
+        label = row.get("name") or f"{fallback_label} {item_id}"
+        labels.setdefault(item_id, str(label))
+        if _source_flag_enabled(row.get("inactive")):
+            inactive.add(item_id)
+    config_data = entry_runtime_config_data(entry)
+    for item in config_data.get(override_key, ()):
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            item_id = int(item.get(CONF_ID))
+        except (TypeError, ValueError):
+            continue
+        labels.setdefault(item_id, f"Saved {fallback_label.lower()} {item_id}")
+
+    return sorted(
+        (
+            SelectOptionDict(
+                value=str(item_id),
+                label=(
+                    f"{label} ({item_id}, inactive)"
+                    if item_id in inactive
+                    else f"{label} ({item_id})"
+                ),
+            )
+            for item_id, label in labels.items()
+        ),
+        key=lambda option: str(option["label"]).casefold(),
+    )
+
+
+def _resource_row_id(row: Mapping[str, Any]) -> int | None:
+    for key in ("thermostat_id", "sensor_id", "id"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _option_ids(options: list[SelectOptionDict]) -> tuple[int, ...]:
+    return tuple(int(option["value"]) for option in options)
+
+
+def _inactive_resource_ids(
+    entry: config_entries.ConfigEntry,
+    *,
+    rows_attribute: str,
+) -> set[int]:
+    runtime = getattr(entry, "runtime_data", None)
+    data = runtime.coordinator.data if runtime is not None else None
+    rows = getattr(data, rows_attribute, ()) if data is not None else ()
+    return {
+        item_id
+        for row in rows
+        if (item_id := _resource_row_id(row)) is not None
+        and _source_flag_enabled(row.get("inactive"))
+    }
+
+
+def _source_flag_enabled(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _source_scope_defaults(
+    entry: config_entries.ConfigEntry,
+) -> tuple[set[int], set[int]]:
+    runtime = getattr(entry, "runtime_data", None)
+    data = runtime.coordinator.data if runtime is not None else None
+    if data is None:
+        return set(), set()
+    return (
+        {
+            int(thermostat.thermostat_id)
+            for thermostat in data.config.thermostats
+        },
+        {
+            int(sensor.sensor_id)
+            for sensor in data.config.sensors
+        },
+    )
 
 
 def _thermostat_placeholders(

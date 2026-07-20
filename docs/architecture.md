@@ -22,6 +22,30 @@
 - Home Assistant UI/config entries are the primary configuration surface. YAML
   support exists for import/backward compatibility; do not make YAML the
   preferred routine configuration path.
+- Config-entry `data` owns required connection identity: API key, API base URL,
+  and the non-reversible account fingerprint. Initial setup is connection-only;
+  reconfigure and reauthentication validate replacements before saving them and
+  require an explicit confirmation before changing accounts. A confirmed
+  account replacement clears saved source scope and per-source overrides before
+  reload so numeric resource IDs cannot silently cross the account boundary;
+  timing options remain intact. Previously imported Recorder statistics remain,
+  so the confirmation must also explain the possible stable-slug history overlap.
+- Config-entry `options` owns persistent behavior: import timing, selected
+  Beestat source scope, and local mapping/filter/statistic overrides. Options
+  save through native Home Assistant flows and reload the entry. Source scope
+  reuses the versioned thermostat/sensor `enabled` override contract rather
+  than maintaining a second list of IDs: missing flags preserve open-world
+  discovery, `enabled: false` is an explicit exclusion, and `enabled: true`
+  deliberately includes a source Beestat reports inactive.
+- Source selectors combine current raw API discovery, the effective runtime
+  model, and saved overrides. This keeps excluded and temporarily missing
+  resources recoverable while preserving unknown saved rows across discovery
+  drift. Excluding a currently active source requires a confirmation.
+- The integration remains one config entry and one account-wide coordinator.
+  Config subentries or multiple account entries are not justified by the
+  current API/runtime ownership model and must not be introduced without a
+  concrete repeated-resource requirement and a Recorder-statistics continuity
+  design.
 - Use HomeKit/Ecobee entities in Home Assistant for live local thermostat, room
   temperature, occupancy, motion, and control state. Use Beestat for history,
   runtime summaries, cloud profile context, alerts, and filter forecast inputs.
@@ -62,3 +86,24 @@
   and `README.md` are part of the user-facing contract. Update them with code
   behavior changes. Custom integrations ship complete translations directly;
   do not restore the Home Assistant Core-only `strings.json` build input.
+
+## Configuration And Continuity Invariants
+
+- API parsing, authentication mechanics, request safety limits, normalization,
+  diagnostics redaction, unique-ID composition, statistics metadata, and
+  cumulative Recorder math are implementation invariants, not preferences.
+- Source-scope changes may alter future entity exposure and import membership,
+  but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
+  units, statistic metadata, or previously imported Recorder history.
+- Updating source scope must preserve mapping, filter, and statistic-capability
+  fields on known resources and preserve unknown saved overrides unchanged.
+- Disabled source overrides are ignored by mapping-domain and missing-entity
+  Repairs because those references are not runtime dependencies. The checks
+  resume when the source is enabled again.
+- Storage migrations remain versioned and must preserve legacy connection data,
+  timing values, source flags, mappings, and stable slug fields. Do not bump the
+  config-entry version when UI behavior begins using an already-supported
+  storage field; do add a migration when the persisted contract itself changes.
+- Never put API keys, account fingerprints, private entity IDs, or raw Beestat
+  identifiers in entity state, shareable diagnostics, logs, translations,
+  public fixtures, or public documentation examples.

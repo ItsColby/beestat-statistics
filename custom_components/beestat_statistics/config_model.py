@@ -10,6 +10,7 @@ from typing import Any
 
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
+    CONF_ENABLED,
     CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -227,6 +228,8 @@ def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str,
 
     references: list[str] = []
     for item in _override_items(config_data.get(CONF_THERMOSTATS)):
+        if _is_disabled(item):
+            continue
         for field in (
             CONF_CLIMATE_ENTITY_ID,
             CONF_TEMPERATURE_ENTITY_ID,
@@ -237,6 +240,8 @@ def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str,
             if entity_id := _string_or_none(item.get(field)):
                 references.append(entity_id)
     for item in _override_items(config_data.get(CONF_SENSORS)):
+        if _is_disabled(item):
+            continue
         for field in (
             CONF_TEMPERATURE_ENTITY_ID,
             CONF_OCCUPANCY_ENTITY_ID,
@@ -278,6 +283,8 @@ def _override_entity_domain_errors(
 ) -> tuple[str, ...]:
     errors: list[str] = []
     for item in _override_items(overrides):
+        if _is_disabled(item):
+            continue
         item_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
         item_label = f"{item_type} {item_id}" if item_id is not None else item_type
         for field, expected_domain in domains:
@@ -986,7 +993,7 @@ def _override_bool(
 
 
 def _is_disabled(override: dict[str, Any]) -> bool:
-    return override.get("enabled") is False
+    return override.get(CONF_ENABLED) is False
 
 
 def _bool(value: Any) -> bool:

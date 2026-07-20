@@ -39,7 +39,10 @@ from custom_components.beestat_statistics.api import (  # noqa: E402
     BeestatApiError,
     BeestatAuthError,
 )
-from custom_components.beestat_statistics import async_setup  # noqa: E402
+from custom_components.beestat_statistics import (  # noqa: E402
+    async_migrate_entry,
+    async_setup,
+)
 from custom_components.beestat_statistics.const import (  # noqa: E402
     API_BASE,
     ATTR_CONFIG_ENTRY_ID,
@@ -53,8 +56,12 @@ from custom_components.beestat_statistics.const import (  # noqa: E402
     CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_THERMOSTATS,
+    CONFIG_ENTRY_MINOR_VERSION,
     CONFIG_ENTRY_UNIQUE_ID,
+    CONFIG_ENTRY_VERSION,
     CONFIG_TITLE,
+    DEFAULT_POINT_LOOKBACK_DAYS,
+    DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
     SERVICE_GET_CONFIGURATION,
 )
@@ -68,8 +75,6 @@ pytestmark = [
 USER_INPUT = {
     CONF_API_KEY: "test-api-key",
     CONF_API_BASE: API_BASE,
-    CONF_POINT_LOOKBACK_DAYS: 30,
-    CONF_SCAN_INTERVAL_SECONDS: 900,
 }
 ACCOUNT_A = {
     "thermostat_id_hashes": ["account-a"],
@@ -108,6 +113,9 @@ async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
+    assert {
+        key.schema for key in result["data_schema"].schema
+    } == {CONF_API_KEY, CONF_API_BASE}
 
     with _mock_validate_input():
         result = await hass.config_entries.flow.async_configure(
@@ -123,9 +131,45 @@ async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
         CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
     }
     assert result["options"] == {
-        CONF_POINT_LOOKBACK_DAYS: 30,
-        CONF_SCAN_INTERVAL_SECONDS: 900,
+        CONF_POINT_LOOKBACK_DAYS: DEFAULT_POINT_LOOKBACK_DAYS,
+        CONF_SCAN_INTERVAL_SECONDS: DEFAULT_SCAN_INTERVAL_SECONDS,
     }
+
+
+async def test_migrate_entry_preserves_legacy_scope_and_moves_timing(
+    hass: HomeAssistant,
+) -> None:
+    """Test legacy entries retain source scope through versioned migration."""
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=CONFIG_TITLE,
+        unique_id=CONFIG_ENTRY_UNIQUE_ID,
+        version=1,
+        minor_version=1,
+        data={
+            CONF_API_KEY: "synthetic-key",
+            CONF_API_BASE: API_BASE,
+            CONF_POINT_LOOKBACK_DAYS: 45,
+            CONF_SCAN_INTERVAL_SECONDS: 600,
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1001, "enabled": False, "slug": "zone_a"},
+            ],
+        },
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+    assert entry.version == CONFIG_ENTRY_VERSION
+    assert entry.minor_version == CONFIG_ENTRY_MINOR_VERSION
+    assert entry.data[CONF_THERMOSTATS] == [
+        {CONF_ID: 1001, "enabled": False, "slug": "zone_a"},
+    ]
+    assert CONF_POINT_LOOKBACK_DAYS not in entry.data
+    assert CONF_SCAN_INTERVAL_SECONDS not in entry.data
+    assert entry.options[CONF_POINT_LOOKBACK_DAYS] == 45
+    assert entry.options[CONF_SCAN_INTERVAL_SECONDS] == 600
 
 
 async def test_user_flow_normalizes_copy_paste_whitespace(
@@ -396,10 +440,10 @@ async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
-async def test_reauth_flow_rejects_different_account(
+async def test_reauth_flow_confirms_different_account(
     hass: HomeAssistant,
 ) -> None:
-    """Test reauth does not silently switch to another Beestat account."""
+    """Test reauth requires explicit confirmation before switching accounts."""
 
     entry = _add_mock_entry(hass)
     result = await hass.config_entries.flow.async_init(
@@ -418,8 +462,18 @@ async def test_reauth_flow_rejects_different_account(
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "wrong_account"}
+    assert result["step_id"] == "account_change_confirm"
     assert entry.data[CONF_API_KEY] == "old-key"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_API_KEY] == "different-account-key"
+    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
 
 
 async def test_reauth_flow_recovers_from_unexpected_error(
@@ -525,12 +579,32 @@ async def test_reconfigure_flow_allows_blank_key_to_keep_current(
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
-async def test_reconfigure_flow_rejects_different_account(
+async def test_reconfigure_flow_confirms_different_account(
     hass: HomeAssistant,
 ) -> None:
-    """Test reconfigure keeps the existing account fingerprint."""
+    """Test reconfigure requires explicit confirmation before account replacement."""
 
-    entry = _add_mock_entry(hass)
+    entry = _add_mock_entry(
+        hass,
+        data={
+            CONF_API_KEY: "old-key",
+            CONF_API_BASE: API_BASE,
+            CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
+            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
+        },
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2001,
+                    CONF_TEMPERATURE_ENTITY_ID: (
+                        "sensor.room_sensor_a_temperature"
+                    ),
+                }
+            ],
+        },
+    )
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
@@ -546,8 +620,26 @@ async def test_reconfigure_flow_rejects_different_account(
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "wrong_account"}
+    assert result["step_id"] == "account_change_confirm"
     assert entry.data[CONF_API_KEY] == "old-key"
+    assert CONF_THERMOSTATS in entry.data
+    assert CONF_SENSORS in entry.options
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_API_KEY] == "different-account-key"
+    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
+    assert CONF_THERMOSTATS not in entry.data
+    assert CONF_SENSORS not in entry.options
+    assert entry.options == {
+        CONF_POINT_LOOKBACK_DAYS: 30,
+        CONF_SCAN_INTERVAL_SECONDS: 900,
+    }
 
 
 async def test_reconfigure_flow_recovers_from_unexpected_error(
@@ -596,6 +688,7 @@ async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:
     assert result["step_id"] == "init"
     assert result["menu_options"] == {
         "timing": "Import timing",
+        "source_scope": "Choose Beestat sources",
         "thermostat_mapping": "Map a thermostat",
         "sensor_mapping": "Map a room sensor",
     }
@@ -620,6 +713,105 @@ async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:
         CONF_POINT_LOOKBACK_DAYS: 60,
         CONF_SCAN_INTERVAL_SECONDS: 1200,
     }
+
+
+async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
+    hass: HomeAssistant,
+) -> None:
+    """Test source selection uses raw discovery and preserves unrelated options."""
+
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"},
+                {CONF_ID: 1002, "enabled": False},
+            ],
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2001,
+                    CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_a_temperature",
+                }
+            ],
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[
+            _configured_sensor(
+                sensor_id=2001,
+                name="Room Sensor A",
+                slug="room_sensor_a",
+            )
+        ],
+        thermostat_rows=[
+            {"id": 1001, "name": "Zone A"},
+            {"id": 1002, "name": "Zone B", "inactive": True},
+        ],
+        sensor_rows=[
+            {"id": 2001, "name": "Room Sensor A"},
+            {"id": 2002, "name": "Room Sensor B"},
+        ],
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "included_thermostat_ids": ["1002"],
+            "included_sensor_ids": ["2001", "2002"],
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope_confirm"
+    assert result["description_placeholders"] == {
+        "thermostat_count": "1",
+        "sensor_count": "0",
+    }
+    assert entry.options[CONF_THERMOSTATS] == [
+        {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"},
+        {CONF_ID: 1002, "enabled": False},
+    ]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_POINT_LOOKBACK_DAYS] == 30
+    assert result["data"][CONF_SCAN_INTERVAL_SECONDS] == 900
+    assert result["data"][CONF_THERMOSTATS] == [
+        {
+            CONF_ID: 1001,
+            CONF_CLIMATE_ENTITY_ID: "climate.zone_a",
+            "enabled": False,
+        },
+        {CONF_ID: 1002, "enabled": True},
+    ]
+    assert result["data"][CONF_SENSORS] == [
+        {
+            CONF_ID: 2001,
+            CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_a_temperature",
+        }
+    ]
+    assert entry.options == result["data"]
 
 
 async def test_get_configuration_service_returns_exact_non_secret_response(
@@ -796,14 +988,22 @@ def _mock_validate_input(**kwargs: Any):
     )
 
 
-def _runtime_data(*, thermostats: list[Any], sensors: list[Any]) -> Any:
+def _runtime_data(
+    *,
+    thermostats: list[Any],
+    sensors: list[Any],
+    thermostat_rows: list[dict[str, Any]] | None = None,
+    sensor_rows: list[dict[str, Any]] | None = None,
+) -> Any:
     return types.SimpleNamespace(
         coordinator=types.SimpleNamespace(
             data=types.SimpleNamespace(
                 config=types.SimpleNamespace(
                     thermostats=tuple(thermostats),
                     sensors=tuple(sensors),
-                )
+                ),
+                thermostat_rows=tuple(thermostat_rows or ()),
+                sensor_rows=tuple(sensor_rows or ()),
             )
         )
     )

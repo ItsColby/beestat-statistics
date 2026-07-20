@@ -211,7 +211,7 @@ class ConfigPayloadTest(unittest.TestCase):
                 "api_key": "key",
                 "point_lookback_days": "60",
                 "scan_interval_seconds": 120,
-                "thermostats": [{"id": 1}],
+                "thermostats": [{"id": 1, "enabled": False}],
             },
             {},
         )
@@ -221,7 +221,7 @@ class ConfigPayloadTest(unittest.TestCase):
             {
                 "api_key": "key",
                 "api_base": "https://api.beestat.io/",
-                "thermostats": [{"id": 1}],
+                "thermostats": [{"id": 1, "enabled": False}],
             },
         )
         self.assertEqual(
@@ -280,6 +280,71 @@ class ConfigPayloadTest(unittest.TestCase):
                 "api_key": "key",
                 "thermostats": [{"id": 1, "climate_entity_id": "climate.new"}],
             },
+        )
+
+    def test_update_source_scope_preserves_overrides_and_discovery_drift(self) -> None:
+        options = config_payload.update_source_scope_options(
+            {
+                "thermostats": [
+                    {"id": 1, "slug": "zone_a"},
+                    {"id": 3, "enabled": False},
+                ],
+            },
+            {
+                "point_lookback_days": 45,
+                "sensors": [
+                    {
+                        "id": 10,
+                        "temperature_entity_id": "sensor.room_sensor_a",
+                        "include_voc": False,
+                    },
+                    {"id": 12, "enabled": False},
+                ],
+            },
+            known_thermostat_ids=(1, 2, 3),
+            enabled_thermostat_ids=(2, 3),
+            explicitly_enabled_thermostat_ids=(2,),
+            known_sensor_ids=(10, 11, 12),
+            enabled_sensor_ids=(10, 12),
+        )
+
+        self.assertEqual(options["point_lookback_days"], 45)
+        self.assertEqual(
+            options["thermostats"],
+            [
+                {"id": 1, "slug": "zone_a", "enabled": False},
+                {"id": 2, "enabled": True},
+            ],
+        )
+        self.assertEqual(
+            options["sensors"],
+            [
+                {
+                    "id": 10,
+                    "temperature_entity_id": "sensor.room_sensor_a",
+                    "include_voc": False,
+                },
+                {"id": 11, "enabled": False},
+            ],
+        )
+
+    def test_update_source_scope_keeps_unknown_saved_items_unchanged(self) -> None:
+        options = config_payload.update_source_scope_options(
+            {},
+            {
+                "thermostats": [
+                    {"id": 99, "name": "saved", "enabled": False},
+                ],
+            },
+            known_thermostat_ids=(1,),
+            enabled_thermostat_ids=(1,),
+            known_sensor_ids=(),
+            enabled_sensor_ids=(),
+        )
+
+        self.assertEqual(
+            options["thermostats"],
+            [{"id": 99, "name": "saved", "enabled": False}],
         )
 
     def test_update_thermostat_override_options_merges_one_item(self) -> None:

@@ -128,12 +128,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "async_step_import",
                 "async_step_reauth",
                 "async_step_reauth_confirm",
+                "async_step_account_change_confirm",
                 "async_step_reconfigure",
                 "async_step_user",
             }.issubset(flow_methods)
         )
         self.assertIn("async_step_init", options_methods)
         self.assertIn("async_step_timing", options_methods)
+        self.assertIn("async_step_source_scope", options_methods)
+        self.assertIn("async_step_source_scope_confirm", options_methods)
         self.assertIn("async_step_thermostat_mapping", options_methods)
         self.assertIn("async_step_thermostat_mapping_detail", options_methods)
         self.assertIn("async_step_sensor_mapping", options_methods)
@@ -185,6 +188,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             strings["options"]["step"]["init"]["menu_options"],
             {
                 "timing": "Import timing",
+                "source_scope": "Choose Beestat sources",
                 "thermostat_mapping": "Map a thermostat",
                 "sensor_mapping": "Map a room sensor",
             },
@@ -221,11 +225,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             strings["config"]["error"],
             "unexpected config-flow validation errors need a translated base error",
         )
-        self.assertIn(
-            "wrong_account",
-            strings["config"]["error"],
-            "reauth/reconfigure wrong-account validation needs a translated base error",
-        )
+        self.assertIn("account_change_confirm", config_steps)
 
     def test_diagnostics_redact_shareable_identifiers(self) -> None:
         text = (ROOT / "custom_components/beestat_statistics/diagnostics.py").read_text(
@@ -431,15 +431,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "test_user_flow_normalizes_copy_paste_whitespace",
             "test_user_flow_recovers_from_unexpected_error",
             "test_reauth_flow_updates_api_key",
-            "test_reauth_flow_rejects_different_account",
+            "test_reauth_flow_confirms_different_account",
             "test_reauth_flow_recovers_from_unexpected_error",
             "test_reauth_flow_rejects_blank_api_key",
             "test_reconfigure_flow_allows_blank_key_to_keep_current",
-            "test_reconfigure_flow_rejects_different_account",
+            "test_reconfigure_flow_confirms_different_account",
             "test_reconfigure_flow_recovers_from_unexpected_error",
             'result["errors"] == {"base": "invalid_auth"}',
             'result["errors"] == {"base": "cannot_connect"}',
-            'result["errors"] == {"base": "wrong_account"}',
+            'result["step_id"] == "account_change_confirm"',
             'result["errors"] == {"base": "unknown"}',
             'result["errors"] == {CONF_API_KEY: "api_key_required"}',
         ):
