@@ -16,7 +16,18 @@ config-flow, Recorder/statistics, or release-layout changes.
 
 ## Validation
 
-Use the repo venv when available:
+For focused iteration, run the directly affected unittest module, compile the
+changed package/test surface, and always run the public-safety guard when the
+change touches code, tests, docs, workflows, scripts, or metadata. Example:
+
+```powershell
+python -m unittest tests.test_statistics_builder
+python -m compileall -q custom_components/beestat_statistics tests
+python scripts/check_public_safety.py
+```
+
+Before integration or release, use the repo venv when available and run the
+full local tier:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
