@@ -862,6 +862,9 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
     assert response["effective_configuration"]["thermostats"][0][
         CONF_CLIMATE_ENTITY_ID
     ] == "climate.zone_a"
+    assert response["effective_configuration"]["thermostats"][0][
+        "filter_change_day_runtime_baseline_seconds"
+    ] is None
     assert "api_key" not in repr(response)
 
 
@@ -1015,6 +1018,7 @@ def _configured_thermostat(
     name: str,
     slug: str,
     climate_entity_id: str | None = None,
+    filter_change_day_runtime_baseline_seconds: float | None = None,
 ) -> Any:
     return types.SimpleNamespace(
         thermostat_id=thermostat_id,
@@ -1026,6 +1030,9 @@ def _configured_thermostat(
         motion_entity_id=None,
         filter_changed_entity_id=None,
         filter_changed_date=None,
+        filter_change_day_runtime_baseline_seconds=(
+            filter_change_day_runtime_baseline_seconds
+        ),
         filter_lifetime_runtime_hours=250.0,
         filter_max_age_days=90,
         filter_notice_days=7,
