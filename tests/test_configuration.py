@@ -43,6 +43,7 @@ class ConfigurationResponseTest(unittest.TestCase):
             climate_entity_id="climate.zone_a",
             temperature_entity_id="sensor.zone_a_temperature",
             filter_changed_date=date(2026, 7, 1),
+            filter_change_day_runtime_baseline_seconds=28800,
         )
         sensor = self.config_model.ConfiguredSensor(
             sensor_id=2002,
@@ -99,6 +100,12 @@ class ConfigurationResponseTest(unittest.TestCase):
                 "filter_changed_date"
             ],
             "2026-07-01",
+        )
+        self.assertEqual(
+            response["effective_configuration"]["thermostats"][0][
+                "filter_change_day_runtime_baseline_seconds"
+            ],
+            28800,
         )
         self.assertEqual(
             response["effective_configuration"]["sensors"][0][

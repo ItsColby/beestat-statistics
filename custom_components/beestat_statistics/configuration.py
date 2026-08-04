@@ -80,6 +80,9 @@ def _configured_thermostat(thermostat: ConfiguredThermostat) -> dict[str, Any]:
         "motion_entity_id": thermostat.motion_entity_id,
         "filter_changed_entity_id": thermostat.filter_changed_entity_id,
         "filter_changed_date": _json_value(thermostat.filter_changed_date),
+        "filter_change_day_runtime_baseline_seconds": (
+            thermostat.filter_change_day_runtime_baseline_seconds
+        ),
         "filter_lifetime_runtime_hours": thermostat.filter_lifetime_runtime_hours,
         "filter_max_age_days": thermostat.filter_max_age_days,
         "filter_notice_days": thermostat.filter_notice_days,

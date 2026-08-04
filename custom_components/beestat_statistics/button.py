@@ -23,7 +23,7 @@ from .entity import (
     thermostat_device_info,
     thermostat_suggested_object_id,
 )
-from .entry_options import async_set_filter_changed_date
+from .entry_options import async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
@@ -182,12 +182,12 @@ class BeestatFilterChangedButton(ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        """Mark the filter as changed on the current local date."""
+        """Mark the filter changed and reset runtime at the current boundary."""
 
-        await async_set_filter_changed_date(
+        await async_mark_filter_changed(
             self._coordinator,
             self._thermostat_id,
-            dt_util.now().date(),
+            dt_util.now(),
         )
 
     @property

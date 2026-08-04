@@ -74,6 +74,53 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0.75,
         )
 
+    def test_runtime_hours_subtracts_click_baseline_only_from_change_day(self) -> None:
+        rows = [
+            {"date": "2026-07-05", "sum_fan": 36000},
+            {"date": "2026-07-06", "sum_fan": 7200},
+        ]
+
+        self.assertEqual(
+            self.coordinator._runtime_hours_since(
+                rows,
+                date(2026, 7, 5),
+                change_day_baseline_seconds=28800,
+            ),
+            4.0,
+        )
+
+    def test_runtime_hours_clamps_corrected_change_day_below_click_baseline(self) -> None:
+        rows = [
+            {"date": "2026-07-05", "sum_fan": 18000},
+            {"date": "2026-07-06", "sum_fan": 7200},
+        ]
+
+        self.assertEqual(
+            self.coordinator._runtime_hours_since(
+                rows,
+                date(2026, 7, 5),
+                change_day_baseline_seconds=28800,
+            ),
+            2.0,
+        )
+
+    def test_runtime_seconds_on_date_filters_thermostat_and_date(self) -> None:
+        rows = (
+            {"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 3600},
+            {"thermostat_id": 1002, "date": "2026-07-05", "sum_fan": 7200},
+            {"thermostat_id": 1001, "date": "2026-07-06", "sum_fan": 10800},
+            {"thermostat_id": 1001, "date": "bad", "sum_fan": 9999},
+        )
+
+        self.assertEqual(
+            self.coordinator._runtime_seconds_on_date(
+                rows,
+                thermostat_id=1001,
+                target_date=date(2026, 7, 5),
+            ),
+            3600,
+        )
+
     def test_filter_changed_date_walks_nested_filter_payloads(self) -> None:
         self.assertEqual(
             self.coordinator._beestat_filter_changed_date(

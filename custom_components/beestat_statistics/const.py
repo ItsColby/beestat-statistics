@@ -8,7 +8,7 @@ from datetime import timedelta
 DOMAIN = "beestat_statistics"
 
 API_BASE = "https://api.beestat.io/"
-CONFIG_ENTRY_MINOR_VERSION = 3
+CONFIG_ENTRY_MINOR_VERSION = 4
 CONFIG_ENTRY_UNIQUE_ID = "beestat_statistics"
 CONFIG_ENTRY_VERSION = 1
 CONFIG_TITLE = "Beestat Statistics"
@@ -25,6 +25,9 @@ CONF_API_BASE = "api_base"
 CONF_ACCOUNT_FINGERPRINT = "account_fingerprint"
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"
 CONF_ENABLED = "enabled"
+CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS = (
+    "filter_change_day_runtime_baseline_seconds"
+)
 CONF_FILTER_CHANGED_ENTITY_ID = "filter_changed_entity_id"
 CONF_FILTER_CHANGED_DATE = "filter_changed_date"
 CONF_FILTER_LIFETIME_RUNTIME_HOURS = "filter_lifetime_runtime_hours"

@@ -106,7 +106,7 @@ class BeestatFilterChangedDate(
         return thermostat.filter_changed_date
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | None] | None:
+    def extra_state_attributes(self) -> dict[str, str | float | None] | None:
         """Return where the effective date came from."""
 
         data = self.coordinator.data
@@ -122,6 +122,9 @@ class BeestatFilterChangedDate(
                 thermostat.filter_changed_date.isoformat()
                 if thermostat.filter_changed_date is not None
                 else None
+            ),
+            "change_day_runtime_baseline_seconds": (
+                thermostat.filter_change_day_runtime_baseline_seconds
             ),
             "legacy_helper_entity_id": thermostat.filter_changed_entity_id,
         }

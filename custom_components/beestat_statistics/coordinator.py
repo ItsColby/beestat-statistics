@@ -171,6 +171,21 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         return self._local_tz
 
+    def filter_runtime_seconds_on_date(
+        self,
+        thermostat_id: int,
+        target_date: date,
+    ) -> float:
+        """Return the freshest known daily fan-runtime total for a thermostat."""
+
+        if self.data is None:
+            return 0.0
+        return _runtime_seconds_on_date(
+            self.data.summary_rows,
+            thermostat_id=thermostat_id,
+            target_date=target_date,
+        )
+
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
             return await self._async_fetch_runtime_data(skip_sync=False)
@@ -437,6 +452,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 filter_runtime_hours=_runtime_hours_since(
                     thermostat_rows,
                     changed_date,
+                    change_day_baseline_seconds=(
+                        thermostat.filter_change_day_runtime_baseline_seconds
+                        if changed_source == "home_assistant"
+                        else None
+                    ),
                 ),
                 recent_runtime_hours_per_day=_recent_runtime_hours_per_day(
                     thermostat_rows,
@@ -516,6 +536,8 @@ def _latest_row_date(rows: list[dict[str, Any]]) -> date | None:
 def _runtime_hours_since(
     rows: list[dict[str, Any]],
     changed_date: date | None,
+    *,
+    change_day_baseline_seconds: float | None = None,
 ) -> float | None:
     if changed_date is None:
         return None
@@ -527,7 +549,41 @@ def _runtime_hours_since(
     ]
     if not matched_rows:
         return 0.0
-    return round(_sum_fan_seconds(matched_rows) / 3600, 1)
+    if change_day_baseline_seconds is None:
+        return round(_sum_fan_seconds(matched_rows) / 3600, 1)
+    changed_day_rows = [
+        row
+        for row in matched_rows
+        if _parse_date(row.get("date")) == changed_date
+    ]
+    later_rows = [
+        row
+        for row in matched_rows
+        if (row_date := _parse_date(row.get("date"))) is not None
+        and row_date > changed_date
+    ]
+    changed_day_seconds = max(
+        _sum_fan_seconds(changed_day_rows) - change_day_baseline_seconds,
+        0.0,
+    )
+    total_seconds = changed_day_seconds + _sum_fan_seconds(later_rows)
+    return round(total_seconds / 3600, 1)
+
+
+def _runtime_seconds_on_date(
+    rows: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    thermostat_id: int,
+    target_date: date,
+) -> float:
+    return _sum_fan_seconds(
+        [
+            row
+            for row in rows
+            if _row_int(row, "thermostat_id", "id") == thermostat_id
+            and _parse_date(row.get("date")) == target_date
+        ]
+    )
 
 
 def _recent_runtime_hours_per_day(

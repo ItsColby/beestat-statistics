@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import importlib.util
 from pathlib import Path
 import sys
 import types
 import unittest
+from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -82,9 +83,105 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
         self.assertEqual(coordinator.refresh_skip_sync_values, [True])
 
+    async def test_mark_filter_changed_captures_fresh_change_day_runtime_baseline(
+        self,
+    ) -> None:
+        coordinator = _FakeCoordinator(runtime_seconds=28800)
+
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            datetime.fromisoformat("2026-07-06T01:48:00+00:00"),
+        )
+
+        self.assertEqual(
+            coordinator.config_entry.options["thermostats"],
+            [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_change_day_runtime_baseline_seconds": 28800,
+                }
+            ],
+        )
+        self.assertEqual(coordinator.baseline_requests, [(1001, date(2026, 7, 5))])
+        self.assertEqual(coordinator.refresh_skip_sync_values, [False, True])
+
+    async def test_mark_filter_changed_again_replaces_same_day_baseline(self) -> None:
+        coordinator = _FakeCoordinator(runtime_seconds=28800)
+
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
+        )
+        coordinator.runtime_seconds = 36000
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            datetime.fromisoformat("2026-07-05T20:00:00-04:00"),
+        )
+
+        self.assertEqual(
+            coordinator.config_entry.options["thermostats"],
+            [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_change_day_runtime_baseline_seconds": 36000,
+                }
+            ],
+        )
+
+    async def test_manual_filter_date_clears_click_baseline(self) -> None:
+        coordinator = _FakeCoordinator()
+        coordinator.config_entry.options = {
+            "thermostats": [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_change_day_runtime_baseline_seconds": 28800,
+                }
+            ]
+        }
+
+        await self.entry_options.async_set_filter_changed_date(
+            coordinator,
+            1001,
+            date(2026, 6, 18),
+        )
+
+        self.assertEqual(
+            coordinator.config_entry.options["thermostats"],
+            [{"id": 1001, "filter_changed_date": "2026-06-18"}],
+        )
+
+    async def test_mark_filter_changed_does_not_persist_when_fresh_sync_fails(
+        self,
+    ) -> None:
+        coordinator = _FakeCoordinator(refresh_error=RuntimeError("sync failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "sync failed"):
+            await self.entry_options.async_mark_filter_changed(
+                coordinator,
+                1001,
+                datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
+            )
+
+        self.assertEqual(coordinator.config_entry.options, {})
+        self.assertEqual(coordinator.baseline_requests, [])
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
+
 
 class _FakeCoordinator:
-    def __init__(self, *, dismissed: int = 0, dismiss_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        dismissed: int = 0,
+        dismiss_error: Exception | None = None,
+        runtime_seconds: float = 0,
+        refresh_error: Exception | None = None,
+    ) -> None:
         self.config_entry = types.SimpleNamespace(data={}, options={})
         self.hass = types.SimpleNamespace(
             config_entries=types.SimpleNamespace(async_update_entry=self._update_entry)
@@ -93,6 +190,10 @@ class _FakeCoordinator:
         self._dismiss_error = dismiss_error
         self.dismissed_thermostat_ids: list[int] = []
         self.refresh_skip_sync_values: list[bool] = []
+        self.runtime_seconds = runtime_seconds
+        self.refresh_error = refresh_error
+        self.baseline_requests: list[tuple[int, date]] = []
+        self.local_tz = ZoneInfo("America/New_York")
 
     def _update_entry(self, entry, *, options):
         entry.options = options
@@ -105,6 +206,16 @@ class _FakeCoordinator:
 
     async def async_refresh_runtime(self, *, skip_sync: bool) -> None:
         self.refresh_skip_sync_values.append(skip_sync)
+        if not skip_sync and self.refresh_error is not None:
+            raise self.refresh_error
+
+    def filter_runtime_seconds_on_date(
+        self,
+        thermostat_id: int,
+        target_date: date,
+    ) -> float:
+        self.baseline_requests.append((thermostat_id, target_date))
+        return self.runtime_seconds
 
 
 if __name__ == "__main__":

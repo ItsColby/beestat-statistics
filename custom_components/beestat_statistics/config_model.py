@@ -11,6 +11,7 @@ from typing import Any
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
+    CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -99,6 +100,7 @@ class ConfiguredThermostat:
     name: str
     filter_changed_entity_id: str | None = None
     filter_changed_date: date | None = None
+    filter_change_day_runtime_baseline_seconds: float | None = None
     filter_lifetime_runtime_hours: float = DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS
     filter_max_age_days: int = DEFAULT_FILTER_MAX_AGE_DAYS
     filter_notice_days: int = DEFAULT_FILTER_NOTICE_DAYS
@@ -376,6 +378,9 @@ def _thermostat_from_row(
         name=name,
         filter_changed_entity_id=_filter_changed_entity_id(hass, slug, override),
         filter_changed_date=_date_or_none(override.get(CONF_FILTER_CHANGED_DATE)),
+        filter_change_day_runtime_baseline_seconds=_nonnegative_float_or_none(
+            override.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS)
+        ),
         filter_lifetime_runtime_hours=_float_or_default(
             override.get(CONF_FILTER_LIFETIME_RUNTIME_HOURS),
             DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -973,6 +978,14 @@ def _float_or_default(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _nonnegative_float_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _int_or_default(value: Any, default: int) -> int:

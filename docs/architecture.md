@@ -57,9 +57,15 @@
   need `docs/beestat-api-surface.json`,
   `scripts/check_beestat_api_surface.py`, README, diagnostics, and test
   coverage updates.
-- Filter changes are owned by the Home Assistant `date` entity and optional
-  legacy `input_datetime` helper bridge. Do not switch filter change tracking to
-  a datetime entity without a deliberate UI/data-model review.
+- Filter changes are owned by the Home Assistant `date` entity, its colocated
+  mark-changed button, and the optional legacy `input_datetime` helper bridge.
+  The button refreshes Beestat before atomically saving the local date and the
+  change day's cumulative fan-runtime boundary; derived filter runtime subtracts
+  that boundary so the new filter starts at zero without requiring sub-daily
+  source rows. A manual date edit clears the internal boundary because it does
+  not prove a click-time runtime snapshot. Keep the boundary internal and do not
+  switch filter change tracking to a datetime entity without a separate
+  UI/data-model requirement.
 - Beestat filter alert dismissal is best-effort after a Home Assistant filter
   change. Do not write Ecobee settings or directly mutate Beestat sync-owned
   filter metadata.
