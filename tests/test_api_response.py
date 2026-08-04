@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -25,7 +26,7 @@ def _load_api_module():
     return module
 
 
-class ApiResponseTest(unittest.TestCase):
+class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
     """Validate Beestat response helpers without requiring aiohttp."""
 
     def setUp(self) -> None:
@@ -97,9 +98,22 @@ class ApiResponseTest(unittest.TestCase):
             "Cannot connect to <redacted-url>/?api_key=<redacted>",
         )
 
-    def test_sync_boolean_response_is_success_without_rows(self) -> None:
+    def test_sync_true_response_is_success_without_rows(self) -> None:
         self.assertEqual(self.api._normalize_rows(True, allow_boolean=True), [])
-        self.assertEqual(self.api._normalize_rows(False, allow_boolean=True), [])
+
+    async def test_sync_false_response_is_retried_before_success(self) -> None:
+        session = _FakeSession([False, True])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=2,
+        )
+
+        with patch.object(self.api.asyncio, "sleep", new=AsyncMock()):
+            self.assertEqual(await client.async_sync_resource("runtime"), [])
+
+        self.assertEqual(session.call_count, 2)
 
     def test_read_boolean_response_is_not_silently_empty(self) -> None:
         with self.assertRaisesRegex(
@@ -128,6 +142,34 @@ class ApiResponseTest(unittest.TestCase):
                 {"id": 2002, "name": "Second Zone"},
             ],
         )
+
+
+class _FakeResponse:
+    def __init__(self, payload) -> None:
+        self.status = 200
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    async def json(self, *, content_type=None):
+        return self._payload
+
+    async def text(self) -> str:
+        return str(self._payload)
+
+
+class _FakeSession:
+    def __init__(self, payloads: list[object]) -> None:
+        self._payloads = iter(payloads)
+        self.call_count = 0
+
+    def get(self, _url, *, params):
+        self.call_count += 1
+        return _FakeResponse(next(self._payloads))
 
 
 if __name__ == "__main__":

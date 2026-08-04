@@ -194,7 +194,12 @@ class BeestatClient:
                                 f"{resource}.{method} returned HTTP {response.status}: {body}"
                             )
                         payload = await response.json(content_type=None)
-                return _unwrap_response(payload, resource, method)
+                data = _unwrap_response(payload, resource, method)
+                if method == "sync" and data is False:
+                    raise BeestatApiError(
+                        f"{resource}.{method} returned an unsuccessful response"
+                    )
+                return data
             except BeestatAuthError:
                 raise
             except (asyncio.TimeoutError, aiohttp.ClientError, ValueError, BeestatApiError) as err:

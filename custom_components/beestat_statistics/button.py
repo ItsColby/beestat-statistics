@@ -23,7 +23,7 @@ from .entity import (
     thermostat_device_info,
     thermostat_suggested_object_id,
 )
-from .entry_options import async_mark_filter_changed
+from .entry_options import FilterRuntimeSummaryUnavailable, async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
@@ -184,11 +184,36 @@ class BeestatFilterChangedButton(ButtonEntity):
     async def async_press(self) -> None:
         """Mark the filter changed and reset runtime at the current boundary."""
 
-        await async_mark_filter_changed(
-            self._coordinator,
-            self._thermostat_id,
-            dt_util.now(),
-        )
+        try:
+            await async_mark_filter_changed(
+                self._coordinator,
+                self._thermostat_id,
+                dt_util.now(),
+            )
+        except BeestatAuthError as err:
+            self._coordinator.config_entry.async_start_reauth_if_available(
+                self._coordinator.hass
+            )
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="beestat_auth_failed",
+            ) from err
+        except FilterRuntimeSummaryUnavailable as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="filter_runtime_summary_unavailable",
+            ) from err
+        except BeestatApiError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="beestat_request_failed",
+            ) from err
+        except Exception as err:
+            _LOGGER.exception("Unexpected filter-change button failure")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="beestat_request_failed",
+            ) from err
 
     @property
     def available(self) -> bool:

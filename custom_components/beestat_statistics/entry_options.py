@@ -16,6 +16,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class FilterRuntimeSummaryUnavailable(BeestatApiError):
+    """Raised when a click-time boundary cannot be established safely."""
+
+
 async def async_set_filter_changed_date(
     coordinator,
     thermostat_id: int,
@@ -46,6 +50,10 @@ async def async_mark_filter_changed(
         thermostat_id,
         changed_date,
     )
+    if baseline_seconds is None:
+        raise FilterRuntimeSummaryUnavailable(
+            "Beestat did not return a current-day runtime summary for this thermostat"
+        )
     await _async_apply_filter_change(
         coordinator,
         thermostat_id,
@@ -75,7 +83,13 @@ async def _async_apply_filter_change(
             ),
         },
     )
+    old_options = entry.options
     coordinator.hass.config_entries.async_update_entry(entry, options=new_options)
+    try:
+        coordinator.async_rebuild_runtime_from_cached_rows()
+    except Exception:
+        coordinator.hass.config_entries.async_update_entry(entry, options=old_options)
+        raise
     try:
         dismissed = await coordinator.async_dismiss_filter_alerts(thermostat_id)
     except BeestatApiError as err:
@@ -91,4 +105,3 @@ async def _async_apply_filter_change(
                 dismissed,
                 thermostat_id,
             )
-    await coordinator.async_refresh_runtime(skip_sync=True)

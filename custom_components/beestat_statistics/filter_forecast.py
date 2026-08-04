@@ -42,7 +42,11 @@ def build_filter_forecast(
     changed_date = summary.filter_changed_date if summary is not None else None
     changed_source = summary.filter_changed_source if summary is not None else None
     runtime_hours = summary.filter_runtime_hours if summary is not None else None
-    if changed_date is not None and changed_date >= today:
+    has_click_boundary = (
+        changed_source == "home_assistant"
+        and thermostat.filter_change_day_runtime_baseline_seconds is not None
+    )
+    if changed_date is not None and changed_date >= today and not has_click_boundary:
         runtime_hours = 0.0
     recent_runtime_hours_per_day = (
         summary.recent_runtime_hours_per_day if summary is not None else None

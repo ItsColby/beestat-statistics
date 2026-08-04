@@ -121,6 +121,27 @@ class CoordinatorHelpersTest(unittest.TestCase):
             3600,
         )
 
+    def test_runtime_seconds_on_date_distinguishes_missing_row_from_zero(self) -> None:
+        rows = (
+            {"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 0},
+        )
+
+        self.assertEqual(
+            self.coordinator._runtime_seconds_on_date(
+                rows,
+                thermostat_id=1001,
+                target_date=date(2026, 7, 5),
+            ),
+            0,
+        )
+        self.assertIsNone(
+            self.coordinator._runtime_seconds_on_date(
+                rows,
+                thermostat_id=1001,
+                target_date=date(2026, 7, 6),
+            )
+        )
+
     def test_filter_changed_date_walks_nested_filter_payloads(self) -> None:
         self.assertEqual(
             self.coordinator._beestat_filter_changed_date(

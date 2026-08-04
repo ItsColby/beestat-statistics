@@ -175,15 +175,35 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self,
         thermostat_id: int,
         target_date: date,
-    ) -> float:
+    ) -> float | None:
         """Return the freshest known daily fan-runtime total for a thermostat."""
 
         if self.data is None:
-            return 0.0
+            return None
         return _runtime_seconds_on_date(
             self.data.summary_rows,
             thermostat_id=thermostat_id,
             target_date=target_date,
+        )
+
+    @callback
+    def async_rebuild_runtime_from_cached_rows(self) -> None:
+        """Rebuild derived state after a local option change without I/O."""
+
+        data = self.data
+        if data is None:
+            return
+        self.async_set_updated_data(
+            self._build_runtime_data(
+                list(data.summary_rows),
+                list(data.thermostat_rows),
+                list(data.sensor_rows),
+                data.sync_success_at,
+                data.metadata_sync_success_at,
+                data.summary_rows_full,
+                data.summary_window_start,
+                data.summary_window_end,
+            )
         )
 
     async def _async_update_data(self) -> BeestatRuntimeData:
@@ -575,15 +595,16 @@ def _runtime_seconds_on_date(
     *,
     thermostat_id: int,
     target_date: date,
-) -> float:
-    return _sum_fan_seconds(
-        [
-            row
-            for row in rows
-            if _row_int(row, "thermostat_id", "id") == thermostat_id
-            and _parse_date(row.get("date")) == target_date
-        ]
-    )
+) -> float | None:
+    matched_rows = [
+        row
+        for row in rows
+        if _row_int(row, "thermostat_id", "id") == thermostat_id
+        and _parse_date(row.get("date")) == target_date
+    ]
+    if not matched_rows:
+        return None
+    return _sum_fan_seconds(matched_rows)
 
 
 def _recent_runtime_hours_per_day(

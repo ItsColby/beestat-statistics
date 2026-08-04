@@ -189,6 +189,9 @@
     "beestat_request_failed": {
       "message": "The Beestat request failed. Check the Beestat Statistics status sensor for details."
     },
+    "filter_runtime_summary_unavailable": {
+      "message": "Beestat has not produced a current-day runtime summary for this thermostat yet, so the filter change was not saved. Try again after the next five-minute runtime interval."
+    },
     "no_loaded_entry": {
       "message": "No Beestat Statistics config entry is loaded."
     },

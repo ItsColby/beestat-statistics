@@ -64,7 +64,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.refresh_skip_sync_values, [])
+        self.assertEqual(coordinator.rebuild_count, 1)
 
     async def test_set_filter_changed_date_refreshes_when_dismiss_fails(self) -> None:
         api = sys.modules[f"{PACKAGE}.api"]
@@ -81,7 +82,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.refresh_skip_sync_values, [])
+        self.assertEqual(coordinator.rebuild_count, 1)
 
     async def test_mark_filter_changed_captures_fresh_change_day_runtime_baseline(
         self,
@@ -105,7 +107,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(coordinator.baseline_requests, [(1001, date(2026, 7, 5))])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [False, True])
+        self.assertEqual(coordinator.refresh_skip_sync_values, [False])
+        self.assertEqual(coordinator.rebuild_count, 1)
 
     async def test_mark_filter_changed_again_replaces_same_day_baseline(self) -> None:
         coordinator = _FakeCoordinator(runtime_seconds=28800)
@@ -172,6 +175,38 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.baseline_requests, [])
         self.assertEqual(coordinator.dismissed_thermostat_ids, [])
 
+    async def test_mark_filter_changed_does_not_persist_without_today_summary(
+        self,
+    ) -> None:
+        coordinator = _FakeCoordinator(runtime_seconds=None)
+
+        with self.assertRaisesRegex(
+            sys.modules[f"{PACKAGE}.api"].BeestatApiError,
+            "current-day runtime summary",
+        ):
+            await self.entry_options.async_mark_filter_changed(
+                coordinator,
+                1001,
+                datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
+            )
+
+        self.assertEqual(coordinator.config_entry.options, {})
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
+        self.assertEqual(coordinator.rebuild_count, 0)
+
+    async def test_filter_change_rolls_back_if_cached_rebuild_fails(self) -> None:
+        coordinator = _FakeCoordinator(rebuild_error=RuntimeError("rebuild failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "rebuild failed"):
+            await self.entry_options.async_set_filter_changed_date(
+                coordinator,
+                1001,
+                date(2026, 7, 5),
+            )
+
+        self.assertEqual(coordinator.config_entry.options, {})
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
+
 
 class _FakeCoordinator:
     def __init__(
@@ -179,8 +214,9 @@ class _FakeCoordinator:
         *,
         dismissed: int = 0,
         dismiss_error: Exception | None = None,
-        runtime_seconds: float = 0,
+        runtime_seconds: float | None = 0,
         refresh_error: Exception | None = None,
+        rebuild_error: Exception | None = None,
     ) -> None:
         self.config_entry = types.SimpleNamespace(data={}, options={})
         self.hass = types.SimpleNamespace(
@@ -192,7 +228,9 @@ class _FakeCoordinator:
         self.refresh_skip_sync_values: list[bool] = []
         self.runtime_seconds = runtime_seconds
         self.refresh_error = refresh_error
+        self.rebuild_error = rebuild_error
         self.baseline_requests: list[tuple[int, date]] = []
+        self.rebuild_count = 0
         self.local_tz = ZoneInfo("America/New_York")
 
     def _update_entry(self, entry, *, options):
@@ -209,11 +247,16 @@ class _FakeCoordinator:
         if not skip_sync and self.refresh_error is not None:
             raise self.refresh_error
 
+    def async_rebuild_runtime_from_cached_rows(self) -> None:
+        self.rebuild_count += 1
+        if self.rebuild_error is not None:
+            raise self.rebuild_error
+
     def filter_runtime_seconds_on_date(
         self,
         thermostat_id: int,
         target_date: date,
-    ) -> float:
+    ) -> float | None:
         self.baseline_requests.append((thermostat_id, target_date))
         return self.runtime_seconds
 

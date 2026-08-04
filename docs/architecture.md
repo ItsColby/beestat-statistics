@@ -61,11 +61,15 @@
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button refreshes Beestat before atomically saving the local date and the
   change day's cumulative fan-runtime boundary; derived filter runtime subtracts
-  that boundary so the new filter starts at zero without requiring sub-daily
-  source rows. A manual date edit clears the internal boundary because it does
-  not prove a click-time runtime snapshot. Keep the boundary internal and do not
-  switch filter change tracking to a datetime entity without a separate
-  UI/data-model requirement.
+  that boundary, including in same-day forecasts, so the new filter starts at
+  zero without storing sub-daily source rows. The boundary follows Beestat's
+  5-minute runtime source granularity. A false sync response or missing
+  current-day summary row fails closed before persistence. After persistence,
+  the coordinator rebuilds derived state from the refreshed cached rows rather
+  than performing a second network read. A manual date edit clears the internal
+  boundary because it does not prove a click-time runtime snapshot. Keep the
+  boundary internal and do not switch filter change tracking to a datetime
+  entity without a separate UI/data-model requirement.
 - Beestat filter alert dismissal is best-effort after a Home Assistant filter
   change. Do not write Ecobee settings or directly mutate Beestat sync-owned
   filter metadata.

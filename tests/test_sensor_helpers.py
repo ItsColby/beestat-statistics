@@ -208,6 +208,37 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertFalse(forecast.due)
         self.assertFalse(forecast.due_soon)
 
+    def test_filter_forecast_uses_click_boundary_runtime_on_replacement_date(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+            filter_notice_days=7,
+            filter_change_day_runtime_baseline_seconds=28800,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=2.0,
+            recent_runtime_hours_per_day=15.4,
+        )
+
+        forecast = self.sensor.build_filter_forecast(
+            thermostat,
+            summary,
+            today=date(2026, 7, 5),
+        )
+
+        self.assertEqual(forecast.runtime_hours, 2.0)
+        self.assertEqual(forecast.remaining_runtime_hours, 248.0)
+        self.assertEqual(forecast.runtime_due_date, date(2026, 7, 21))
+        self.assertFalse(forecast.due)
+        self.assertFalse(forecast.due_soon)
+
     def test_active_alert_category_separates_maintenance_from_equipment(self) -> None:
         self.assertEqual(
             self.sensor._classify_active_alerts(
