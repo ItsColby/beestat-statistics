@@ -129,18 +129,22 @@ class BeestatButton(ButtonEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_auth_failed",
-            ) from err
+            ) from None
         except BeestatApiError as err:
             if action != "refresh_runtime":
                 self._coordinator.async_record_import_error(err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_request_failed",
-            ) from err
-        except Exception as err:
+            ) from None
+        except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
             if action != "refresh_runtime":
                 self._coordinator.async_record_import_error(err)
-            _LOGGER.exception("Unexpected Beestat button failure during %s", action)
+            _LOGGER.error(
+                "Unexpected Beestat button failure during %s (%s)",
+                action,
+                type(err).__name__,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key=(
@@ -148,7 +152,7 @@ class BeestatButton(ButtonEntity):
                     if action == "refresh_runtime"
                     else "statistics_import_failed"
                 ),
-            ) from err
+            ) from None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -192,25 +196,28 @@ class BeestatFilterChangedButton(ButtonEntity):
                 self._thermostat_id,
                 dt_util.now(),
             )
-        except BeestatAuthError as err:
+        except BeestatAuthError:
             self._coordinator.config_entry.async_start_reauth_if_available(
                 self._coordinator.hass
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_auth_failed",
-            ) from err
-        except BeestatApiError as err:
+            ) from None
+        except BeestatApiError:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_request_failed",
-            ) from err
-        except Exception as err:
-            _LOGGER.exception("Unexpected filter-change button failure")
+            ) from None
+        except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
+            _LOGGER.error(
+                "Unexpected filter-change button failure (%s)",
+                type(err).__name__,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_request_failed",
-            ) from err
+            ) from None
 
     @property
     def available(self) -> bool:

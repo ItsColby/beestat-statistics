@@ -308,9 +308,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         try:
             return await self._async_fetch_runtime_data(skip_sync=False)
         except BeestatAuthError as err:
-            raise ConfigEntryAuthFailed(self._client.redact_error(err)) from err
-        except Exception as err:
-            raise UpdateFailed(self._client.redact_error(err)) from err
+            raise ConfigEntryAuthFailed(self._client.redact_error(err)) from None
+        except Exception as err:  # noqa: BLE001 - sanitize at the coordinator boundary
+            raise UpdateFailed(self._client.redact_error(err)) from None
 
     async def async_refresh_runtime(
         self,
@@ -326,10 +326,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 summary_window=summary_window,
             )
         except Exception as err:
-            self.async_set_update_error(err)
+            safe_error: Exception = err
+            if not isinstance(err, BeestatApiError):
+                safe_error = UpdateFailed(self._client.redact_error(err))
+            self.async_set_update_error(safe_error)
             if isinstance(err, BeestatAuthError):
                 self.config_entry.async_start_reauth_if_available(self.hass)
-            raise
+            if safe_error is err:
+                raise
+            raise safe_error from None
         self.async_set_updated_data(data)
         return data
 

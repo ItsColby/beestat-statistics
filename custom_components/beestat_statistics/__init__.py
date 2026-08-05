@@ -726,7 +726,7 @@ class BeestatStatisticsImporter:
                 "Skipping Beestat runtime_thermostat window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
-                err,
+                self._client.redact_error(err),
             )
             return []
 
@@ -825,7 +825,7 @@ class BeestatStatisticsImporter:
                 "Skipping Beestat runtime_sensor window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
-                err,
+                self._client.redact_error(err),
             )
             return []
 
@@ -850,20 +850,23 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_auth_failed",
-            ) from err
+            ) from None
         except BeestatApiError as err:
             runtime.coordinator.async_record_import_error(err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_request_failed",
-            ) from err
-        except Exception as err:
+            ) from None
+        except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
             runtime.coordinator.async_record_import_error(err)
-            _LOGGER.exception("Unexpected Beestat statistics import service failure")
+            _LOGGER.error(
+                "Unexpected Beestat statistics import service failure (%s)",
+                type(err).__name__,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="statistics_import_failed",
-            ) from err
+            ) from None
 
     async def async_handle_get_configuration(
         call: ServiceCall,
@@ -925,20 +928,23 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_auth_failed",
-            ) from err
+            ) from None
         except BeestatApiError as err:
             runtime.coordinator.async_record_import_error(err)
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_request_failed",
-            ) from err
-        except Exception as err:
+            ) from None
+        except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
             runtime.coordinator.async_record_import_error(err)
-            _LOGGER.exception("Unexpected Beestat statistics rebuild service failure")
+            _LOGGER.error(
+                "Unexpected Beestat statistics rebuild service failure (%s)",
+                type(err).__name__,
+            )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="statistics_import_failed",
-            ) from err
+            ) from None
 
     async def async_handle_repair_filter_change_boundary(
         call: ServiceCall,
@@ -1097,15 +1103,16 @@ async def async_setup_entry(
             coordinator.config_entry.async_start_reauth_if_available(hass)
             coordinator.async_record_import_error(err)
             if not scheduled_import_unavailable_logged:
-                _LOGGER.info("Beestat statistics import is unavailable: %s", err)
+                _LOGGER.info(
+                    "Beestat statistics import is unavailable due to authentication failure"
+                )
                 scheduled_import_unavailable_logged = True
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 - sanitize scheduled task failures
             coordinator.async_record_import_error(err)
             if not scheduled_import_unavailable_logged:
                 _LOGGER.info(
-                    "Beestat statistics import is unavailable: %s",
-                    err,
-                    exc_info=True,
+                    "Beestat statistics import is unavailable (%s)",
+                    type(err).__name__,
                 )
                 scheduled_import_unavailable_logged = True
         else:
@@ -1244,6 +1251,7 @@ def _migrate_legacy_unique_ids(
 
     registry = er.async_get(hass)
     mappings = _legacy_unique_id_migration(data)
+    skipped_conflicts = 0
     for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
         new_unique_id = mappings.get(entity_entry.unique_id)
         if new_unique_id is None or new_unique_id == entity_entry.unique_id:
@@ -1254,16 +1262,16 @@ def _migrate_legacy_unique_ids(
             new_unique_id,
         )
         if existing_entity_id not in (None, entity_entry.entity_id):
-            _LOGGER.warning(
-                "Skipping Beestat unique ID migration for %s because %s already uses %s",
-                entity_entry.entity_id,
-                existing_entity_id,
-                new_unique_id,
-            )
+            skipped_conflicts += 1
             continue
         registry.async_update_entity(
             entity_entry.entity_id,
             new_unique_id=new_unique_id,
+        )
+    if skipped_conflicts:
+        _LOGGER.warning(
+            "Skipped %s Beestat unique ID migration conflict(s)",
+            skipped_conflicts,
         )
 
 
@@ -1286,6 +1294,7 @@ def _async_enable_default_problem_entities(
         for suffix in _DEFAULT_ENABLED_PROBLEM_ENTITY_SUFFIXES
     }
     registry = er.async_get(hass)
+    repaired_count = 0
     for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
         target_entity_id = target_entity_ids.get(entity_entry.unique_id)
         if target_entity_id is None:
@@ -1305,9 +1314,11 @@ def _async_enable_default_problem_entities(
             entity_entry.entity_id,
             **updates,
         )
+        repaired_count += 1
+    if repaired_count:
         _LOGGER.info(
-            "Repaired Beestat diagnostic entity %s after default visibility change",
-            entity_entry.entity_id,
+            "Repaired %s Beestat diagnostic entity record(s) after default visibility change",
+            repaired_count,
         )
 
 
@@ -1341,6 +1352,7 @@ def _async_migrate_homekit_device_assignments(
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
     target_device_ids = _mapped_unique_id_device_ids(data)
+    moved_count = 0
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry,
         entry.entry_id,
@@ -1352,12 +1364,10 @@ def _async_migrate_homekit_device_assignments(
             entity_entry.entity_id,
             device_id=target_device_id,
         )
-        _LOGGER.info(
-            "Moved Beestat entity %s to mapped HomeKit/Ecobee device",
-            entity_entry.entity_id,
-        )
+        moved_count += 1
 
     current_fallback_identifiers = _current_beestat_device_identifiers(data)
+    removed_count = 0
     for device_entry in dr.async_entries_for_config_entry(
         device_registry,
         entry.entry_id,
@@ -1368,9 +1378,13 @@ def _async_migrate_homekit_device_assignments(
         if not beestat_identifiers.isdisjoint(current_fallback_identifiers):
             continue
         device_registry.async_remove_device(device_entry.id)
+        removed_count += 1
+    if moved_count or removed_count:
         _LOGGER.info(
-            "Removed stale Beestat fallback device %s after HomeKit mapping",
-            device_entry.name,
+            "Reconciled HomeKit/Ecobee device mapping: moved %s entity record(s), "
+            "removed %s stale fallback device record(s)",
+            moved_count,
+            removed_count,
         )
 
 

@@ -15,13 +15,30 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
     """Validate HA quality rules that can be checked without HA test deps."""
 
     def test_logs_do_not_expose_raw_beestat_identifiers(self) -> None:
-        for relative_path in (
-            "custom_components/beestat_statistics/__init__.py",
-            "custom_components/beestat_statistics/entry_options.py",
-        ):
-            text = (ROOT / relative_path).read_text(encoding="utf-8")
+        integration_root = ROOT / "custom_components/beestat_statistics"
+        for path in integration_root.glob("*.py"):
+            text = path.read_text(encoding="utf-8")
             self.assertNotIn("thermostat_id=%s", text)
             self.assertNotIn("sensor_id=%s", text)
+            tree = ast.parse(text)
+            for call in ast.walk(tree):
+                if not _is_logger_call(call):
+                    continue
+                rendered = ast.unparse(call)
+                self.assertNotIn("_LOGGER.exception", rendered)
+                self.assertNotIn("exc_info=True", rendered)
+                for private_expression in (
+                    "entity_entry.entity_id",
+                    "existing_entity_id",
+                    "new_unique_id",
+                    "device_entry.name",
+                ):
+                    self.assertNotIn(private_expression, rendered)
+                for argument in call.args[1:]:
+                    self.assertFalse(
+                        isinstance(argument, ast.Name) and argument.id == "err",
+                        f"Raw exception logged by {path.name}: {rendered}",
+                    )
 
     def test_coordinator_entities_preserve_coordinator_availability(self) -> None:
         for relative_path, class_names in {
@@ -159,7 +176,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("require_api_key=True", text)
         self.assertIn('"api_key_required"', text)
         self.assertIn('errors["base"] = "unknown"', text)
-        self.assertIn("_LOGGER.exception", text)
+        self.assertIn(
+            '"Unexpected exception validating Beestat setup (%s)"',
+            text,
+        )
+        self.assertIn("type(err).__name__", text)
         self.assertIn("NumberSelector(", text)
         self.assertIn("NumberSelectorMode.BOX", text)
         self.assertIn("EntitySelector(", text)
@@ -309,11 +330,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("HomeAssistantError", button_text)
         self.assertIn("async_start_reauth_if_available", button_text)
         self.assertIn(
-            '_LOGGER.exception("Unexpected Beestat statistics import service failure")',
+            '"Unexpected Beestat statistics import service failure (%s)"',
             init_text,
         )
         self.assertIn(
-            '_LOGGER.exception("Unexpected Beestat button failure during %s", action)',
+            '"Unexpected Beestat button failure during %s (%s)"',
             button_text,
         )
 
@@ -657,6 +678,22 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             },
         )
         self.assertTrue(exception_keys <= set(strings["exceptions"]))
+
+        for tree in (ast.parse(init_text), ast.parse(button_text)):
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Raise) or node.exc is None:
+                    continue
+                if not (
+                    isinstance(node.exc, ast.Call)
+                    and isinstance(node.exc.func, ast.Name)
+                    and node.exc.func.id == "HomeAssistantError"
+                ):
+                    continue
+                self.assertTrue(
+                    node.cause is None
+                    or (isinstance(node.cause, ast.Constant) and node.cause.value is None),
+                    "HomeAssistantError must not retain a raw exception cause",
+                )
 
         coordinator_text = (
             ROOT / "custom_components/beestat_statistics/coordinator.py"
@@ -1090,6 +1127,15 @@ def _contains_super_available(node: ast.AST | None) -> bool:
         if isinstance(func, ast.Name) and func.id == "super":
             return True
     return False
+
+
+def _is_logger_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "_LOGGER"
+    )
 
 
 def _contains_method_call(node: ast.AST | None, method_name: str) -> bool:
