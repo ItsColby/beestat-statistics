@@ -63,13 +63,23 @@ Validate JSON metadata after edits to JSON files:
 .\.venv\Scripts\python.exe -c "import json, pathlib; [json.loads(pathlib.Path(path).read_text(encoding='utf-8')) for path in ['custom_components/beestat_statistics/manifest.json','custom_components/beestat_statistics/translations/en.json','custom_components/beestat_statistics/icons.json','hacs.json','docs/beestat-api-surface.json']]"
 ```
 
-Home Assistant config-flow test requirements, including the minimum supported Python version, are owned by `requirements-ha-test.txt` and its resolved package metadata:
+Home Assistant config-flow test requirements are owned by two explicit lanes:
+`requirements-ha-test.txt` proves the minimum supported Core release, while
+`requirements-ha-test-current.txt` proves the current released Core used by the
+maintainer. Keep both exact and update the current lane after a stable Core
+upgrade rather than testing a beta as a release gate.
 
 ```powershell
 python -m pip install -r requirements-ha-test.txt
 python -m pytest tests/test_config_flow_ha.py -q
+python -m pip install -r requirements-ha-test-current.txt
+python -m pytest tests/test_config_flow_ha.py -q
 ```
 
-If local Python does not satisfy the current pinned requirements, state that the HA-specific pytest gate is deferred to the GitHub workflow or a compatible environment. Do not weaken `requirements-ha-test.txt` just to make an incompatible local venv pass.
+The Home Assistant harness is Linux-only because Core imports `fcntl`; on
+Windows, run these lanes in Docker or defer them to the GitHub workflow. If
+local Python does not satisfy a pinned lane, state that the HA-specific pytest
+gate is deferred to a compatible environment. Do not weaken either
+requirements file just to make an incompatible local venv pass.
 
 Before reporting complete, read back `git status --short --branch` and list any validation that could not run.

@@ -306,12 +306,12 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence. Omitted rules are intentionally unclaimed until matching coverage, typing, or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. CI runs the harness against both the minimum supported stable Core version pinned in `requirements-ha-test.txt` and the upcoming Core line pinned in `requirements-ha-test-next.txt`. The beta lane stays pinned until the matching stable Home Assistant test harness is published. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. CI runs the harness against both the minimum supported stable Core version pinned in `requirements-ha-test.txt` and David's current deployed Core line pinned in `requirements-ha-test-current.txt`. Advance the current lane only after the matching stable Home Assistant release and test harness are available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
 ```powershell
 python -m pip install -r requirements-ha-test.txt
 pytest tests/test_config_flow_ha.py -q
-python -m pip install -r requirements-ha-test-next.txt
+python -m pip install -r requirements-ha-test-current.txt
 pytest tests/test_config_flow_ha.py -q
 ```
 
@@ -319,6 +319,7 @@ On Windows, run the same harness through Docker Desktop or WSL from the reposito
 
 ```powershell
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install -r requirements-ha-test.txt && pytest tests/test_config_flow_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA. Dependabot proposes weekly GitHub Actions updates, and the stable **Release gate** check succeeds only when unit, both Home Assistant harness lanes, hassfest, and HACS validation all succeed.
