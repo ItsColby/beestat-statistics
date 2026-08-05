@@ -471,13 +471,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     )
                 except BeestatAuthError:
                     raise
-                except BeestatApiError as err:
+                except BeestatApiError:
                     _LOGGER.warning(
-                        (
-                            "Falling back to full Beestat summary status read "
-                            "after windowed read failed: %s"
-                        ),
-                        self._client.redact_error(err),
+                        "Falling back to full Beestat summary status read "
+                        "after windowed read failed"
                     )
                     rows = await self._client.async_read_id(
                         "runtime_thermostat_summary"

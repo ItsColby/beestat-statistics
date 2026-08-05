@@ -105,14 +105,13 @@ def _unwrap_response(payload: Any, resource: str, method: str) -> Any:
             detail = payload.get("message") or payload.get("errors") or payload
         if _is_auth_error(detail):
             raise BeestatAuthError(f"{resource}.{method} authentication failed")
-        raise BeestatApiError(f"{resource}.{method} returned an error: {detail}")
+        raise BeestatApiError(f"{resource}.{method} returned an error")
     success = payload.get("success")
     if success is False or success == 0:
         detail = payload.get("message") or payload.get("errors") or payload.get("error")
         if _is_auth_error(detail):
             raise BeestatAuthError(f"{resource}.{method} authentication failed")
-        suffix = f": {detail}" if detail else ""
-        raise BeestatApiError(f"{resource}.{method} returned an unsuccessful response{suffix}")
+        raise BeestatApiError(f"{resource}.{method} returned an unsuccessful response")
     if "data" in payload:
         return payload["data"]
     return payload
@@ -140,10 +139,18 @@ class BeestatClient:
         self._timeout = timeout
         self._retries = retries
 
-    def redact_error(self, err: Exception | str) -> str:
+    def redact_error(self, err: Exception) -> str:
         """Return an error string safe to expose in Home Assistant state."""
 
-        return _redact_text(str(err), self._redactions)
+        if isinstance(err, BeestatAuthError | BeestatApiError):
+            return _redact_text(str(err), self._redactions)
+        if isinstance(err, asyncio.TimeoutError):
+            return "Beestat request timed out"
+        if isinstance(err, aiohttp.ClientError):
+            return "Beestat network request failed"
+        if isinstance(err, ValueError):
+            return "Beestat returned invalid response data"
+        return f"Unexpected integration error ({type(err).__name__})"
 
     async def async_call(
         self,
@@ -187,9 +194,8 @@ class BeestatClient:
                                 f"with HTTP {response.status}"
                             )
                         if response.status >= 400:
-                            body = self.redact_error(await response.text())[:200]
                             raise BeestatApiError(
-                                f"{resource}.{method} returned HTTP {response.status}: {body}"
+                                f"{resource}.{method} returned HTTP {response.status}"
                             )
                         payload = await response.json(content_type=None)
                 data = _unwrap_response(payload, resource, method)
@@ -206,10 +212,14 @@ class BeestatClient:
                     break
                 await asyncio.sleep(2**attempt)
 
-        detail = self.redact_error(last_error or "unknown error")
+        detail = (
+            self.redact_error(last_error)
+            if last_error is not None
+            else "Beestat request failed"
+        )
         raise BeestatApiError(
             f"Failed Beestat call {resource}.{method}: {detail}"
-        ) from last_error
+        ) from None
 
     async def async_sync_runtime(self) -> list[dict[str, Any]]:
         """Ask Beestat to sync runtime data before reading it."""
