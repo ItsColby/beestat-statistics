@@ -23,7 +23,7 @@ from .entity import (
     thermostat_device_info,
     thermostat_suggested_object_id,
 )
-from .entry_options import FilterRuntimeSummaryUnavailable, async_mark_filter_changed
+from .entry_options import async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
@@ -197,11 +197,6 @@ class BeestatFilterChangedButton(ButtonEntity):
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="beestat_auth_failed",
-            ) from err
-        except FilterRuntimeSummaryUnavailable as err:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="filter_runtime_summary_unavailable",
             ) from err
         except BeestatApiError as err:
             raise HomeAssistantError(

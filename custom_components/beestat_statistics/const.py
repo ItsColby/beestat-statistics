@@ -25,9 +25,16 @@ CONF_API_BASE = "api_base"
 CONF_ACCOUNT_FINGERPRINT = "account_fingerprint"
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"
 CONF_ENABLED = "enabled"
+CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT = (
+    "filter_change_boundary_reconciled_at"
+)
+CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END = (
+    "filter_change_boundary_source_data_end"
+)
 CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS = (
     "filter_change_day_runtime_baseline_seconds"
 )
+CONF_FILTER_CHANGED_AT = "filter_changed_at"
 CONF_FILTER_CHANGED_ENTITY_ID = "filter_changed_entity_id"
 CONF_FILTER_CHANGED_DATE = "filter_changed_date"
 CONF_FILTER_LIFETIME_RUNTIME_HOURS = "filter_lifetime_runtime_hours"
@@ -67,7 +74,9 @@ MIN_SCAN_INTERVAL_SECONDS = 300
 SERVICE_IMPORT_STATISTICS = "import_statistics"
 SERVICE_GET_CONFIGURATION = "get_configuration"
 SERVICE_REBUILD_STATISTICS = "rebuild_statistics"
+SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY = "repair_filter_change_boundary"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_CHANGED_AT = "changed_at"
 ATTR_END_DATE = "end_date"
 ATTR_SKIP_SYNC = "skip_sync"
 ATTR_START_DATE = "start_date"

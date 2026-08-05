@@ -190,7 +190,14 @@ class ConfigPayloadTest(unittest.TestCase):
                             "id": 1,
                             "climate_entity_id": "climate.old",
                             "filter_changed_date": "2026-07-05",
+                            "filter_changed_at": "2026-07-05T21:48:00+00:00",
                             "filter_change_day_runtime_baseline_seconds": 28800,
+                            "filter_change_boundary_reconciled_at": (
+                                "2026-07-05T22:05:00+00:00"
+                            ),
+                            "filter_change_boundary_source_data_end": (
+                                "2026-07-05T21:50:00+00:00"
+                            ),
                         },
                         {"id": 2, "filter_changed_date": "2026-06-18"},
                     ],
@@ -216,7 +223,14 @@ class ConfigPayloadTest(unittest.TestCase):
                         "id": 1,
                         "climate_entity_id": "climate.main",
                         "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": "2026-07-05T21:48:00+00:00",
                         "filter_change_day_runtime_baseline_seconds": 28800,
+                        "filter_change_boundary_reconciled_at": (
+                            "2026-07-05T22:05:00+00:00"
+                        ),
+                        "filter_change_boundary_source_data_end": (
+                            "2026-07-05T21:50:00+00:00"
+                        ),
                     },
                     {
                         "id": 2,
@@ -235,7 +249,11 @@ class ConfigPayloadTest(unittest.TestCase):
                         {
                             "id": 1,
                             "filter_changed_date": "2026-07-05",
+                            "filter_changed_at": "2026-07-05T21:48:00+00:00",
                             "filter_change_day_runtime_baseline_seconds": 28800,
+                            "filter_change_boundary_reconciled_at": (
+                                "2026-07-05T22:05:00+00:00"
+                            ),
                         }
                     ],
                 },

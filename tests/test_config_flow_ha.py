@@ -10,9 +10,11 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -42,8 +44,10 @@ from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
 )
+from custom_components.beestat_statistics.button import BeestatFilterChangedButton
 from custom_components.beestat_statistics.const import (
     API_BASE,
+    ATTR_CHANGED_AT,
     ATTR_CONFIG_ENTRY_ID,
     CONF_ACCOUNT_FINGERPRINT,
     CONF_API_BASE,
@@ -64,6 +68,7 @@ from custom_components.beestat_statistics.const import (
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
     SERVICE_GET_CONFIGURATION,
+    SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
 
 pytestmark = [
@@ -915,6 +920,80 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
     assert "api_key" not in repr(response)
 
 
+async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
+    hass: HomeAssistant,
+) -> None:
+    entry = _add_mock_entry(hass)
+    local_tz = ZoneInfo("America/New_York")
+    repair_at = (datetime.now(timezone.utc) - timedelta(days=1)).astimezone(local_tz)
+    repair_at = repair_at.replace(microsecond=0)
+    thermostat = _configured_thermostat(
+        thermostat_id=1001,
+        name="Zone A",
+        slug="zone_a",
+        filter_changed_date=repair_at.date(),
+    )
+    coordinator = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            config=types.SimpleNamespace(thermostats=(thermostat,))
+        ),
+        local_tz=local_tz,
+    )
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert await async_setup(hass, {})
+
+    changed_at = repair_at.replace(tzinfo=None).isoformat()
+    with patch(
+        "custom_components.beestat_statistics.async_mark_filter_changed",
+        new_callable=AsyncMock,
+    ) as mark_changed:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+            {
+                ATTR_CONFIG_ENTRY_ID: entry.entry_id,
+                "thermostat_id": 1001,
+                ATTR_CHANGED_AT: changed_at,
+            },
+            blocking=True,
+        )
+
+    mark_changed.assert_awaited_once()
+    assert mark_changed.await_args.args[1] == 1001
+    assert mark_changed.await_args.args[2] == repair_at.astimezone(timezone.utc)
+    assert mark_changed.await_args.kwargs == {"dismiss_alerts": False}
+
+
+async def test_native_filter_button_forwards_exact_aware_click_time() -> None:
+    thermostat = _configured_thermostat(
+        thermostat_id=1001,
+        name="Zone A",
+        slug="zone_a",
+    )
+    coordinator = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            config=types.SimpleNamespace(thermostats=(thermostat,))
+        )
+    )
+    entity = BeestatFilterChangedButton(coordinator, thermostat)
+    changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+
+    with (
+        patch(
+            "custom_components.beestat_statistics.button.dt_util.now",
+            return_value=changed_at,
+        ),
+        patch(
+            "custom_components.beestat_statistics.button.async_mark_filter_changed",
+            new_callable=AsyncMock,
+        ) as mark_changed,
+    ):
+        await entity.async_press()
+
+    mark_changed.assert_awaited_once_with(coordinator, 1001, changed_at)
+
+
 async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> None:
     """Test the options flow stores native thermostat mapping overrides."""
 
@@ -1066,6 +1145,7 @@ def _configured_thermostat(
     slug: str,
     climate_entity_id: str | None = None,
     filter_change_day_runtime_baseline_seconds: float | None = None,
+    filter_changed_date: date | None = None,
 ) -> Any:
     return types.SimpleNamespace(
         thermostat_id=thermostat_id,
@@ -1076,10 +1156,13 @@ def _configured_thermostat(
         occupancy_entity_id=None,
         motion_entity_id=None,
         filter_changed_entity_id=None,
-        filter_changed_date=None,
+        filter_changed_date=filter_changed_date,
+        filter_changed_at=None,
         filter_change_day_runtime_baseline_seconds=(
             filter_change_day_runtime_baseline_seconds
         ),
+        filter_change_boundary_reconciled_at=None,
+        filter_change_boundary_source_data_end=None,
         filter_lifetime_runtime_hours=250.0,
         filter_max_age_days=90,
         filter_notice_days=7,

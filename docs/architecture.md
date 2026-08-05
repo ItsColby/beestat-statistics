@@ -64,18 +64,17 @@
   coverage updates.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
-  The button refreshes Beestat before atomically saving the local date and the
-  change day's cumulative fan-runtime boundary; derived filter runtime subtracts
-  that boundary, including in same-day forecasts, so the new filter starts at
-  zero without storing sub-daily source rows. The boundary follows Beestat's
-  5-minute runtime source granularity. A false sync response or missing
-  current-day summary row fails closed before persistence. After persistence,
-  the coordinator rebuilds derived state from the refreshed cached rows rather
-  than performing a second network read. A manual date edit clears the internal
-  boundary because it does not prove a click-time runtime snapshot, then performs
-  a skip-sync refresh so the selected historical date is covered even when it
-  predates the coordinator's cached summary window. Keep the boundary internal
-  and do not switch filter change tracking to a datetime entity without a
+  The button first persists the local date and exact UTC click timestamp, because
+  the physical replacement must not be lost when Beestat is stale or unavailable.
+  Pending derived runtime is zero rather than charging earlier same-day runtime to
+  the new filter. The coordinator then reconciles the timestamp against a bounded
+  raw-runtime read, rounds to the nearest 5-minute source boundary, stores that
+  day's fan-runtime baseline, and retries every 15 minutes while source data is
+  not ready. Same-day forecasts subtract the finalized baseline. A manual date
+  edit clears the click timestamp and boundary because date-only input does not
+  prove when the replacement occurred, then performs a skip-sync refresh so the
+  selected historical date is covered. Keep the timestamp and boundary internal
+  attributes of the date entity; do not add a second datetime entity without a
   separate UI/data-model requirement.
 - Beestat filter alert dismissal is best-effort after a Home Assistant filter
   change. Do not write Ecobee settings or directly mutate Beestat sync-owned
@@ -126,3 +125,6 @@
   public fixtures, or public documentation examples.
 - Keep filter-date source, helper, and click-boundary attributes available in
   current state but excluded from Recorder history.
+- Persist the physical filter-change event before fallible cloud work. A pending
+  five-minute boundary must be visible in diagnostics, retry without blocking the
+  normal coordinator, and never revert the saved click timestamp.

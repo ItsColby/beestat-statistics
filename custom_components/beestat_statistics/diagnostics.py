@@ -12,11 +12,18 @@ from .const import (
     CONF_ACCOUNT_FINGERPRINT,
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+    CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
+    CONF_FILTER_CHANGED_AT,
     CONF_MOTION_ENTITY_ID,
     CONF_OCCUPANCY_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_ID,
 )
-from .coordinator import BeestatRuntimeData, ThermostatRuntimeSummary
+from .coordinator import (
+    BeestatRuntimeData,
+    ThermostatRuntimeSummary,
+    filter_boundary_status,
+)
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 TO_REDACT = {
@@ -29,6 +36,9 @@ TO_REDACT = {
     "thermostat_id",
     "thermostat_slug",
     "last_filter_alert_dismiss_thermostat_id",
+    CONF_FILTER_CHANGED_AT,
+    CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+    CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_CLIMATE_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_OCCUPANCY_ENTITY_ID,
@@ -146,6 +156,29 @@ async def async_get_config_entry_diagnostics(
             )
             if runtime
             else None,
+            "last_filter_boundary_reconcile_attempt_at": _isoformat(
+                runtime.coordinator.last_filter_boundary_reconcile_attempt_at
+            )
+            if runtime
+            else None,
+            "last_filter_boundary_reconciled_count": (
+                runtime.coordinator.last_filter_boundary_reconciled_count
+            )
+            if runtime
+            else None,
+            "last_filter_boundary_pending_count": (
+                runtime.coordinator.last_filter_boundary_pending_count
+            )
+            if runtime
+            else None,
+            "last_filter_boundary_reconcile_error": (
+                _redacted_text(
+                    runtime.coordinator.last_filter_boundary_reconcile_error,
+                    redaction_values,
+                )
+            )
+            if runtime
+            else None,
         },
         "beestat_data": {
             "fetched_at": _isoformat(data.fetched_at) if data else None,
@@ -195,11 +228,17 @@ def _thermostat_summary_diagnostics(
     summary: ThermostatRuntimeSummary,
 ) -> dict[str, Any]:
     metadata = data.thermostat_metadata.get(summary.thermostat_id)
+    thermostat = next(
+        item
+        for item in data.config.thermostats
+        if item.thermostat_id == summary.thermostat_id
+    )
     return {
         "thermostat_id": summary.thermostat_id,
         "latest_date": str(summary.latest_date) if summary.latest_date else None,
         "lag_days": summary.lag_days,
         "filter_runtime_hours": summary.filter_runtime_hours,
+        "filter_boundary_status": filter_boundary_status(thermostat),
         "recent_runtime_hours_per_day": summary.recent_runtime_hours_per_day,
         "current_profile": metadata.current_climate_name if metadata else None,
         "scheduled_profile": metadata.scheduled_climate_name if metadata else None,

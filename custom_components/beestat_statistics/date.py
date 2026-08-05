@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_model import ConfiguredThermostat
 from .const import thermostat_entity_unique_id
-from .coordinator import BeestatRuntimeDataCoordinator
+from .coordinator import BeestatRuntimeDataCoordinator, filter_boundary_status
 from .entity import (
     async_add_new_entities,
     thermostat_device_info,
@@ -66,7 +66,12 @@ class BeestatFilterChangedDate(
         {
             "source",
             "home_assistant_override_date",
+            "filter_changed_at",
+            "boundary_status",
             "change_day_runtime_baseline_seconds",
+            "boundary_reconciled_at",
+            "boundary_source_data_end",
+            "boundary_precision_minutes",
             "legacy_helper_entity_id",
         }
     )
@@ -114,7 +119,7 @@ class BeestatFilterChangedDate(
         return thermostat.filter_changed_date
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | float | None] | None:
+    def extra_state_attributes(self) -> dict[str, str | float | int | None] | None:
         """Return where the effective date came from."""
 
         data = self.coordinator.data
@@ -131,8 +136,27 @@ class BeestatFilterChangedDate(
                 if thermostat.filter_changed_date is not None
                 else None
             ),
+            "filter_changed_at": (
+                thermostat.filter_changed_at.isoformat()
+                if thermostat.filter_changed_at is not None
+                else None
+            ),
+            "boundary_status": filter_boundary_status(thermostat),
             "change_day_runtime_baseline_seconds": (
                 thermostat.filter_change_day_runtime_baseline_seconds
+            ),
+            "boundary_reconciled_at": (
+                thermostat.filter_change_boundary_reconciled_at.isoformat()
+                if thermostat.filter_change_boundary_reconciled_at is not None
+                else None
+            ),
+            "boundary_source_data_end": (
+                thermostat.filter_change_boundary_source_data_end.isoformat()
+                if thermostat.filter_change_boundary_source_data_end is not None
+                else None
+            ),
+            "boundary_precision_minutes": (
+                5 if thermostat.filter_changed_at is not None else None
             ),
             "legacy_helper_entity_id": thermostat.filter_changed_entity_id,
         }

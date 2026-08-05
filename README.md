@@ -198,7 +198,7 @@ The integration intentionally keeps the Beestat API boundary narrow: `runtime.sy
 
 When a thermostat is mapped to a `filter_changed_entity_id`, changes to that Home Assistant helper also trigger a Beestat statistics import so filter-runtime statistics catch up without a separate automation. The helper is a compatibility bridge; the Home Assistant **Filter changed date** entity is preferred for new changes.
 
-For filter tracking, use the per-thermostat **Filter changed date** entity or press **Mark filter changed** on the thermostat device. The effective filter date comes from the Home Assistant date override first, then a configured legacy helper, then Beestat/Ecobee filter metadata when available. Filter forecast sensors use the effective date, Beestat runtime since that date, the recent runtime rate, and the per-thermostat lifetime/max-age settings. **Mark filter changed** first refreshes Beestat and snapshots the change day's current cumulative fan runtime; subsequent filter runtime and same-day forecasts subtract that boundary, so the new filter starts at zero when the button is pressed even though Beestat supplies daily aggregates. Beestat builds runtime from 5-minute intervals, so the boundary has that source granularity rather than second-level precision. The button fails without saving if sync fails or Beestat has not yet produced a current-day summary row; try again after the next 5-minute interval. Repeated presses on the same day replace the boundary and reset the new-filter runtime again. Manually editing **Filter changed date** clears any click boundary because a date-only edit does not establish when during that day the replacement occurred, then refreshes the summary coverage needed for the selected historical date. Button changes rebuild derived Home Assistant state from the already-refreshed rows without another fallible network read. The integration also best-effort dismisses active Beestat filter-looking alerts for that thermostat; it does not write ecobee settings or directly edit Beestat sync-owned filter metadata. The filter due sensor is a problem binary sensor; filter due soon is an advisory binary sensor for the notice window.
+For filter tracking, use the per-thermostat **Filter changed date** entity or press **Mark filter changed** on the thermostat device. The effective filter date comes from the Home Assistant date override first, then a configured legacy helper, then Beestat/Ecobee filter metadata when available. Filter forecast sensors use the effective date, Beestat runtime since that date, the recent runtime rate, and the per-thermostat lifetime/max-age settings. **Mark filter changed** immediately saves the exact UTC click timestamp before any fallible cloud work, so the new filter starts at zero even if Beestat is temporarily stale or unavailable. The coordinator then reads only the relevant raw-runtime window, reconciles the click to Beestat's nearest 5-minute source boundary, and retries every 15 minutes until that interval is available. After reconciliation, same-day runtime and forecasts subtract the finalized change-day baseline. Repeated presses on the same day replace the prior timestamp and reset the new-filter lifetime again. Manually editing **Filter changed date** clears the click timestamp and boundary because date-only input does not establish when during that day the replacement occurred. The date entity exposes unrecorded boundary status and timestamps for local troubleshooting. The integration also best-effort dismisses active Beestat filter-looking alerts for that thermostat; it does not write Ecobee settings or directly edit Beestat sync-owned filter metadata. The filter due sensor is a problem binary sensor; filter due soon is an advisory binary sensor for the notice window.
 
 Use the **Refresh Runtime** button to refresh native Beestat status/profile/freshness entities without importing Recorder statistics. Use the **Import Statistics** button or service action to sync Beestat and import daily external statistics. Use `beestat_statistics.rebuild_statistics` only when you need to repair or backfill Recorder statistics from the full Beestat summary baseline.
 
@@ -236,6 +236,8 @@ Fields:
 - `skip_sync`: optional boolean. Use only for controlled workflows where Beestat was just synced and another sync would be redundant.
 
 The `beestat_statistics.rebuild_statistics` service action forces the full Beestat summary baseline before writing statistics, optionally limited by configured Beestat `thermostat_id`, `start_date`, and `end_date`. Use it for repairs, corrected historical Beestat rows, or targeted backfills rather than routine imports.
+
+The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets timestamps without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. This is a narrow historical repair tool, not the normal replacement workflow.
 
 ## Diagnostics
 
@@ -291,6 +293,7 @@ Local pure-module checks:
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
+.\.venv\Scripts\ruff.exe check custom_components tests scripts
 ```
 
 Upstream Beestat API drift check:
@@ -303,14 +306,14 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence. Omitted rules are intentionally unclaimed until matching coverage, typing, or runtime evidence exists.
 
-Home Assistant harness checks require a Python `3.14` environment with the pinned dependencies in `requirements-ha-test.txt` installed:
+Home Assistant harness checks require Linux with Python `3.14` and the pinned dependencies in `requirements-ha-test.txt` installed. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
 ```powershell
 python -m pip install -r requirements-ha-test.txt
 pytest tests/test_config_flow_ha.py -q
 ```
 
-If local Python is older than `3.14.2`, run the same harness through Docker Desktop from the repository root:
+On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install -r requirements-ha-test.txt && pytest tests/test_config_flow_ha.py -q"
@@ -318,7 +321,9 @@ docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m 
 
 ## Release Publishing
 
-Before publishing a release intended for HACS, verify the repository still has a public description, relevant Home Assistant/HACS topics, issues enabled, a brand icon, passing Hassfest, passing HACS Action, and a GitHub release tag matching the manifest version.
+Do not use a direct push to `main` as the first build check. Push a release-candidate branch, wait for every **Validate** pull-request job to reach terminal success, then merge. After the merge, wait for the `main` **Validate** run to reach terminal success before creating the immutable tag and GitHub Release. A source push alone is not a completed Home Assistant integration release.
+
+Before publishing a release intended for HACS, verify the repository still has a public description, relevant Home Assistant/HACS topics, issues enabled, a brand icon, passing unit and Home Assistant tests, passing Hassfest, passing HACS Action, and a GitHub release tag matching the manifest version.
 
 When publishing manually with GitHub CLI, write the release body to a Markdown file and pass it with `--notes-file`. Avoid PowerShell strings containing `\n`; GitHub renders those as literal backslash-n text.
 

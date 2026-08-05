@@ -8,6 +8,7 @@ from typing import Any
 
 from .config_model import BeestatConfig, ConfiguredSensor, ConfiguredThermostat
 from .const import CONF_SENSORS, CONF_THERMOSTATS
+from .coordinator import filter_boundary_status
 
 
 def configuration_response(
@@ -80,8 +81,16 @@ def _configured_thermostat(thermostat: ConfiguredThermostat) -> dict[str, Any]:
         "motion_entity_id": thermostat.motion_entity_id,
         "filter_changed_entity_id": thermostat.filter_changed_entity_id,
         "filter_changed_date": _json_value(thermostat.filter_changed_date),
+        "filter_changed_at": _json_value(thermostat.filter_changed_at),
+        "filter_boundary_status": filter_boundary_status(thermostat),
         "filter_change_day_runtime_baseline_seconds": (
             thermostat.filter_change_day_runtime_baseline_seconds
+        ),
+        "filter_change_boundary_reconciled_at": _json_value(
+            thermostat.filter_change_boundary_reconciled_at
+        ),
+        "filter_change_boundary_source_data_end": _json_value(
+            thermostat.filter_change_boundary_source_data_end
         ),
         "filter_lifetime_runtime_hours": thermostat.filter_lifetime_runtime_hours,
         "filter_max_age_days": thermostat.filter_max_age_days,

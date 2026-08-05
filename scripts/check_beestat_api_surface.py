@@ -55,7 +55,8 @@ INTEGRATION_DECISIONS = (
         "decision": "used",
         "reason": (
             "Point-history reads are windowed and feed daily Home Assistant "
-            "external statistics."
+            "external statistics; thermostat reads also reconcile saved filter "
+            "clicks to the nearest five-minute runtime boundary."
         ),
     },
     {
