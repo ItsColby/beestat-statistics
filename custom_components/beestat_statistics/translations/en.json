@@ -154,7 +154,7 @@
         }
       },
       "reauth_confirm": {
-        "title": "[%key:common::config_flow::title::reauth%]",
+        "title": "Reauthenticate Beestat Statistics",
         "description": "Beestat rejected the configured API key. Enter a valid Beestat API key to continue importing HVAC history.",
         "data": {
           "api_key": "Beestat API key",
@@ -178,7 +178,7 @@
     },
     "abort": {
       "already_configured": "Beestat Statistics is already configured.",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "reauth_successful": "Beestat Statistics was reauthenticated.",
       "reconfigure_successful": "Beestat Statistics was reconfigured."
     }
   },
@@ -262,6 +262,24 @@
         "skip_sync": {
           "name": "Skip Beestat sync",
           "description": "Skip Beestat runtime, thermostat, and sensor sync calls before rebuilding."
+        }
+      }
+    },
+    "repair_filter_change_boundary": {
+      "name": "Repair filter change boundary",
+      "description": "Assign an exact timestamp to an existing Home Assistant filter-change date and reconcile its five-minute Beestat runtime boundary. Intended for a verified recent historical button press; it does not dismiss alerts or write Ecobee settings.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics configuration entry that owns the thermostat."
+        },
+        "thermostat_id": {
+          "name": "Thermostat ID",
+          "description": "Configured Beestat thermostat ID whose saved filter date matches the timestamp's local date."
+        },
+        "changed_at": {
+          "name": "Changed at",
+          "description": "Verified filter-change timestamp from the last 31 days. A value without an offset is interpreted in Home Assistant's local timezone."
         }
       }
     }

@@ -816,6 +816,56 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     f"{platform}.{key} is missing from icons.json",
                 )
 
+    def test_services_have_complete_translations_and_current_icons(self) -> None:
+        services_text = (
+            ROOT / "custom_components/beestat_statistics/services.yaml"
+        ).read_text(encoding="utf-8")
+        translations = _json_file(
+            "custom_components/beestat_statistics/translations/en.json"
+        )
+        icons = _json_file("custom_components/beestat_statistics/icons.json")
+        service_matches = list(
+            re.finditer(r"^([a-z_]+):$", services_text, re.MULTILINE)
+        )
+        service_keys = {match.group(1) for match in service_matches}
+
+        self.assertEqual(service_keys, set(translations["services"]))
+        self.assertEqual(service_keys, set(icons["services"]))
+        for index, match in enumerate(service_matches):
+            key = match.group(1)
+            block_end = (
+                service_matches[index + 1].start()
+                if index + 1 < len(service_matches)
+                else len(services_text)
+            )
+            service_block = services_text[match.end() : block_end]
+            field_keys = set(
+                re.findall(r"^    ([a-z_]+):$", service_block, re.MULTILINE)
+            )
+            self.assertIn("name", translations["services"][key])
+            self.assertIn("description", translations["services"][key])
+            self.assertEqual(field_keys, set(translations["services"][key]["fields"]))
+            for field in translations["services"][key]["fields"].values():
+                self.assertIn("name", field)
+                self.assertIn("description", field)
+            self.assertEqual(set(icons["services"][key]), {"service"})
+            self.assertRegex(icons["services"][key]["service"], r"^mdi:[a-z0-9-]+$")
+
+    def test_custom_integration_translations_do_not_use_core_references(self) -> None:
+        translations_text = (
+            ROOT / "custom_components/beestat_statistics/translations/en.json"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("[%key:", translations_text)
+
+    def test_validate_workflow_runs_on_a_schedule(self) -> None:
+        workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertRegex(workflow, r"(?m)^  schedule:\s*$")
+        self.assertRegex(workflow, r'(?m)^    - cron: "\d+ \d+ \* \* \d"\s*$')
+
     def test_device_entity_names_do_not_repeat_integration_name(self) -> None:
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"

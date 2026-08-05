@@ -79,8 +79,17 @@ def async_register_service_device(
 def is_beestat_only_device(device_entry: dr.DeviceEntry, entry_id: str) -> bool:
     """Return whether a device can be safely managed as Beestat-owned."""
 
+    missing = object()
+    config_entry_id = getattr(device_entry, "config_entry_id", missing)
+    if config_entry_id is not missing:
+        owned_by_entry = config_entry_id == entry_id
+    else:
+        owned_by_entry = set(getattr(device_entry, "config_entries", ())) == {
+            entry_id
+        }
+
     return (
-        set(device_entry.config_entries) == {entry_id}
+        owned_by_entry
         and bool(device_entry.identifiers)
         and all(identifier[0] == DOMAIN for identifier in device_entry.identifiers)
         and not device_entry.connections

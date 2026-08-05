@@ -169,6 +169,22 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertEqual(target.device_entry.id, "thermostat-device-id")
 
     def test_only_exclusively_owned_beestat_devices_are_safe_to_remove(self) -> None:
+        current = types.SimpleNamespace(
+            config_entry_id="entry-1",
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections=set(),
+        )
+        current_foreign = types.SimpleNamespace(
+            config_entry_id="homekit-entry",
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections=set(),
+        )
+        current_unowned = types.SimpleNamespace(
+            config_entry_id=None,
+            config_entries={"entry-1"},
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections=set(),
+        )
         fallback = types.SimpleNamespace(
             config_entries={"entry-1"},
             identifiers={("beestat_statistics", "thermostat_1")},
@@ -193,6 +209,11 @@ class EntityHelpersTest(unittest.TestCase):
             connections=set(),
         )
 
+        self.assertTrue(self.entity.is_beestat_only_device(current, "entry-1"))
+        self.assertFalse(
+            self.entity.is_beestat_only_device(current_foreign, "entry-1")
+        )
+        self.assertFalse(self.entity.is_beestat_only_device(current_unowned, "entry-1"))
         self.assertTrue(self.entity.is_beestat_only_device(fallback, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(shared, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(connected, "entry-1"))

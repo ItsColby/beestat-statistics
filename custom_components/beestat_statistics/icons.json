@@ -1,6 +1,17 @@
 {
   "services": {
-    "get_configuration": "mdi:code-json"
+    "get_configuration": {
+      "service": "mdi:code-json"
+    },
+    "import_statistics": {
+      "service": "mdi:database-import"
+    },
+    "repair_filter_change_boundary": {
+      "service": "mdi:air-filter"
+    },
+    "rebuild_statistics": {
+      "service": "mdi:database-refresh"
+    }
   },
   "entity": {
     "binary_sensor": {
