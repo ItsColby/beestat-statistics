@@ -49,6 +49,7 @@ from custom_components.beestat_statistics.const import (  # noqa: E402
     CONF_ACCOUNT_FINGERPRINT,
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
     CONF_ID,
     CONF_POINT_LOOKBACK_DAYS,
@@ -397,6 +398,53 @@ async def test_import_flow_preserves_ui_mapping_options(
         CONF_SCAN_INTERVAL_SECONDS: 1800,
         CONF_THERMOSTATS: [
             {CONF_ID: 1001, CONF_FILTER_CHANGED_DATE: "2026-07-05"}
+        ],
+    }
+
+
+async def test_import_flow_preserves_button_boundary_with_yaml_mapping(
+    hass: HomeAssistant,
+) -> None:
+    """Test YAML mappings retain the native filter click boundary."""
+
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_FILTER_CHANGED_DATE: "2026-07-05",
+                    CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: 28800,
+                }
+            ],
+        },
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_IMPORT},
+        data={
+            CONF_API_KEY: "yaml-key",
+            CONF_API_BASE: "https://api.example.test/",
+            CONF_POINT_LOOKBACK_DAYS: 90,
+            CONF_SCAN_INTERVAL_SECONDS: 1800,
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"}
+            ],
+        },
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert dict(entry.options) == {
+        CONF_POINT_LOOKBACK_DAYS: 90,
+        CONF_SCAN_INTERVAL_SECONDS: 1800,
+        CONF_THERMOSTATS: [
+            {
+                CONF_ID: 1001,
+                CONF_CLIMATE_ENTITY_ID: "climate.zone_a",
+                CONF_FILTER_CHANGED_DATE: "2026-07-05",
+                CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: 28800,
+            }
         ],
     }
 

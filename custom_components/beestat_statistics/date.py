@@ -62,6 +62,14 @@ class BeestatFilterChangedDate(
     _attr_name = "Filter changed date"
     _attr_translation_key = "filter_changed_date"
     _attr_entity_category = EntityCategory.CONFIG
+    _unrecorded_attributes = frozenset(
+        {
+            "source",
+            "home_assistant_override_date",
+            "change_day_runtime_baseline_seconds",
+            "legacy_helper_entity_id",
+        }
+    )
 
     def __init__(
         self,

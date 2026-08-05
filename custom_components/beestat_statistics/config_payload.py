@@ -122,10 +122,46 @@ def merge_import_options(
 
     options = dict(existing_options)
     options.update(import_options)
-    for key in (CONF_THERMOSTATS, CONF_SENSORS):
-        if key in import_data:
-            options.pop(key, None)
+    if CONF_THERMOSTATS in import_data:
+        yaml_thermostats = _yaml_thermostats_with_filter_boundaries(
+            existing_options.get(CONF_THERMOSTATS),
+            import_data[CONF_THERMOSTATS],
+        )
+        if yaml_thermostats is None:
+            options.pop(CONF_THERMOSTATS, None)
+        else:
+            options[CONF_THERMOSTATS] = yaml_thermostats
+    if CONF_SENSORS in import_data:
+        options.pop(CONF_SENSORS, None)
     return options
+
+
+def _yaml_thermostats_with_filter_boundaries(
+    existing_value: Any,
+    import_value: Any,
+) -> list[dict[str, Any]] | None:
+    """Overlay saved click boundaries on YAML-owned thermostat rows."""
+
+    existing_by_id = {
+        int(item[CONF_ID]): item
+        for item in _override_items(existing_value)
+        if CONF_ID in item
+    }
+    imported = [dict(item) for item in _override_items(import_value)]
+    preserved_boundary = False
+    for item in imported:
+        if CONF_FILTER_CHANGED_DATE in item or CONF_ID not in item:
+            continue
+        existing = existing_by_id.get(int(item[CONF_ID]))
+        if existing is None or CONF_FILTER_CHANGED_DATE not in existing:
+            continue
+        item[CONF_FILTER_CHANGED_DATE] = existing[CONF_FILTER_CHANGED_DATE]
+        if CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS in existing:
+            item[CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS] = existing[
+                CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS
+            ]
+        preserved_boundary = True
+    return imported if preserved_boundary else None
 
 
 def migrate_entry_payload(

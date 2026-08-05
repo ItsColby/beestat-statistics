@@ -178,20 +178,31 @@ class ConfigPayloadTest(unittest.TestCase):
             },
         )
 
-    def test_merge_import_options_clears_yaml_owned_mapping_options(self) -> None:
+    def test_merge_import_options_preserves_filter_boundary_with_yaml_mapping(
+        self,
+    ) -> None:
         self.assertEqual(
             config_payload.merge_import_options(
                 {
                     "point_lookback_days": 30,
                     "scan_interval_seconds": 900,
                     "thermostats": [
-                        {"id": 1, "filter_changed_date": "2026-07-05"}
+                        {
+                            "id": 1,
+                            "climate_entity_id": "climate.old",
+                            "filter_changed_date": "2026-07-05",
+                            "filter_change_day_runtime_baseline_seconds": 28800,
+                        },
+                        {"id": 2, "filter_changed_date": "2026-06-18"},
                     ],
                 },
                 {
                     "api_key": "key",
                     "api_base": "https://api.beestat.io/",
-                    "thermostats": [{"id": 1, "climate_entity_id": "climate.main"}],
+                    "thermostats": [
+                        {"id": 1, "climate_entity_id": "climate.main"},
+                        {"id": 2, "climate_entity_id": "climate.second"},
+                    ],
                 },
                 {
                     "point_lookback_days": 90,
@@ -201,7 +212,63 @@ class ConfigPayloadTest(unittest.TestCase):
             {
                 "point_lookback_days": 90,
                 "scan_interval_seconds": 1800,
+                "thermostats": [
+                    {
+                        "id": 1,
+                        "climate_entity_id": "climate.main",
+                        "filter_changed_date": "2026-07-05",
+                        "filter_change_day_runtime_baseline_seconds": 28800,
+                    },
+                    {
+                        "id": 2,
+                        "climate_entity_id": "climate.second",
+                        "filter_changed_date": "2026-06-18",
+                    },
+                ],
             },
+        )
+
+    def test_merge_import_options_yaml_filter_date_clears_click_boundary(self) -> None:
+        self.assertEqual(
+            config_payload.merge_import_options(
+                {
+                    "thermostats": [
+                        {
+                            "id": 1,
+                            "filter_changed_date": "2026-07-05",
+                            "filter_change_day_runtime_baseline_seconds": 28800,
+                        }
+                    ],
+                },
+                {
+                    "thermostats": [
+                        {
+                            "id": 1,
+                            "filter_changed_date": "2026-07-06",
+                        }
+                    ],
+                },
+                {},
+            ),
+            {},
+        )
+
+    def test_merge_import_options_clears_yaml_owned_mapping_options(self) -> None:
+        self.assertEqual(
+            config_payload.merge_import_options(
+                {
+                    "thermostats": [
+                        {"id": 1, "climate_entity_id": "climate.old"}
+                    ],
+                },
+                {
+                    "thermostats": [
+                        {"id": 1, "climate_entity_id": "climate.main"}
+                    ],
+                },
+                {},
+            ),
+            {},
         )
 
 

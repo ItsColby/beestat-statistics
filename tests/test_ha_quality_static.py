@@ -532,6 +532,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         binary_text = (
             ROOT / "custom_components/beestat_statistics/binary_sensor.py"
         ).read_text(encoding="utf-8")
+        date_text = (
+            ROOT / "custom_components/beestat_statistics/date.py"
+        ).read_text(encoding="utf-8")
 
         for text, snippets in {
             sensor_text: (
@@ -544,6 +547,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "_unrecorded_attributes = frozenset(",
                 '"beestat_name"',
                 '"active_alerts"',
+            ),
+            date_text: (
+                "_unrecorded_attributes = frozenset(",
+                '"change_day_runtime_baseline_seconds"',
+                '"legacy_helper_entity_id"',
             ),
         }.items():
             for snippet in snippets:

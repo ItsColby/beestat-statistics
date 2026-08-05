@@ -37,6 +37,11 @@
   than maintaining a second list of IDs: missing flags preserve open-world
   discovery, `enabled: false` is an explicit exclusion, and `enabled: true`
   deliberately includes a source Beestat reports inactive.
+- When YAML remains the declarative thermostat-mapping owner, later imports
+  rebuild the effective option rows from YAML while preserving a native filter
+  date and click-time runtime boundary by Beestat source ID. An explicit YAML
+  `filter_changed_date` is date-only input, takes precedence, and clears the
+  click boundary.
 - Source selectors combine current raw API discovery, the effective runtime
   model, and saved overrides. This keeps excluded and temporarily missing
   resources recoverable while preserving unknown saved rows across discovery
@@ -117,3 +122,5 @@
 - Never put API keys, account fingerprints, private entity IDs, or raw Beestat
   identifiers in entity state, shareable diagnostics, logs, translations,
   public fixtures, or public documentation examples.
+- Keep filter-date source, helper, and click-boundary attributes available in
+  current state but excluded from Recorder history.

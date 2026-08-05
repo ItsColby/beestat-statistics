@@ -58,6 +58,12 @@ beestat_statistics:
 
 After the imported entry is loaded, prefer Home Assistant's integration UI as the owner for routine changes. If YAML was only used to bootstrap the integration, remove the `beestat_statistics:` YAML block after verifying the entry works; keep YAML only when you intentionally want it to remain the declarative source.
 
+When YAML continues to own thermostat mappings, a native **Mark filter changed**
+click remains stored in config-entry options and is overlaid on the YAML mapping
+after later imports or restarts. An explicit YAML `filter_changed_date` remains
+date-only declarative input, takes precedence, and clears any saved click-time
+runtime boundary.
+
 Configuration fields:
 
 - `api_key`: Beestat API key.
@@ -172,7 +178,9 @@ The integration creates a Home Assistant service device for Beestat. Thermostat 
 
 New active Beestat thermostats or sensors discovered after setup are added on the next successful runtime refresh or statistics import unless they were explicitly excluded. Sources reported inactive by Beestat can be deliberately selected in **Choose Beestat sources**; that selection is stored explicitly so it survives refreshes.
 
-Diagnostic, profile, mapping, and alert-detail state attributes are available in current Home Assistant state but are excluded from Recorder history to avoid retaining noisy metadata on every state write.
+Diagnostic, profile, mapping, filter-boundary, and alert-detail state attributes
+are available in current Home Assistant state but are excluded from Recorder history
+to avoid retaining noisy metadata on every state write.
 
 The Status sensor attributes include HomeKit mapping counts for thermostats and room sensors, so you can see whether Beestat is enriching local HomeKit devices or using Beestat-only fallback devices. The HomeKit mapping incomplete problem binary sensor uses the same counts.
 
