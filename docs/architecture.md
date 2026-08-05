@@ -54,6 +54,16 @@
 - Use HomeKit/Ecobee entities in Home Assistant for live local thermostat, room
   temperature, occupancy, motion, and control state. Use Beestat for history,
   runtime summaries, cloud profile context, alerts, and filter forecast inputs.
+- Mapped Beestat entities link through the existing HomeKit/Ecobee device entry;
+  they must not return that other integration's identifiers or connections in
+  `device_info` or add the Beestat config entry as a device owner. Setup removes
+  legacy shared ownership with Home Assistant's helper-device migration API and
+  preserves entity assignments. Fallback devices remain Beestat-owned and do
+  not use the deprecated `via_device` identifier contract. This is required for
+  Home Assistant Core 2026.8's one-config-entry-per-device model.
+- Automated stale-fallback removal is limited to devices owned only by the
+  current Beestat config entry, carrying only Beestat identifiers and no foreign
+  connections. A mixed or shared registry record must fail closed.
 - Do not add direct Ecobee API integration. Ecobee no longer provides new API
   keys, so ecobee-cloud actions are out of scope for this repo. If a useful
   action is needed, integrate it through Home Assistant state/services or
@@ -127,4 +137,7 @@
   current state but excluded from Recorder history.
 - Persist the physical filter-change event before fallible cloud work. A pending
   five-minute boundary must be visible in diagnostics, retry without blocking the
-  normal coordinator, and never revert the saved click timestamp.
+  normal coordinator, and never revert the saved click timestamp. Re-read the
+  effective timestamp and current options after each awaited raw-runtime request;
+  finalize only the same still-pending revision so an older request cannot
+  overwrite a repeated press or an unrelated concurrent options update.

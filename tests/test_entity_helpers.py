@@ -84,7 +84,7 @@ class EntityHelpersTest(unittest.TestCase):
 
         self.assertEqual(added, ["one", "two", "three"])
 
-    def test_fallback_devices_are_via_beestat_service(self) -> None:
+    def test_fallback_devices_are_beestat_owned_without_deprecated_parent(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
             slug="main",
@@ -102,14 +102,18 @@ class EntityHelpersTest(unittest.TestCase):
             include_voc=False,
         )
 
+        thermostat_info = self.entity.thermostat_device_info(thermostat)
+        sensor_info = self.entity.room_sensor_device_info(sensor)
         self.assertEqual(
-            self.entity.thermostat_device_info(thermostat)["via_device"],
-            ("beestat_statistics", "service"),
+            thermostat_info["identifiers"],
+            {("beestat_statistics", "thermostat_1")},
         )
         self.assertEqual(
-            self.entity.room_sensor_device_info(sensor)["via_device"],
-            ("beestat_statistics", "service"),
+            sensor_info["identifiers"],
+            {("beestat_statistics", "sensor_2")},
         )
+        self.assertNotIn("via_device", thermostat_info)
+        self.assertNotIn("via_device", sensor_info)
 
     def test_service_device_is_registered_before_children_reference_it(self) -> None:
         entry = types.SimpleNamespace(entry_id="entry-1")
@@ -130,12 +134,12 @@ class EntityHelpersTest(unittest.TestCase):
             ],
         )
 
-    def test_homekit_devices_keep_homekit_identity(self) -> None:
+    def test_homekit_devices_link_without_cross_integration_device_info(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
             slug="main",
             name="Main",
-            device_identifiers=(("homekit_controller", "thermostat-device"),),
+            device_id="thermostat-device-id",
         )
         sensor = self.config_model.ConfiguredSensor(
             sensor_id=2,
@@ -147,25 +151,107 @@ class EntityHelpersTest(unittest.TestCase):
             include_air_quality=False,
             include_co2=False,
             include_voc=False,
-            device_identifiers=(("homekit_controller", "sensor-device"),),
+            device_id="sensor-device-id",
         )
 
         thermostat_info = self.entity.thermostat_device_info(thermostat)
         sensor_info = self.entity.room_sensor_device_info(sensor)
 
-        self.assertEqual(
-            thermostat_info["identifiers"],
-            {("homekit_controller", "thermostat-device")},
+        self.assertIsNone(thermostat_info)
+        self.assertIsNone(sensor_info)
+
+        target = types.SimpleNamespace(device_entry=None)
+        self.entity.link_entity_to_device(
+            target,
+            object(),
+            "thermostat-device-id",
         )
-        self.assertEqual(
-            sensor_info["identifiers"],
-            {("homekit_controller", "sensor-device")},
+        self.assertEqual(target.device_entry.id, "thermostat-device-id")
+
+    def test_only_exclusively_owned_beestat_devices_are_safe_to_remove(self) -> None:
+        fallback = types.SimpleNamespace(
+            config_entries={"entry-1"},
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections=set(),
         )
-        for info in (thermostat_info, sensor_info):
-            self.assertNotIn("name", info)
-            self.assertNotIn("manufacturer", info)
-            self.assertNotIn("model", info)
-            self.assertNotIn("configuration_url", info)
+        shared = types.SimpleNamespace(
+            config_entries={"entry-1", "homekit-entry"},
+            identifiers={
+                ("beestat_statistics", "thermostat_1"),
+                ("homekit_controller", "source-device"),
+            },
+            connections=set(),
+        )
+        connected = types.SimpleNamespace(
+            config_entries={"entry-1"},
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections={("mac", "00:11:22:33:44:55")},
+        )
+        foreign = types.SimpleNamespace(
+            config_entries={"entry-1"},
+            identifiers={("homekit_controller", "source-device")},
+            connections=set(),
+        )
+
+        self.assertTrue(self.entity.is_beestat_only_device(fallback, "entry-1"))
+        self.assertFalse(self.entity.is_beestat_only_device(shared, "entry-1"))
+        self.assertFalse(self.entity.is_beestat_only_device(connected, "entry-1"))
+        self.assertFalse(self.entity.is_beestat_only_device(foreign, "entry-1"))
+
+    def test_device_ownership_cleanup_prefers_current_home_assistant_api(self) -> None:
+        calls = []
+        self.entity.helper_integration = types.SimpleNamespace(
+            async_remove_helper_devices=lambda hass, **kwargs: calls.append(
+                ("current", hass, kwargs)
+            ),
+            async_remove_helper_config_entry_from_source_device=(
+                lambda hass, **kwargs: calls.append(("legacy", hass, kwargs))
+            ),
+        )
+        hass = object()
+
+        self.entity.async_remove_cross_integration_device_ownership(
+            hass,
+            "entry-1",
+            ("device-2", None, "device-1", "device-2"),
+        )
+
+        self.assertEqual({call[0] for call in calls}, {"current"})
+        self.assertEqual(
+            {call[2]["source_device_id"] for call in calls},
+            {"device-1", "device-2"},
+        )
+        self.assertTrue(
+            all(call[2]["helper_config_entry_id"] == "entry-1" for call in calls)
+        )
+
+    def test_device_ownership_cleanup_supports_legacy_home_assistant_api(self) -> None:
+        calls = []
+        self.entity.helper_integration = types.SimpleNamespace(
+            async_remove_helper_config_entry_from_source_device=(
+                lambda hass, **kwargs: calls.append((hass, kwargs))
+            )
+        )
+        hass = object()
+
+        self.entity.async_remove_cross_integration_device_ownership(
+            hass,
+            "entry-1",
+            ("device-1",),
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                (
+                    hass,
+                    {
+                        "helper_config_entry_id": "entry-1",
+                        "source_device_id": "device-1",
+                    },
+                )
+            ],
+        )
 
     def test_thermostat_suggested_object_id_uses_fallback_only_for_beestat_devices(
         self,
@@ -179,7 +265,7 @@ class EntityHelpersTest(unittest.TestCase):
             thermostat_id=2,
             slug="mapped",
             name="Mapped",
-            device_identifiers=(("homekit_controller", "thermostat-device"),),
+            device_id="thermostat-device-id",
         )
 
         self.assertEqual(
@@ -200,6 +286,7 @@ class EntityHelpersTest(unittest.TestCase):
 
         def async_get(_hass):
             return types.SimpleNamespace(
+                async_get=lambda device_id: types.SimpleNamespace(id=device_id),
                 async_get_or_create=lambda **kwargs: (
                     self.fake_device_registry.calls.append(kwargs)
                 )

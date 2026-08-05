@@ -21,6 +21,7 @@ from .config_model import (
     build_beestat_config,
 )
 from .config_payload import (
+    effective_thermostat_override,
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
@@ -28,6 +29,7 @@ from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+    CONF_FILTER_CHANGED_AT,
     DOMAIN,
     FILTER_RECENT_RUNTIME_DAYS,
 )
@@ -496,7 +498,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             return
 
         self.last_filter_boundary_reconcile_attempt_at = datetime.now(timezone.utc)
-        options = dict(self.config_entry.options)
         pending_count = 0
         for thermostat in pending:
             changed_at = thermostat.filter_changed_at
@@ -531,10 +532,29 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             if boundary is None:
                 pending_count += 1
                 continue
+            current_override = effective_thermostat_override(
+                self.config_entry.data,
+                self.config_entry.options,
+                thermostat.thermostat_id,
+            )
+            current_changed_at = _parse_datetime(
+                current_override.get(CONF_FILTER_CHANGED_AT)
+                if current_override is not None
+                else None
+            )
+            current_reconciled_at = _parse_datetime(
+                current_override.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT)
+                if current_override is not None
+                else None
+            )
+            if current_changed_at != changed_at or current_reconciled_at is not None:
+                if current_changed_at is not None and current_reconciled_at is None:
+                    pending_count += 1
+                continue
             reconciled_at = datetime.now(timezone.utc)
             options = update_thermostat_override_options(
                 self.config_entry.data,
-                options,
+                self.config_entry.options,
                 thermostat.thermostat_id,
                 {
                     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: (
@@ -548,13 +568,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     ),
                 },
             )
-            self.last_filter_boundary_reconciled_count += 1
-
-        if options != dict(self.config_entry.options):
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 options=options,
             )
+            self.last_filter_boundary_reconciled_count += 1
+
         self.last_filter_boundary_pending_count = pending_count
         if pending_count:
             self.async_schedule_filter_boundary_reconcile()

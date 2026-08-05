@@ -85,7 +85,7 @@ class SensorHelpersTest(unittest.TestCase):
                         thermostat_id=1,
                         slug="mapped",
                         name="Mapped",
-                        device_identifiers=(("homekit_controller", "thermostat"),),
+                        device_id="thermostat-device-id",
                     ),
                     self.config_model.ConfiguredThermostat(
                         thermostat_id=2,
@@ -104,7 +104,7 @@ class SensorHelpersTest(unittest.TestCase):
                         include_air_quality=False,
                         include_co2=False,
                         include_voc=False,
-                        device_connections=(("mac", "00:11:22:33:44:55"),),
+                        device_id="sensor-device-id",
                     ),
                     self.config_model.ConfiguredSensor(
                         sensor_id=11,

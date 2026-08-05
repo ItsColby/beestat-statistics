@@ -113,7 +113,11 @@ from .const import (
     thermostat_entity_unique_id,
 )
 from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
-from .entity import async_register_service_device
+from .entity import (
+    async_register_service_device,
+    async_remove_cross_integration_device_ownership,
+    is_beestat_only_device,
+)
 from .entry_options import async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
@@ -1070,6 +1074,18 @@ async def async_setup_entry(
     _migrate_legacy_unique_ids(hass, entry, coordinator.data)
     _async_enable_default_problem_entities(hass, entry, coordinator.data)
     _async_migrate_homekit_device_assignments(hass, entry, coordinator.data)
+    if coordinator.data is not None:
+        async_remove_cross_integration_device_ownership(
+            hass,
+            entry.entry_id,
+            (
+                configured.device_id
+                for configured in (
+                    *coordinator.data.config.thermostats,
+                    *coordinator.data.config.sensors,
+                )
+            ),
+        )
     _async_update_override_issues(hass, entry)
 
     scheduled_import_unavailable_logged = False
@@ -1190,14 +1206,10 @@ async def async_remove_config_entry_device(
     if data is None:
         return False
 
-    beestat_identifiers = {
-        identifier
-        for identifier in device_entry.identifiers
-        if identifier[0] == DOMAIN
-    }
-    if not beestat_identifiers:
+    if not is_beestat_only_device(device_entry, entry.entry_id):
         return False
 
+    beestat_identifiers = set(device_entry.identifiers)
     return beestat_identifiers.isdisjoint(_current_beestat_device_identifiers(data))
 
 
@@ -1210,12 +1222,12 @@ def _current_beestat_device_identifiers(
     identifiers.update(
         (DOMAIN, f"thermostat_{thermostat.thermostat_id}")
         for thermostat in data.config.thermostats
-        if not thermostat.device_identifiers and not thermostat.device_connections
+        if thermostat.device_id is None
     )
     identifiers.update(
         (DOMAIN, f"sensor_{sensor.sensor_id}")
         for sensor in data.config.sensors
-        if not sensor.device_identifiers and not sensor.device_connections
+        if sensor.device_id is None
     )
     return identifiers
 
@@ -1304,7 +1316,7 @@ def _default_problem_entity_id(
     thermostat: ConfiguredThermostat,
     suffix: str,
 ) -> str:
-    if thermostat.device_identifiers or thermostat.device_connections:
+    if thermostat.device_id is not None:
         object_id = f"{thermostat.slug}_{suffix}"
     else:
         object_id = f"beestat_{thermostat.slug}_{suffix}"
@@ -1329,7 +1341,7 @@ def _async_migrate_homekit_device_assignments(
 
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
-    target_device_ids = _mapped_unique_id_device_ids(device_registry, data)
+    target_device_ids = _mapped_unique_id_device_ids(data)
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry,
         entry.entry_id,
@@ -1351,13 +1363,9 @@ def _async_migrate_homekit_device_assignments(
         device_registry,
         entry.entry_id,
     ):
-        beestat_identifiers = {
-            identifier
-            for identifier in device_entry.identifiers
-            if identifier[0] == DOMAIN
-        }
-        if not beestat_identifiers:
+        if not is_beestat_only_device(device_entry, entry.entry_id):
             continue
+        beestat_identifiers = set(device_entry.identifiers)
         if not beestat_identifiers.isdisjoint(current_fallback_identifiers):
             continue
         device_registry.async_remove_device(device_entry.id)
@@ -1368,18 +1376,13 @@ def _async_migrate_homekit_device_assignments(
 
 
 def _mapped_unique_id_device_ids(
-    device_registry: dr.DeviceRegistry,
     data: BeestatRuntimeData,
 ) -> dict[str, str]:
     """Return Beestat unique IDs that should attach to HomeKit devices."""
 
     mappings: dict[str, str] = {}
     for thermostat in data.config.thermostats:
-        device_id = _mapped_device_id(
-            device_registry,
-            thermostat.device_identifiers,
-            thermostat.device_connections,
-        )
+        device_id = thermostat.device_id
         if device_id is None:
             continue
         for suffix in _THERMOSTAT_ENTITY_SUFFIXES:
@@ -1400,29 +1403,11 @@ def _mapped_unique_id_device_ids(
         ] = device_id
 
     for sensor in data.config.sensors:
-        device_id = _mapped_device_id(
-            device_registry,
-            sensor.device_identifiers,
-            sensor.device_connections,
-        )
+        device_id = sensor.device_id
         if device_id is None:
             continue
         mappings[sensor_entity_unique_id(sensor.sensor_id, "sensor_in_use")] = device_id
     return mappings
-
-
-def _mapped_device_id(
-    device_registry: dr.DeviceRegistry,
-    identifiers: tuple[tuple[str, str], ...],
-    connections: tuple[tuple[str, str], ...],
-) -> str | None:
-    if not identifiers and not connections:
-        return None
-    device = device_registry.async_get_device(
-        identifiers=set(identifiers) or None,
-        connections=set(connections) or None,
-    )
-    return device.id if device is not None else None
 
 
 def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:

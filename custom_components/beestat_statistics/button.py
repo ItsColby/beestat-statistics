@@ -19,6 +19,7 @@ from .const import DOMAIN, thermostat_entity_unique_id
 from .coordinator import BeestatRuntimeDataCoordinator
 from .entity import (
     async_add_new_entities,
+    link_entity_to_device,
     service_device_info,
     thermostat_device_info,
     thermostat_suggested_object_id,
@@ -171,6 +172,7 @@ class BeestatFilterChangedButton(ButtonEntity):
     ) -> None:
         self._coordinator = coordinator
         self._thermostat_id = thermostat.thermostat_id
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._device_info = thermostat_device_info(thermostat)
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -221,7 +223,7 @@ class BeestatFilterChangedButton(ButtonEntity):
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Home Assistant device this entity belongs to."""
 
         return self._device_info

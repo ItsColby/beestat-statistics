@@ -56,6 +56,21 @@ class ConfigPayloadTest(unittest.TestCase):
         self.assertEqual(options["point_lookback_days"], 45)
         self.assertEqual(options["scan_interval_seconds"], 300)
 
+    def test_effective_thermostat_override_prefers_current_options(self) -> None:
+        self.assertEqual(
+            config_payload.effective_thermostat_override(
+                {"thermostats": [{"id": 1, "filter_changed_at": "old"}]},
+                {
+                    "thermostats": [
+                        {"id": "invalid", "filter_changed_at": "ignore"},
+                        {"id": 1, "filter_changed_at": "new"},
+                    ]
+                },
+                1,
+            ),
+            {"id": 1, "filter_changed_at": "new"},
+        )
+
     def test_split_entry_payload_normalizes_filter_changed_date(self) -> None:
         data, _options = config_payload.split_entry_payload(
             {

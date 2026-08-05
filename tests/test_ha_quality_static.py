@@ -486,12 +486,33 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertIn("async def async_remove_config_entry_device", init_text)
         self.assertIn("_current_beestat_device_identifiers", init_text)
+        self.assertIn("is_beestat_only_device", init_text)
         self.assertIn("_async_migrate_homekit_device_assignments", init_text)
         self.assertIn("device_id=target_device_id", init_text)
         self.assertIn("async_remove_device", init_text)
         self.assertIn("beestat_identifiers.isdisjoint", init_text)
         self.assertIn("If a Beestat-only fallback device disappears", readme)
         self.assertIn("Shared HomeKit/Ecobee devices are not removed", readme)
+
+    def test_mapped_entities_use_home_assistant_helper_device_linking(self) -> None:
+        init_text = (
+            ROOT / "custom_components/beestat_statistics/__init__.py"
+        ).read_text(encoding="utf-8")
+        entity_text = (
+            ROOT / "custom_components/beestat_statistics/entity.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("entity.device_entry = device_entry", entity_text)
+        self.assertIn("if thermostat.device_id is not None", entity_text)
+        self.assertIn("if sensor.device_id is not None", entity_text)
+        self.assertNotIn("via_device=", entity_text)
+        self.assertNotIn("async_get_device", init_text)
+        self.assertIn("async_remove_cross_integration_device_ownership", init_text)
+        self.assertIn("async_remove_helper_devices", entity_text)
+        self.assertIn(
+            "async_remove_helper_config_entry_from_source_device",
+            entity_text,
+        )
 
     def test_platforms_declare_parallel_updates(self) -> None:
         expected = {

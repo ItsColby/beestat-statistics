@@ -24,6 +24,7 @@ from .coordinator import (
 )
 from .entity import (
     async_add_new_entities,
+    link_entity_to_device,
     room_sensor_device_info,
     service_device_info,
     thermostat_device_info,
@@ -230,6 +231,7 @@ class BeestatSensorInUseBinarySensor(
         sensor: ConfiguredSensor,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, sensor.device_id)
         self._sensor = sensor
         self._attr_name = "Sensor in use"
         self._attr_translation_key = "sensor_in_use"
@@ -237,7 +239,7 @@ class BeestatSensorInUseBinarySensor(
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Beestat room-sensor device."""
 
         return room_sensor_device_info(self._sensor)
@@ -304,6 +306,7 @@ class BeestatThermostatAlertProblemBinarySensor(
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
         self._attr_name = "Active alert"
         self._attr_translation_key = "active_alert"
@@ -317,7 +320,7 @@ class BeestatThermostatAlertProblemBinarySensor(
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Beestat thermostat device."""
 
         return thermostat_device_info(self._thermostat)
@@ -422,6 +425,7 @@ class BeestatFilterDueProblemBinarySensor(
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -433,7 +437,7 @@ class BeestatFilterDueProblemBinarySensor(
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Beestat thermostat device."""
 
         return thermostat_device_info(self._thermostat)
@@ -476,9 +480,19 @@ class BeestatFilterDueProblemBinarySensor(
         data: BeestatRuntimeData | None = self.coordinator.data
         if data is None:
             return None
+        thermostat = next(
+            (
+                current
+                for current in data.config.thermostats
+                if current.thermostat_id == self._thermostat.thermostat_id
+            ),
+            None,
+        )
+        if thermostat is None:
+            return None
         today = data.fetched_at.astimezone(self.coordinator.local_tz).date()
         return build_filter_forecast(
-            self._thermostat,
+            thermostat,
             data.thermostats.get(self._thermostat.thermostat_id),
             today=today,
         )
@@ -536,6 +550,7 @@ class BeestatRuntimeStaleProblemBinarySensor(
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
         self._attr_name = "Runtime summary stale"
         self._attr_unique_id = thermostat_entity_unique_id(
@@ -548,7 +563,7 @@ class BeestatRuntimeStaleProblemBinarySensor(
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Beestat thermostat device."""
 
         return thermostat_device_info(self._thermostat)
@@ -603,6 +618,7 @@ class BeestatCloudDataStaleProblemBinarySensor(
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
         self._attr_name = "Cloud data stale"
         self._attr_unique_id = thermostat_entity_unique_id(
@@ -615,7 +631,7 @@ class BeestatCloudDataStaleProblemBinarySensor(
         )
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Beestat thermostat device."""
 
         return thermostat_device_info(self._thermostat)
@@ -659,13 +675,13 @@ def _mapping_summary(data: BeestatRuntimeData) -> dict[str, int]:
     mapped_thermostat_count = sum(
         1
         for thermostat in data.config.thermostats
-        if thermostat.device_identifiers or thermostat.device_connections
+        if thermostat.device_id is not None
     )
     room_sensor_count = len(data.config.sensors)
     mapped_room_sensor_count = sum(
         1
         for sensor in data.config.sensors
-        if sensor.device_identifiers or sensor.device_connections
+        if sensor.device_id is not None
     )
     return {
         "thermostat_count": thermostat_count,

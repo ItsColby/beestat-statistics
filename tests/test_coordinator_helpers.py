@@ -8,7 +8,6 @@ import types
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -507,20 +506,33 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             filter_changed_date=date(2026, 7, 5),
             filter_changed_at=changed_at,
         )
-        entry = types.SimpleNamespace(data={}, options={})
+        entry = types.SimpleNamespace(
+            data={},
+            options={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": changed_at.isoformat(),
+                    }
+                ]
+            },
+        )
 
         def update_entry(_entry, *, options):
             entry.options = options
 
+        async def read_runtime(*_args):
+            entry.options = {**entry.options, "concurrent_option": "preserved"}
+            return [
+                {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+                {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+                {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+            ]
+
         coordinator = types.SimpleNamespace(
             _client=types.SimpleNamespace(
-                async_read_runtime_thermostat=AsyncMock(
-                    return_value=[
-                        {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
-                        {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
-                        {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
-                    ]
-                ),
+                async_read_runtime_thermostat=read_runtime,
                 redact_error=lambda err: str(err),
             ),
             _local_tz=ZoneInfo("America/New_York"),
@@ -550,8 +562,86 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             saved["filter_change_boundary_source_data_end"],
             "2026-07-05T21:50:00+00:00",
         )
+        self.assertEqual(entry.options["concurrent_option"], "preserved")
         self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
         self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
+
+    async def test_slow_reconciliation_does_not_overwrite_newer_click(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+        newer_changed_at = datetime.fromisoformat("2026-07-05T22:12:00+00:00")
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1001,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_at=changed_at,
+        )
+        entry = types.SimpleNamespace(
+            data={},
+            options={
+                "unrelated_option": "preserve-me",
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": changed_at.isoformat(),
+                    }
+                ],
+            },
+        )
+
+        async def read_runtime(*_args):
+            entry.options = {
+                "unrelated_option": "newer-value",
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": newer_changed_at.isoformat(),
+                    }
+                ],
+            }
+            return [
+                {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+                {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+            ]
+
+        def update_entry(_entry, *, options):
+            entry.options = options
+
+        coordinator = types.SimpleNamespace(
+            _client=types.SimpleNamespace(
+                async_read_runtime_thermostat=read_runtime,
+                redact_error=lambda err: str(err),
+            ),
+            _local_tz=ZoneInfo("America/New_York"),
+            config_entry=entry,
+            hass=types.SimpleNamespace(
+                config_entries=types.SimpleNamespace(async_update_entry=update_entry)
+            ),
+            last_filter_boundary_pending_count=0,
+            last_filter_boundary_reconciled_count=0,
+            last_filter_boundary_reconcile_error=None,
+            last_filter_boundary_reconcile_attempt_at=None,
+            async_schedule_filter_boundary_reconcile=lambda: None,
+            _async_cancel_filter_boundary_retry=lambda: None,
+        )
+
+        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
+            coordinator,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=(),
+            ),
+        )
+
+        saved = entry.options["thermostats"][0]
+        self.assertEqual(saved["filter_changed_at"], newer_changed_at.isoformat())
+        self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
+        self.assertNotIn("filter_change_boundary_reconciled_at", saved)
+        self.assertEqual(entry.options["unrelated_option"], "newer-value")
+        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 0)
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
 
 
 class _FakeDataUpdateCoordinator:

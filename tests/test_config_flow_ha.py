@@ -1,8 +1,8 @@
-"""Home Assistant config-flow tests for Beestat Statistics.
+"""Home Assistant harness tests for Beestat Statistics.
 
-These tests exercise the real Home Assistant flow manager when the HA test
-harness is installed. Local pure-unit validation skips this module when the
-current Python environment cannot install Home Assistant.
+These tests exercise the real Home Assistant flow manager and registry helpers
+when the HA test harness is installed. Local pure-unit validation skips this
+module when the current Python environment cannot install Home Assistant.
 """
 
 from __future__ import annotations
@@ -32,6 +32,9 @@ try:
     from homeassistant.const import CONF_API_KEY
     from homeassistant.core import HomeAssistant
     from homeassistant.data_entry_flow import FlowResultType
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers.entity import Entity
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
     raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
@@ -70,6 +73,10 @@ from custom_components.beestat_statistics.const import (
     SERVICE_GET_CONFIGURATION,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
+from custom_components.beestat_statistics.entity import (
+    async_remove_cross_integration_device_ownership,
+    link_entity_to_device,
+)
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -89,6 +96,51 @@ ACCOUNT_B = {
     "thermostat_id_hashes": ["account-b"],
     "signature": "account-b",
 }
+
+
+async def test_mapped_entities_link_without_shared_device_ownership(
+    hass: HomeAssistant,
+) -> None:
+    """Test the supported helper-device migration against real HA registries."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    helper_entry = _add_mock_entry(hass)
+    device_registry = dr.async_get(hass)
+    source_device = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device")},
+    )
+    shared_device = device_registry.async_get_or_create(
+        config_entry_id=helper_entry.entry_id,
+        identifiers=set(source_device.identifiers),
+    )
+    entity_registry = er.async_get(hass)
+    helper_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "mapped-helper",
+        config_entry=helper_entry,
+        device_id=shared_device.id,
+        suggested_object_id="mapped_helper",
+    )
+    entity = Entity()
+
+    link_entity_to_device(entity, hass, source_device.id)
+    async_remove_cross_integration_device_ownership(
+        hass,
+        helper_entry.entry_id,
+        (source_device.id,),
+    )
+
+    current_device = device_registry.async_get(source_device.id)
+    current_entity = entity_registry.async_get(helper_entity.entity_id)
+    assert entity.device_entry is not None
+    assert entity.device_entry.id == source_device.id
+    assert current_device is not None
+    assert set(current_device.config_entries) == {source_entry.entry_id}
+    assert current_entity is not None
+    assert current_entity.device_id == source_device.id
 
 
 @pytest.fixture(autouse=True)
@@ -1166,8 +1218,6 @@ def _configured_thermostat(
         filter_lifetime_runtime_hours=250.0,
         filter_max_age_days=90,
         filter_notice_days=7,
-        device_identifiers=(),
-        device_connections=(),
     )
 
 

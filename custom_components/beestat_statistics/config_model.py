@@ -69,8 +69,6 @@ class LocalEcobeeDevice:
     device_id: str
     name: str
     slug: str
-    identifiers: tuple[tuple[str, str], ...]
-    connections: tuple[tuple[str, str], ...]
     climate_entity_id: str | None
     temperature_entity_id: str | None
     occupancy_entity_id: str | None
@@ -114,8 +112,7 @@ class ConfiguredThermostat:
     temperature_entity_id: str | None = None
     occupancy_entity_id: str | None = None
     motion_entity_id: str | None = None
-    device_identifiers: tuple[tuple[str, str], ...] = ()
-    device_connections: tuple[tuple[str, str], ...] = ()
+    device_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +131,7 @@ class ConfiguredSensor:
     temperature_entity_id: str | None = None
     occupancy_entity_id: str | None = None
     motion_entity_id: str | None = None
-    device_identifiers: tuple[tuple[str, str], ...] = ()
-    device_connections: tuple[tuple[str, str], ...] = ()
+    device_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,8 +427,7 @@ def _thermostat_from_row(
         or (local.occupancy_entity_id if local else None),
         motion_entity_id=_string_or_none(override.get(CONF_MOTION_ENTITY_ID))
         or (local.motion_entity_id if local else None),
-        device_identifiers=local.identifiers if local else (),
-        device_connections=local.connections if local else (),
+        device_id=local.device_id if local else None,
     )
 
 
@@ -512,16 +507,14 @@ def _sensor_from_row(
         local = None
         fallback_name = thermostat.name
         fallback_slug = thermostat.slug
-        identifiers = thermostat.device_identifiers
-        connections = thermostat.device_connections
+        device_id = thermostat.device_id
         temperature_entity_id = thermostat.temperature_entity_id
         occupancy_entity_id = thermostat.occupancy_entity_id
         motion_entity_id = thermostat.motion_entity_id
     else:
         fallback_name = _string_or_none(row.get("name")) or f"Sensor {sensor_id}"
         fallback_slug = fallback_name
-        identifiers = local.identifiers if local else ()
-        connections = local.connections if local else ()
+        device_id = local.device_id if local else None
         temperature_entity_id = local.temperature_entity_id if local else None
         occupancy_entity_id = local.occupancy_entity_id if local else None
         motion_entity_id = local.motion_entity_id if local else None
@@ -570,8 +563,7 @@ def _sensor_from_row(
         or occupancy_entity_id,
         motion_entity_id=_string_or_none(override.get(CONF_MOTION_ENTITY_ID))
         or motion_entity_id,
-        device_identifiers=identifiers,
-        device_connections=connections,
+        device_id=device_id,
     )
 
 
@@ -702,8 +694,6 @@ def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
                 device_id=device_id,
                 name=name,
                 slug=slug,
-                identifiers=_sorted_pairs(getattr(device, "identifiers", ())),
-                connections=_sorted_pairs(getattr(device, "connections", ())),
                 climate_entity_id=climate_entity_id,
                 temperature_entity_id=temperature_entity_id,
                 occupancy_entity_id=occupancy_entity_id,
@@ -1060,12 +1050,3 @@ def _bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.lower() in {"true", "1", "yes", "on"}
     return bool(value)
-
-
-def _sorted_pairs(value: Any) -> tuple[tuple[str, str], ...]:
-    pairs: list[tuple[str, str]] = []
-    for item in value or ():
-        if len(item) != 2:
-            continue
-        pairs.append((str(item[0]), str(item[1])))
-    return tuple(sorted(pairs))

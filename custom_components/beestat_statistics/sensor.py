@@ -29,6 +29,7 @@ from .coordinator import (
 )
 from .entity import (
     async_add_new_entities,
+    link_entity_to_device,
     service_device_info,
     thermostat_device_info,
     thermostat_suggested_object_id,
@@ -182,6 +183,7 @@ def _build_entities(
                 coordinator,
                 description,
                 thermostat_device_info(thermostat),
+                thermostat.device_id,
             )
             for description in _thermostat_sensor_descriptions(
                 thermostat=thermostat,
@@ -254,9 +256,11 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
         self,
         coordinator: BeestatRuntimeDataCoordinator,
         description: BeestatSensorEntityDescription,
-        device_info: DeviceInfo,
+        device_info: DeviceInfo | None,
+        device_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, device_id)
         self.entity_description = description
         self._device_info = device_info
         self._attr_translation_key = description.translation_key
@@ -280,7 +284,7 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
         return self.entity_description.value_fn(self.coordinator)
 
     @property
-    def device_info(self) -> DeviceInfo:
+    def device_info(self) -> DeviceInfo | None:
         """Return the Home Assistant device this entity belongs to."""
 
         return self._device_info
@@ -1016,13 +1020,13 @@ def _mapping_summary_attributes(
     mapped_thermostat_count = sum(
         1
         for thermostat in data.config.thermostats
-        if thermostat.device_identifiers or thermostat.device_connections
+        if thermostat.device_id is not None
     )
     room_sensor_count = len(data.config.sensors)
     mapped_room_sensor_count = sum(
         1
         for sensor in data.config.sensors
-        if sensor.device_identifiers or sensor.device_connections
+        if sensor.device_id is not None
     )
     return {
         "thermostat_count": thermostat_count,

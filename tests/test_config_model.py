@@ -198,10 +198,7 @@ class ConfigModelTest(unittest.TestCase):
             thermostat.temperature_entity_id,
             "sensor.zone_a_current_temperature",
         )
-        self.assertEqual(
-            thermostat.device_identifiers,
-            (("homekit_controller", "zone-a-device"),),
-        )
+        self.assertEqual(thermostat.device_id, "thermostat_zone_a")
 
         self.assertEqual(len(config.sensors), 2)
         thermostat_sensor = _sensor(config.sensors, 2001)
@@ -211,10 +208,7 @@ class ConfigModelTest(unittest.TestCase):
             thermostat_sensor.temperature_entity_id,
             "sensor.zone_a_current_temperature",
         )
-        self.assertEqual(
-            thermostat_sensor.device_identifiers,
-            (("homekit_controller", "zone-a-device"),),
-        )
+        self.assertEqual(thermostat_sensor.device_id, "thermostat_zone_a")
 
         room_sensor = _sensor(config.sensors, 2002)
         self.assertEqual(room_sensor.slug, "room_sensor_a")
@@ -228,6 +222,7 @@ class ConfigModelTest(unittest.TestCase):
             "binary_sensor.room_sensor_a_occupancy",
         )
         self.assertEqual(room_sensor.motion_entity_id, "binary_sensor.room_sensor_a_motion")
+        self.assertEqual(room_sensor.device_id, "sensor_room_sensor_a")
         self.assertTrue(room_sensor.include_temperature)
 
     def test_reports_explicit_override_entity_references(self) -> None:
@@ -590,7 +585,7 @@ class ConfigModelTest(unittest.TestCase):
 
         self.assertEqual(config.thermostats[0].name, "Zone A")
         self.assertIsNone(config.thermostats[0].climate_entity_id)
-        self.assertEqual(config.thermostats[0].device_identifiers, ())
+        self.assertIsNone(config.thermostats[0].device_id)
 
     def test_single_fallback_accepts_ecobee_signal_from_device_name(self) -> None:
         self._install_fake_homeassistant_modules(
@@ -622,10 +617,7 @@ class ConfigModelTest(unittest.TestCase):
             config.thermostats[0].climate_entity_id,
             "climate.homekit_thermostat",
         )
-        self.assertEqual(
-            config.thermostats[0].device_identifiers,
-            (("homekit_controller", "thermostat-device"),),
-        )
+        self.assertEqual(config.thermostats[0].device_id, "thermostat_homekit")
 
     def test_name_matching_prefers_strong_ecobee_signal_over_weak_shape(self) -> None:
         self._install_fake_homeassistant_modules(
@@ -674,10 +666,7 @@ class ConfigModelTest(unittest.TestCase):
         )
 
         room_sensor = _sensor(config.sensors, 2002)
-        self.assertEqual(
-            room_sensor.device_identifiers,
-            (("homekit_controller", "ecobee-room_sensor_c"),),
-        )
+        self.assertEqual(room_sensor.device_id, "sensor_ecobee_room_sensor_c")
         self.assertEqual(
             room_sensor.temperature_entity_id,
             "sensor.ecobee_room_sensor_c_temperature",
@@ -737,7 +726,7 @@ class ConfigModelTest(unittest.TestCase):
 
         room_sensor = _sensor(config.sensors, 2002)
         self.assertIsNone(room_sensor.temperature_entity_id)
-        self.assertEqual(room_sensor.device_identifiers, ())
+        self.assertIsNone(room_sensor.device_id)
 
     def test_reports_override_entity_domain_errors(self) -> None:
         errors = config_model.configured_override_entity_domain_errors(

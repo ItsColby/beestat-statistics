@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -71,7 +72,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
             thermostat_id=1,
             slug="main",
             name="Main",
-            device_identifiers=(("homekit_controller", "thermostat-device"),),
+            device_id="thermostat-device-id",
             filter_lifetime_runtime_hours=250,
             filter_max_age_days=90,
             filter_notice_days=7,
@@ -86,7 +87,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
             include_air_quality=False,
             include_co2=False,
             include_voc=False,
-            device_identifiers=(("homekit_controller", "sensor-device"),),
+            device_id="sensor-device-id",
         )
         data = self.coordinator.BeestatRuntimeData(
             config=self.config_model.BeestatConfig(
@@ -176,6 +177,59 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(by_key["cloud_data_stale"].is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
 
+    def test_filter_due_sensor_uses_latest_thermostat_options(self) -> None:
+        old = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=1000,
+            filter_max_age_days=1,
+        )
+        summary = self.coordinator.ThermostatRuntimeSummary(
+            thermostat_id=1,
+            slug="main",
+            label="Main",
+            latest_date=date(2026, 7, 5),
+            lag_days=0,
+            filter_changed_date=date(2026, 7, 3),
+            filter_changed_source="native",
+            filter_runtime_hours=10,
+            recent_runtime_hours_per_day=1,
+        )
+        data = self.coordinator.BeestatRuntimeData(
+            config=self.config_model.BeestatConfig(thermostats=(old,), sensors=()),
+            fetched_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            sync_success_at=None,
+            metadata_sync_success_at=None,
+            summary_rows=(),
+            summary_rows_full=True,
+            summary_window_start=None,
+            summary_window_end=None,
+            thermostat_rows=(),
+            sensor_rows=(),
+            summary_row_count=0,
+            thermostats={1: summary},
+            thermostat_metadata={},
+            sensor_metadata={},
+        )
+        fake_coordinator = _FakeCoordinator(data)
+        entity = self.binary_sensor.BeestatFilterDueProblemBinarySensor(
+            fake_coordinator,
+            old,
+        )
+        self.assertTrue(entity.is_on)
+
+        current = replace(old, filter_max_age_days=90)
+        fake_coordinator.data = replace(
+            data,
+            config=self.config_model.BeestatConfig(
+                thermostats=(current,),
+                sensors=(),
+            ),
+        )
+
+        self.assertFalse(entity.is_on)
+
     def _install_fake_homeassistant_modules(self) -> None:
         aiohttp = types.ModuleType("aiohttp")
         homeassistant = types.ModuleType("homeassistant")
@@ -207,6 +261,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
         device_registry.async_get = lambda _hass: types.SimpleNamespace(
+            async_get=lambda device_id: types.SimpleNamespace(id=device_id),
             async_get_or_create=lambda **_kwargs: None
         )
         entity.DeviceInfo = lambda **kwargs: kwargs
@@ -264,6 +319,7 @@ class _FakeDataUpdateCoordinator(_Subscriptable):
 class _FakeCoordinator:
     def __init__(self, data) -> None:
         self.data = data
+        self.hass = object()
         self.local_tz = ZoneInfo("America/New_York")
         self.last_import_partial = False
         self.last_import_skipped_windows = 0

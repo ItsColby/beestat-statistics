@@ -212,6 +212,26 @@ def entry_runtime_config_data(entry: Any) -> dict[str, Any]:
     return data
 
 
+def effective_thermostat_override(
+    data: Mapping[str, Any],
+    options: Mapping[str, Any],
+    thermostat_id: int,
+) -> dict[str, Any] | None:
+    """Return the current effective override for one thermostat."""
+
+    source = options.get(CONF_THERMOSTATS) if CONF_THERMOSTATS in options else data.get(
+        CONF_THERMOSTATS
+    )
+    return next(
+        (
+            dict(item)
+            for item in _override_items(source)
+            if _override_id(item) == thermostat_id
+        ),
+        None,
+    )
+
+
 def update_thermostat_override_options(
     data: Mapping[str, Any],
     options: Mapping[str, Any],
@@ -371,6 +391,13 @@ def _find_override_item(items: list[dict[str, Any]], item_id: int) -> dict[str, 
     item = {CONF_ID: item_id}
     items.append(item)
     return item
+
+
+def _override_id(item: Mapping[str, Any]) -> int | None:
+    try:
+        return int(item.get(CONF_ID, -1))
+    except (TypeError, ValueError):
+        return None
 
 
 def _override_items(value: Any) -> tuple[dict[str, Any], ...]:
