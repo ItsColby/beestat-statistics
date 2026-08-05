@@ -48,6 +48,10 @@ from custom_components.beestat_statistics.api import (
     BeestatAuthError,
 )
 from custom_components.beestat_statistics.button import BeestatFilterChangedButton
+from custom_components.beestat_statistics.config_model import (
+    ConfiguredSensor,
+    ConfiguredThermostat,
+)
 from custom_components.beestat_statistics.const import (
     API_BASE,
     ATTR_CHANGED_AT,
@@ -1202,28 +1206,20 @@ def _configured_thermostat(
     name: str,
     slug: str,
     climate_entity_id: str | None = None,
+    device_id: str | None = None,
     filter_change_day_runtime_baseline_seconds: float | None = None,
     filter_changed_date: date | None = None,
-) -> Any:
-    return types.SimpleNamespace(
+) -> ConfiguredThermostat:
+    return ConfiguredThermostat(
         thermostat_id=thermostat_id,
         name=name,
         slug=slug,
         climate_entity_id=climate_entity_id,
-        temperature_entity_id=None,
-        occupancy_entity_id=None,
-        motion_entity_id=None,
-        filter_changed_entity_id=None,
+        device_id=device_id,
         filter_changed_date=filter_changed_date,
-        filter_changed_at=None,
         filter_change_day_runtime_baseline_seconds=(
             filter_change_day_runtime_baseline_seconds
         ),
-        filter_change_boundary_reconciled_at=None,
-        filter_change_boundary_source_data_end=None,
-        filter_lifetime_runtime_hours=250.0,
-        filter_max_age_days=90,
-        filter_notice_days=7,
     )
 
 
@@ -1232,9 +1228,17 @@ def _configured_sensor(
     sensor_id: int,
     name: str,
     slug: str,
-) -> Any:
-    return types.SimpleNamespace(
+    device_id: str | None = None,
+) -> ConfiguredSensor:
+    return ConfiguredSensor(
         sensor_id=sensor_id,
         name=name,
         slug=slug,
+        thermostat_id=None,
+        thermostat_slug=None,
+        include_temperature=True,
+        include_air_quality=False,
+        include_co2=False,
+        include_voc=False,
+        device_id=device_id,
     )
