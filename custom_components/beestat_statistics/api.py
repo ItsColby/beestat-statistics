@@ -10,6 +10,9 @@ from typing import Any
 
 import aiohttp
 
+_FINGERPRINT_COMPONENT_MAX = 48
+_FINGERPRINT_MAX = 160
+
 
 class BeestatApiError(RuntimeError):
     """Raised when Beestat returns an unusable response."""
@@ -22,15 +25,30 @@ class BeestatAuthError(BeestatApiError):
 def exception_fingerprint(err: BaseException) -> str:
     """Return a bounded private-safe location for an unexpected exception."""
 
-    exception_type = type(err).__name__
+    exception_type = _fingerprint_component(type(err).__name__, "Exception")
     for frame in reversed(traceback.extract_tb(err.__traceback__)):
         normalized = frame.filename.replace("\\", "/")
         marker = "/custom_components/beestat_statistics/"
         if marker not in normalized:
             continue
-        module = Path(normalized).stem
-        return f"{exception_type}@{module}:{frame.name}:{frame.lineno}"
+        module = _fingerprint_component(Path(normalized).stem, "module")
+        function = _fingerprint_component(frame.name, "function")
+        fingerprint = f"{exception_type}@{module}:{function}:{frame.lineno}"
+        return fingerprint[:_FINGERPRINT_MAX]
     return exception_type
+
+
+def _fingerprint_component(value: str, fallback: str) -> str:
+    """Return one conservative fixed-size fingerprint component."""
+
+    sanitized = "".join(
+        character
+        if character.isascii()
+        and (character.isalnum() or character in "._-")
+        else "_"
+        for character in value
+    )
+    return sanitized[:_FINGERPRINT_COMPONENT_MAX] or fallback
 
 
 def _is_auth_error(value: Any) -> bool:
