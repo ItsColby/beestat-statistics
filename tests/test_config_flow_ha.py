@@ -1020,13 +1020,16 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     assert mark_changed.await_args.kwargs == {"dismiss_alerts": False}
 
 
-async def test_native_filter_button_forwards_exact_aware_click_time() -> None:
+async def test_native_filter_button_forwards_exact_aware_click_time(
+    hass: HomeAssistant,
+) -> None:
     thermostat = _configured_thermostat(
         thermostat_id=1001,
         name="Zone A",
         slug="zone_a",
     )
     coordinator = types.SimpleNamespace(
+        hass=hass,
         data=types.SimpleNamespace(
             config=types.SimpleNamespace(thermostats=(thermostat,))
         )
