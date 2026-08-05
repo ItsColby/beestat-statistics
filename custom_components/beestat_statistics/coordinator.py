@@ -14,7 +14,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import BeestatApiError, BeestatAuthError, BeestatClient
+from .api import (
+    BeestatApiError,
+    BeestatAuthError,
+    BeestatClient,
+    exception_fingerprint,
+)
 from .config_model import (
     BeestatConfig,
     ConfiguredThermostat,
@@ -280,7 +285,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         except Exception as err:  # noqa: BLE001 - coordinator retains normal status
             _LOGGER.warning(
                 "Beestat filter boundary reconciliation retry remains pending (%s)",
-                type(err).__name__,
+                exception_fingerprint(err),
             )
             self.async_schedule_filter_boundary_reconcile()
 
@@ -548,9 +553,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             if changed_at is None:  # pragma: no cover - narrowed above
                 continue
             local_date = changed_at.astimezone(self._local_tz).date()
-            window_start = datetime.combine(local_date, time.min).replace(
-                tzinfo=self._local_tz
-            ).astimezone(timezone.utc)
+            window_start = (
+                datetime.combine(local_date, time.min)
+                .replace(tzinfo=self._local_tz)
+                .astimezone(timezone.utc)
+            )
             window_end = min(
                 datetime.now(timezone.utc),
                 changed_at + timedelta(minutes=5),
@@ -568,7 +575,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 )
                 _LOGGER.warning(
                     "Unable to reconcile a pending Beestat filter boundary (%s)",
-                    type(err).__name__,
+                    exception_fingerprint(err),
                 )
                 continue
 
@@ -641,9 +648,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         thermostat_rows_tuple = tuple(
             row for row in thermostat_rows if not row.get("deleted")
         )
-        sensor_rows_tuple = tuple(
-            row for row in sensor_rows if not row.get("deleted")
-        )
+        sensor_rows_tuple = tuple(row for row in sensor_rows if not row.get("deleted"))
         config = build_beestat_config(
             self.hass,
             thermostat_rows_tuple,
@@ -736,7 +741,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 start = min(start, changed_date)
         return start
 
-
     def _filter_changed_date(
         self,
         thermostat: ConfiguredThermostat,
@@ -778,9 +782,7 @@ def _runtime_hours_since(
     if change_day_baseline_seconds is None:
         return round(_sum_fan_seconds(matched_rows) / 3600, 1)
     changed_day_rows = [
-        row
-        for row in matched_rows
-        if _parse_date(row.get("date")) == changed_date
+        row for row in matched_rows if _parse_date(row.get("date")) == changed_date
     ]
     later_rows = [
         row
@@ -925,7 +927,9 @@ def _thermostat_row(
     return None
 
 
-def _build_sensor_metadata(rows: tuple[dict[str, Any], ...]) -> dict[int, SensorMetadata]:
+def _build_sensor_metadata(
+    rows: tuple[dict[str, Any], ...],
+) -> dict[int, SensorMetadata]:
     metadata: dict[int, SensorMetadata] = {}
     for row in rows:
         sensor_id = _row_int(row, "sensor_id", "id")
@@ -1021,7 +1025,9 @@ def _find_changed_dates(value: Any) -> list[date]:
     return dates
 
 
-def _current_profile(row: dict[str, Any]) -> tuple[str | None, str | None, tuple[str, ...]]:
+def _current_profile(
+    row: dict[str, Any],
+) -> tuple[str | None, str | None, tuple[str, ...]]:
     program = row.get("program")
     if not isinstance(program, dict):
         return None, None, ()
@@ -1042,7 +1048,11 @@ def _current_profile(row: dict[str, Any]) -> tuple[str | None, str | None, tuple
             if isinstance(sensors, list)
             else ()
         )
-        return current_ref, _string_or_none(climate.get("name")) or current_ref, sensor_names
+        return (
+            current_ref,
+            _string_or_none(climate.get("name")) or current_ref,
+            sensor_names,
+        )
     return current_ref, current_ref, ()
 
 

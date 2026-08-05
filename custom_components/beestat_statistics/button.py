@@ -13,7 +13,7 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .api import BeestatApiError, BeestatAuthError
+from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
 from .config_model import ConfiguredThermostat
 from .const import DOMAIN, thermostat_entity_unique_id
 from .coordinator import BeestatRuntimeDataCoordinator
@@ -143,7 +143,7 @@ class BeestatButton(ButtonEntity):
             _LOGGER.error(
                 "Unexpected Beestat button failure during %s (%s)",
                 action,
-                type(err).__name__,
+                exception_fingerprint(err),
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -212,7 +212,7 @@ class BeestatFilterChangedButton(ButtonEntity):
         except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
             _LOGGER.error(
                 "Unexpected filter-change button failure (%s)",
-                type(err).__name__,
+                exception_fingerprint(err),
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -15,6 +17,20 @@ class BeestatApiError(RuntimeError):
 
 class BeestatAuthError(BeestatApiError):
     """Raised when Beestat rejects the configured API key."""
+
+
+def exception_fingerprint(err: BaseException) -> str:
+    """Return a bounded private-safe location for an unexpected exception."""
+
+    exception_type = type(err).__name__
+    for frame in reversed(traceback.extract_tb(err.__traceback__)):
+        normalized = frame.filename.replace("\\", "/")
+        marker = "/custom_components/beestat_statistics/"
+        if marker not in normalized:
+            continue
+        module = Path(normalized).stem
+        return f"{exception_type}@{module}:{frame.name}:{frame.lineno}"
+    return exception_type
 
 
 def _is_auth_error(value: Any) -> bool:
@@ -187,7 +203,9 @@ class BeestatClient:
         for attempt in range(1, self._retries + 1):
             try:
                 async with asyncio.timeout(self._timeout):
-                    async with self._session.get(self._api_base, params=params) as response:
+                    async with self._session.get(
+                        self._api_base, params=params
+                    ) as response:
                         if response.status in (401, 403):
                             raise BeestatAuthError(
                                 f"{resource}.{method} authentication failed "
@@ -206,7 +224,12 @@ class BeestatClient:
                 return data
             except BeestatAuthError:
                 raise
-            except (asyncio.TimeoutError, aiohttp.ClientError, ValueError, BeestatApiError) as err:
+            except (
+                asyncio.TimeoutError,
+                aiohttp.ClientError,
+                ValueError,
+                BeestatApiError,
+            ) as err:
                 last_error = err
                 if attempt == self._retries:
                     break

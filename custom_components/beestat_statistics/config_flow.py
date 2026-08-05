@@ -28,7 +28,12 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .api import BeestatApiError, BeestatAuthError, BeestatClient
+from .api import (
+    BeestatApiError,
+    BeestatAuthError,
+    BeestatClient,
+    exception_fingerprint,
+)
 from .config_payload import (
     connection_data_from_user_input,
     entry_runtime_config_data,
@@ -219,7 +224,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
                     _LOGGER.error(
                         "Unexpected exception validating Beestat setup (%s)",
-                        type(err).__name__,
+                        exception_fingerprint(err),
                     )
                     errors["base"] = "unknown"
                 else:
@@ -366,7 +371,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
                     _LOGGER.error(
                         "Unexpected exception validating Beestat setup (%s)",
-                        type(err).__name__,
+                        exception_fingerprint(err),
                     )
                     errors["base"] = "unknown"
                 else:
@@ -461,17 +466,14 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
         thermostat_options = _thermostat_options(self.config_entry)
         sensor_options = _sensor_options(self.config_entry)
-        enabled_thermostats, enabled_sensors = _source_scope_defaults(
-            self.config_entry
-        )
+        enabled_thermostats, enabled_sensors = _source_scope_defaults(self.config_entry)
         if user_input is not None:
             selected_thermostats = {
                 int(value)
                 for value in user_input.get(_CONF_INCLUDED_THERMOSTAT_IDS, ())
             }
             selected_sensors = {
-                int(value)
-                for value in user_input.get(_CONF_INCLUDED_SENSOR_IDS, ())
+                int(value) for value in user_input.get(_CONF_INCLUDED_SENSOR_IDS, ())
             }
             new_options = update_source_scope_options(
                 self.config_entry.data,
@@ -611,9 +613,15 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(
                     {
-                        vol.Optional(CONF_CLIMATE_ENTITY_ID): THERMOSTAT_ENTITY_SELECTOR,
-                        vol.Optional(CONF_TEMPERATURE_ENTITY_ID): TEMPERATURE_ENTITY_SELECTOR,
-                        vol.Optional(CONF_OCCUPANCY_ENTITY_ID): OCCUPANCY_ENTITY_SELECTOR,
+                        vol.Optional(
+                            CONF_CLIMATE_ENTITY_ID
+                        ): THERMOSTAT_ENTITY_SELECTOR,
+                        vol.Optional(
+                            CONF_TEMPERATURE_ENTITY_ID
+                        ): TEMPERATURE_ENTITY_SELECTOR,
+                        vol.Optional(
+                            CONF_OCCUPANCY_ENTITY_ID
+                        ): OCCUPANCY_ENTITY_SELECTOR,
                         vol.Optional(CONF_MOTION_ENTITY_ID): MOTION_ENTITY_SELECTOR,
                         vol.Optional(CONF_FILTER_CHANGED_ENTITY_ID): (
                             FILTER_CHANGED_ENTITY_SELECTOR
@@ -688,8 +696,12 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                             _thermostat_options(self.config_entry),
                             custom_value=True,
                         ),
-                        vol.Optional(CONF_TEMPERATURE_ENTITY_ID): TEMPERATURE_ENTITY_SELECTOR,
-                        vol.Optional(CONF_OCCUPANCY_ENTITY_ID): OCCUPANCY_ENTITY_SELECTOR,
+                        vol.Optional(
+                            CONF_TEMPERATURE_ENTITY_ID
+                        ): TEMPERATURE_ENTITY_SELECTOR,
+                        vol.Optional(
+                            CONF_OCCUPANCY_ENTITY_ID
+                        ): OCCUPANCY_ENTITY_SELECTOR,
                         vol.Optional(CONF_MOTION_ENTITY_ID): MOTION_ENTITY_SELECTOR,
                         vol.Optional(CONF_INCLUDE_TEMPERATURE): BOOLEAN_SELECTOR,
                         vol.Optional(CONF_INCLUDE_AIR_QUALITY): BOOLEAN_SELECTOR,
@@ -754,10 +766,10 @@ def _same_connection_data(
 ) -> bool:
     """Return whether two entry payloads point at the same Beestat connection."""
 
-    return (
-        current_data.get(CONF_API_KEY) == new_data.get(CONF_API_KEY)
-        and current_data.get(CONF_API_BASE, API_BASE)
-        == new_data.get(CONF_API_BASE, API_BASE)
+    return current_data.get(CONF_API_KEY) == new_data.get(
+        CONF_API_KEY
+    ) and current_data.get(CONF_API_BASE, API_BASE) == new_data.get(
+        CONF_API_BASE, API_BASE
     )
 
 
@@ -970,14 +982,8 @@ def _source_scope_defaults(
     if data is None:
         return set(), set()
     return (
-        {
-            int(thermostat.thermostat_id)
-            for thermostat in data.config.thermostats
-        },
-        {
-            int(sensor.sensor_id)
-            for sensor in data.config.sensors
-        },
+        {int(thermostat.thermostat_id) for thermostat in data.config.thermostats},
+        {int(sensor.sensor_id) for sensor in data.config.sensors},
     )
 
 

@@ -27,6 +27,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 rendered = ast.unparse(call)
                 self.assertNotIn("_LOGGER.exception", rendered)
                 self.assertNotIn("exc_info=True", rendered)
+                self.assertNotIn("type(err).__name__", rendered)
                 for private_expression in (
                     "entity_entry.entity_id",
                     "existing_entity_id",
@@ -63,9 +64,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 )
 
     def test_status_sensor_can_surface_coordinator_errors(self) -> None:
-        text = (
-            ROOT / "custom_components/beestat_statistics/sensor.py"
-        ).read_text(encoding="utf-8")
+        text = (ROOT / "custom_components/beestat_statistics/sensor.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("uses_coordinator_availability: bool = True", text)
         self.assertIn('translation_key="status"', text)
         self.assertIn("uses_coordinator_availability=False", text)
@@ -98,7 +99,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "Manual refresh failures must call async_set_update_error",
         )
 
-    def test_importer_uses_windowed_summary_refresh_with_lazy_full_fallback(self) -> None:
+    def test_importer_uses_windowed_summary_refresh_with_lazy_full_fallback(
+        self,
+    ) -> None:
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
         ).read_text(encoding="utf-8")
@@ -180,7 +183,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             '"Unexpected exception validating Beestat setup (%s)"',
             text,
         )
-        self.assertIn("type(err).__name__", text)
+        self.assertIn("exception_fingerprint(err)", text)
         self.assertIn("NumberSelector(", text)
         self.assertIn("NumberSelectorMode.BOX", text)
         self.assertIn("EntitySelector(", text)
@@ -378,10 +381,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertEqual(hacs["name"], "Beestat Statistics")
         self.assertIn("homeassistant", hacs)
         self.assertTrue(
-            (
-                ROOT
-                / "custom_components/beestat_statistics/brand/icon.png"
-            ).is_file()
+            (ROOT / "custom_components/beestat_statistics/brand/icon.png").is_file()
         )
 
     def test_quality_scale_tracks_claimed_home_assistant_rules(self) -> None:
@@ -426,9 +426,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
-        requirements = (ROOT / "requirements-ha-test.txt").read_text(
-            encoding="utf-8"
-        )
+        requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
@@ -436,7 +434,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         required_pins = {
             "homeassistant==2026.7.1",
             "pytest==9.0.3",
-            "pytest-homeassistant-custom-component==0.13.345",
         }
 
         self.assertEqual(hacs["homeassistant"], "2026.7.1")
@@ -444,7 +441,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
-        self.assertIn("python -m pip install -r ${{ matrix.requirements }}", workflow)
+        self.assertIn("harness: 0.13.345", workflow)
+        self.assertIn("harness: 0.13.353", workflow)
+        harness_install = (
+            "python -m pip install "
+            "pytest-homeassistant-custom-component==${{ matrix.harness }}"
+        )
+        requirements_install = (
+            "python -m pip install --upgrade -r ${{ matrix.requirements }}"
+        )
+        self.assertIn(harness_install, workflow)
+        self.assertIn(requirements_install, workflow)
+        self.assertLess(
+            workflow.index(harness_install), workflow.index(requirements_install)
+        )
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", workflow)
         self.assertRegex(
@@ -486,9 +496,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         config_flow_text = (
             ROOT / "custom_components/beestat_statistics/config_flow.py"
         ).read_text(encoding="utf-8")
-        api_text = (
-            ROOT / "custom_components/beestat_statistics/api.py"
-        ).read_text(encoding="utf-8")
+        api_text = (ROOT / "custom_components/beestat_statistics/api.py").read_text(
+            encoding="utf-8"
+        )
         manifest = _json_file("custom_components/beestat_statistics/manifest.json")
 
         self.assertEqual(manifest["requirements"], [])
@@ -502,7 +512,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("Unexpected response data shape: bool", api_text)
         self.assertIn("Unexpected response row shape", api_text)
 
-    def test_stale_devices_can_be_removed_without_touching_homekit_devices(self) -> None:
+    def test_stale_devices_can_be_removed_without_touching_homekit_devices(
+        self,
+    ) -> None:
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
         ).read_text(encoding="utf-8")
@@ -553,7 +565,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             self.assertIn("AddConfigEntryEntitiesCallback", text)
             self.assertNotIn("AddEntitiesCallback", text)
 
-    def test_entity_metadata_uses_native_classes_categories_and_noisy_defaults(self) -> None:
+    def test_entity_metadata_uses_native_classes_categories_and_noisy_defaults(
+        self,
+    ) -> None:
         sensor_text = (
             ROOT / "custom_components/beestat_statistics/sensor.py"
         ).read_text(encoding="utf-8")
@@ -587,9 +601,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         binary_text = (
             ROOT / "custom_components/beestat_statistics/binary_sensor.py"
         ).read_text(encoding="utf-8")
-        date_text = (
-            ROOT / "custom_components/beestat_statistics/date.py"
-        ).read_text(encoding="utf-8")
+        date_text = (ROOT / "custom_components/beestat_statistics/date.py").read_text(
+            encoding="utf-8"
+        )
 
         for text, snippets in {
             sensor_text: (
@@ -642,7 +656,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("def _summary_available", sensor_text)
         self.assertIn("def _thermostat_metadata_available", sensor_text)
         self.assertGreaterEqual(
-            sensor_text.count("available_fn=lambda coordinator, thermostat_id=thermostat_id"),
+            sensor_text.count(
+                "available_fn=lambda coordinator, thermostat_id=thermostat_id"
+            ),
             11,
         )
 
@@ -691,7 +707,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     continue
                 self.assertTrue(
                     node.cause is None
-                    or (isinstance(node.cause, ast.Constant) and node.cause.value is None),
+                    or (
+                        isinstance(node.cause, ast.Constant)
+                        and node.cause.value is None
+                    ),
                     "HomeAssistantError must not retain a raw exception cause",
                 )
 
@@ -700,7 +719,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("async_record_import_error", coordinator_text)
         self.assertIn("def _async_record_error", coordinator_text)
-        self.assertIn("self.last_error = self._client.redact_error(err)", coordinator_text)
+        self.assertIn(
+            "self.last_error = self._client.redact_error(err)", coordinator_text
+        )
         self.assertNotIn("self.last_error = str(err)", coordinator_text)
 
         self.assertIn("ir.async_create_issue(", init_text)
@@ -751,9 +772,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         statistics_text = (
             ROOT / "custom_components/beestat_statistics/statistics_builder.py"
         ).read_text(encoding="utf-8")
-        const_text = (
-            ROOT / "custom_components/beestat_statistics/const.py"
-        ).read_text(encoding="utf-8")
+        const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(
+            encoding="utf-8"
+        )
 
         self.assertNotIn('"has_mean"', statistics_text)
         self.assertIn("STATISTIC_MEAN_TYPE_ARITHMETIC", statistics_text)
@@ -816,9 +837,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             self.assertIn(phrase, readme)
 
     def test_repository_support_templates_reduce_secret_leak_risk(self) -> None:
-        bug_template = (
-            ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml"
-        ).read_text(encoding="utf-8")
+        bug_template = (ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("Integration version", bug_template)
         self.assertIn("Home Assistant version", bug_template)
@@ -939,18 +960,34 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "requirements-ha-test.txt": [
                 "homeassistant==2026.7.1",
                 "pytest==9.0.3",
-                "pytest-homeassistant-custom-component==0.13.345",
             ],
             "requirements-ha-test-current.txt": [
                 "homeassistant==2026.8.0",
                 "pytest==9.0.3",
-                "pytest-homeassistant-custom-component==0.13.353",
             ],
         }
         for relative_path, expected_lines in expected_requirements.items():
             self.assertEqual(
                 (ROOT / relative_path).read_text(encoding="utf-8").splitlines(),
                 expected_lines,
+            )
+
+        harness_install = (
+            "python -m pip install "
+            "pytest-homeassistant-custom-component==${{ matrix.harness }}"
+        )
+        requirements_install = (
+            "python -m pip install --upgrade -r ${{ matrix.requirements }}"
+        )
+        self.assertIn("harness: 0.13.345", validate)
+        self.assertIn("harness: 0.13.353", validate)
+        self.assertLess(
+            validate.index(harness_install), validate.index(requirements_install)
+        )
+        for relative_path in expected_requirements:
+            self.assertNotIn(
+                "pytest-homeassistant-custom-component",
+                (ROOT / relative_path).read_text(encoding="utf-8"),
             )
 
         dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
@@ -1045,18 +1082,18 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn('_attr_name = "Filter changed date"', date_text)
 
     def test_entity_unique_ids_do_not_repeat_integration_scope(self) -> None:
-        const_text = (
-            ROOT / "custom_components/beestat_statistics/const.py"
-        ).read_text(encoding="utf-8")
+        const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(
+            encoding="utf-8"
+        )
         sensor_text = (
             ROOT / "custom_components/beestat_statistics/sensor.py"
         ).read_text(encoding="utf-8")
         button_text = (
             ROOT / "custom_components/beestat_statistics/button.py"
         ).read_text(encoding="utf-8")
-        date_text = (
-            ROOT / "custom_components/beestat_statistics/date.py"
-        ).read_text(encoding="utf-8")
+        date_text = (ROOT / "custom_components/beestat_statistics/date.py").read_text(
+            encoding="utf-8"
+        )
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
         ).read_text(encoding="utf-8")
@@ -1175,7 +1212,7 @@ def _literal_translation_keys(path: Path) -> set[str]:
         re.findall(r'_attr_translation_key\s*=\s*"([^"]+)"', text)
         + re.findall(
             (
-                r'Beestat(?:Button|Sensor)EntityDescription\('
+                r"Beestat(?:Button|Sensor)EntityDescription\("
                 r'[\s\S]*?translation_key\s*=\s*"([^"]+)"'
             ),
             text,
