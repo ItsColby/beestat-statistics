@@ -880,6 +880,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertGreater(len(action_refs), 0)
         for action_ref in action_refs:
             self.assertRegex(action_ref, r"^[0-9a-f]{40}$")
+        self.assertEqual(
+            workflows.count("runs-on:"),
+            workflows.count("timeout-minutes:"),
+        )
+        self.assertEqual(
+            workflows.count("uses: actions/checkout@"),
+            workflows.count("persist-credentials: false"),
+        )
 
         validate = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
