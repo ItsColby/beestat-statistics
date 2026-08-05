@@ -706,8 +706,7 @@ class BeestatStatisticsImporter:
                 }
             )
             _LOGGER.warning(
-                "Skipping Beestat runtime_thermostat window thermostat_id=%s start=%s end=%s: %s",
-                thermostat_id,
+                "Skipping Beestat runtime_thermostat window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
                 err,
@@ -806,8 +805,7 @@ class BeestatStatisticsImporter:
                 }
             )
             _LOGGER.warning(
-                "Skipping Beestat runtime_sensor window sensor_id=%s start=%s end=%s: %s",
-                sensor_id,
+                "Skipping Beestat runtime_sensor window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
                 err,

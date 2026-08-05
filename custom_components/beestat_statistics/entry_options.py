@@ -32,6 +32,7 @@ async def async_set_filter_changed_date(
         thermostat_id,
         changed_date,
         change_day_runtime_baseline_seconds=None,
+        rebuild_from_cached_rows=False,
     )
 
 
@@ -59,6 +60,7 @@ async def async_mark_filter_changed(
         thermostat_id,
         changed_date,
         change_day_runtime_baseline_seconds=baseline_seconds,
+        rebuild_from_cached_rows=True,
     )
 
 
@@ -68,6 +70,7 @@ async def _async_apply_filter_change(
     changed_date: date,
     *,
     change_day_runtime_baseline_seconds: float | None,
+    rebuild_from_cached_rows: bool,
 ) -> None:
     """Persist one filter change and refresh its derived runtime state."""
 
@@ -86,7 +89,10 @@ async def _async_apply_filter_change(
     old_options = entry.options
     coordinator.hass.config_entries.async_update_entry(entry, options=new_options)
     try:
-        coordinator.async_rebuild_runtime_from_cached_rows()
+        if rebuild_from_cached_rows:
+            coordinator.async_rebuild_runtime_from_cached_rows()
+        else:
+            await coordinator.async_refresh_runtime(skip_sync=True)
     except Exception:
         coordinator.hass.config_entries.async_update_entry(entry, options=old_options)
         raise
@@ -94,14 +100,12 @@ async def _async_apply_filter_change(
         dismissed = await coordinator.async_dismiss_filter_alerts(thermostat_id)
     except BeestatApiError as err:
         _LOGGER.warning(
-            "Unable to dismiss Beestat filter alerts for thermostat_id=%s: %s",
-            thermostat_id,
+            "Unable to dismiss Beestat filter alerts after a filter change: %s",
             err,
         )
     else:
         if dismissed:
             _LOGGER.info(
-                "Dismissed %s Beestat filter alert(s) for thermostat_id=%s",
+                "Dismissed %s Beestat filter alert(s) after a filter change",
                 dismissed,
-                thermostat_id,
             )

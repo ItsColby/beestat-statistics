@@ -15,6 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 class HomeAssistantQualityStaticTest(unittest.TestCase):
     """Validate HA quality rules that can be checked without HA test deps."""
 
+    def test_logs_do_not_expose_raw_beestat_identifiers(self) -> None:
+        for relative_path in (
+            "custom_components/beestat_statistics/__init__.py",
+            "custom_components/beestat_statistics/entry_options.py",
+        ):
+            text = (ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertNotIn("thermostat_id=%s", text)
+            self.assertNotIn("sensor_id=%s", text)
+
     def test_coordinator_entities_preserve_coordinator_availability(self) -> None:
         for relative_path, class_names in {
             "custom_components/beestat_statistics/sensor.py": {

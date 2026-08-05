@@ -64,8 +64,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [])
-        self.assertEqual(coordinator.rebuild_count, 1)
+        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.rebuild_count, 0)
 
     async def test_set_filter_changed_date_refreshes_when_dismiss_fails(self) -> None:
         api = sys.modules[f"{PACKAGE}.api"]
@@ -82,8 +82,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [])
-        self.assertEqual(coordinator.rebuild_count, 1)
+        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.rebuild_count, 0)
 
     async def test_mark_filter_changed_captures_fresh_change_day_runtime_baseline(
         self,
@@ -158,6 +158,8 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             coordinator.config_entry.options["thermostats"],
             [{"id": 1001, "filter_changed_date": "2026-06-18"}],
         )
+        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.rebuild_count, 0)
 
     async def test_mark_filter_changed_does_not_persist_when_fresh_sync_fails(
         self,
@@ -195,9 +197,25 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.rebuild_count, 0)
 
     async def test_filter_change_rolls_back_if_cached_rebuild_fails(self) -> None:
-        coordinator = _FakeCoordinator(rebuild_error=RuntimeError("rebuild failed"))
+        coordinator = _FakeCoordinator(
+            runtime_seconds=28800,
+            rebuild_error=RuntimeError("rebuild failed"),
+        )
 
         with self.assertRaisesRegex(RuntimeError, "rebuild failed"):
+            await self.entry_options.async_mark_filter_changed(
+                coordinator,
+                1001,
+                datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
+            )
+
+        self.assertEqual(coordinator.config_entry.options, {})
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
+
+    async def test_manual_filter_date_rolls_back_if_refresh_fails(self) -> None:
+        coordinator = _FakeCoordinator(refresh_error=RuntimeError("refresh failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "refresh failed"):
             await self.entry_options.async_set_filter_changed_date(
                 coordinator,
                 1001,
@@ -244,7 +262,7 @@ class _FakeCoordinator:
 
     async def async_refresh_runtime(self, *, skip_sync: bool) -> None:
         self.refresh_skip_sync_values.append(skip_sync)
-        if not skip_sync and self.refresh_error is not None:
+        if self.refresh_error is not None:
             raise self.refresh_error
 
     def async_rebuild_runtime_from_cached_rows(self) -> None:

@@ -72,9 +72,11 @@
   current-day summary row fails closed before persistence. After persistence,
   the coordinator rebuilds derived state from the refreshed cached rows rather
   than performing a second network read. A manual date edit clears the internal
-  boundary because it does not prove a click-time runtime snapshot. Keep the
-  boundary internal and do not switch filter change tracking to a datetime
-  entity without a separate UI/data-model requirement.
+  boundary because it does not prove a click-time runtime snapshot, then performs
+  a skip-sync refresh so the selected historical date is covered even when it
+  predates the coordinator's cached summary window. Keep the boundary internal
+  and do not switch filter change tracking to a datetime entity without a
+  separate UI/data-model requirement.
 - Beestat filter alert dismissal is best-effort after a Home Assistant filter
   change. Do not write Ecobee settings or directly mutate Beestat sync-owned
   filter metadata.
