@@ -295,15 +295,18 @@ async def test_user_flow_recovers_from_auth_error(hass: HomeAssistant) -> None:
 
 async def test_user_flow_recovers_from_unexpected_error(
     hass: HomeAssistant,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test the user can recover after an unexpected validation exception."""
+
+    secret = "private-validation-detail"
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_USER},
     )
 
-    with _mock_validate_input(side_effect=RuntimeError("boom")):
+    with _mock_validate_input(side_effect=RuntimeError(secret)):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             USER_INPUT,
@@ -311,6 +314,8 @@ async def test_user_flow_recovers_from_unexpected_error(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "unknown"}
+    assert secret not in caplog.text
+    assert "RuntimeError" in caplog.text
 
     with _mock_validate_input():
         result = await hass.config_entries.flow.async_configure(

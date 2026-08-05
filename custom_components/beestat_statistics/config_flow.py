@@ -216,8 +216,11 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
                 except BeestatApiError:
                     errors["base"] = "cannot_connect"
-                except Exception:
-                    _LOGGER.exception("Unexpected exception validating Beestat setup")
+                except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
+                    _LOGGER.error(
+                        "Unexpected exception validating Beestat setup (%s)",
+                        type(err).__name__,
+                    )
                     errors["base"] = "unknown"
                 else:
                     if account_fingerprint is not None:
@@ -360,8 +363,11 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
                 except BeestatApiError:
                     errors["base"] = "cannot_connect"
-                except Exception:
-                    _LOGGER.exception("Unexpected exception validating Beestat setup")
+                except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
+                    _LOGGER.error(
+                        "Unexpected exception validating Beestat setup (%s)",
+                        type(err).__name__,
+                    )
                     errors["base"] = "unknown"
                 else:
                     if account_fingerprint is not None:

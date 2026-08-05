@@ -84,13 +84,14 @@ def _contains_local_hostname(text: str) -> bool:
     """Return whether text contains a dotted local hostname in linear time."""
 
     for match in HOSTNAME_TOKEN_RE.finditer(text):
-        labels = match.group(0).strip(".").casefold().split(".")
-        if (
-            len(labels) > 1
-            and labels[-1] in LOCAL_HOSTNAME_SUFFIXES
-            and all(_valid_hostname_label(label) for label in labels)
-        ):
-            return True
+        prior_label_count = 0
+        for label in match.group(0).casefold().split("."):
+            if not _valid_hostname_label(label):
+                prior_label_count = 0
+                continue
+            if prior_label_count and label in LOCAL_HOSTNAME_SUFFIXES:
+                return True
+            prior_label_count += 1
     return False
 
 
@@ -99,29 +100,68 @@ def _valid_hostname_label(label: str) -> bool:
 
 
 def _email_addresses(text: str) -> Iterator[tuple[str, str]]:
-    """Yield email address and domain pairs without backtracking."""
+    """Yield regex-compatible email and domain pairs without backtracking."""
 
     search_from = 0
     while (at_index := text.find("@", search_from)) >= 0:
-        start = at_index
-        while start > 0 and text[start - 1] in EMAIL_LOCAL_CHARS:
-            start -= 1
-
-        end = at_index + 1
-        while end < len(text) and text[end] in EMAIL_DOMAIN_CHARS:
-            end += 1
-
-        domain = text[at_index + 1 : end].rstrip(".")
-        address = f"{text[start:at_index]}@{domain}"
-        _, separator, top_level = domain.rpartition(".")
-        if (
-            start < at_index
-            and separator
-            and len(top_level) >= 2
-            and top_level.isalpha()
+        local_run_start = at_index
+        while (
+            local_run_start > 0
+            and text[local_run_start - 1] in EMAIL_LOCAL_CHARS
         ):
-            yield address, domain
+            local_run_start -= 1
+        local_start = next(
+            (
+                index
+                for index in range(local_run_start, at_index)
+                if _is_word_boundary(text, index)
+            ),
+            None,
+        )
+
+        domain_start = at_index + 1
+        domain_run_end = domain_start
+        while (
+            domain_run_end < len(text)
+            and text[domain_run_end] in EMAIL_DOMAIN_CHARS
+        ):
+            domain_run_end += 1
+
+        valid_end: int | None = None
+        last_dot = -1
+        top_level_length = 0
+        top_level_is_alpha = False
+        for index in range(domain_start, domain_run_end):
+            char = text[index]
+            if char == ".":
+                last_dot = index
+                top_level_length = 0
+                top_level_is_alpha = True
+            elif last_dot >= 0:
+                top_level_length += 1
+                top_level_is_alpha = top_level_is_alpha and char.isalpha()
+            if (
+                last_dot > domain_start
+                and top_level_is_alpha
+                and top_level_length >= 2
+                and _is_word_boundary(text, index + 1)
+            ):
+                valid_end = index + 1
+
+        if local_start is not None and valid_end is not None:
+            domain = text[domain_start:valid_end]
+            yield f"{text[local_start:at_index]}@{domain}", domain
         search_from = at_index + 1
+
+
+def _is_word_boundary(text: str, index: int) -> bool:
+    left_is_word = index > 0 and _is_word_char(text[index - 1])
+    right_is_word = index < len(text) and _is_word_char(text[index])
+    return left_is_word != right_is_word
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
 
 
 def _candidate_files(root: Path = ROOT) -> list[Path]:

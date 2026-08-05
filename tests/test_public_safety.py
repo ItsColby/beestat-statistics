@@ -42,9 +42,21 @@ class PublicSafetyGuardTests(unittest.TestCase):
             "local hostname",
             _text_failures("service.zone_a" + ".lan"),
         )
+        self.assertIn(
+            "local hostname",
+            _text_failures("router" + ".local.example"),
+        )
+        self.assertIn(
+            "local hostname",
+            _text_failures("router" + ".local..example"),
+        )
         self.assertNotIn(
             "local hostname",
             _text_failures("service.zone_a" + ".example"),
+        )
+        self.assertNotIn(
+            "local hostname",
+            _text_failures("local" + ".example"),
         )
 
     def test_local_hostname_detection_handles_long_non_match_linearly(self) -> None:
@@ -63,7 +75,18 @@ class PublicSafetyGuardTests(unittest.TestCase):
             "non-example email address",
             _text_failures("Contact person" + "@real-domain.dev."),
         )
+        self.assertIn(
+            "non-example email address",
+            _text_failures("Contact person" + "@real-domain.dev-suffix"),
+        )
         self.assertEqual(set(), _text_failures("Contact person@example.com."))
+        self.assertEqual(set(), _text_failures("Contact .noreply@github.com"))
+
+    def test_email_detection_rejects_malformed_domain_prefix(self) -> None:
+        self.assertNotIn(
+            "non-example email address",
+            _text_failures("Malformed @" + ".cX"),
+        )
 
     def test_guard_scans_tracked_and_untracked_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

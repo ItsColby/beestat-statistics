@@ -598,6 +598,39 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         CoordinatorHelpersTest._install_fake_homeassistant_modules
     )
 
+    async def test_manual_refresh_sanitizes_unexpected_update_error(self) -> None:
+        secret = "private-response-detail"
+        recorded_errors: list[Exception] = []
+
+        async def fetch_runtime_data(**_kwargs):
+            raise RuntimeError(secret)
+
+        coordinator = types.SimpleNamespace(
+            _async_fetch_runtime_data=fetch_runtime_data,
+            _client=types.SimpleNamespace(
+                redact_error=lambda err: (
+                    f"Unexpected integration error ({type(err).__name__})"
+                )
+            ),
+            async_set_update_error=recorded_errors.append,
+        )
+        update_failed = sys.modules[
+            "homeassistant.helpers.update_coordinator"
+        ].UpdateFailed
+
+        with self.assertRaises(update_failed) as raised:
+            await self.coordinator.BeestatRuntimeDataCoordinator.async_refresh_runtime(
+                coordinator
+            )
+
+        self.assertEqual(
+            str(raised.exception),
+            "Unexpected integration error (RuntimeError)",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertEqual(recorded_errors, [raised.exception])
+        self.assertNotIn(secret, str(recorded_errors[0]))
+
     async def test_pending_boundary_finalizes_from_raw_runtime_rows(self) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
         thermostat = self.config_model.ConfiguredThermostat(
