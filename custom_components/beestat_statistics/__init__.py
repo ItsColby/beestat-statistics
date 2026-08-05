@@ -578,10 +578,9 @@ class BeestatStatisticsImporter:
             )
         except BeestatAuthError:
             raise
-        except BeestatApiError as err:
+        except BeestatApiError:
             _LOGGER.warning(
-                "Falling back to full Beestat summary baseline after windowed read failed: %s",
-                self._client.redact_error(err),
+                "Falling back to full Beestat summary baseline after windowed read failed"
             )
             full_rows = await self._async_full_summary_rows(runtime_data)
             return SummaryImportPlan(

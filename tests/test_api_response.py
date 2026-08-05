@@ -69,6 +69,24 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
                 "read_id",
             )
 
+    def test_non_auth_api_errors_do_not_expose_remote_payloads(self) -> None:
+        secret = "remote-response-secret"
+        payloads = (
+            ({"error": {"detail": secret}}, "returned an error"),
+            (
+                {"success": False, "message": secret},
+                "returned an unsuccessful response",
+            ),
+        )
+
+        for payload, expected in payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(
+                    self.api.BeestatApiError, expected
+                ) as raised:
+                    self.api._unwrap_response(payload, "thermostat", "read_id")
+                self.assertNotIn(secret, str(raised.exception))
+
     def test_response_body_redacts_api_key_and_api_base(self) -> None:
         replacements = self.api._redaction_replacements(
             api_key="secret-token",
@@ -83,7 +101,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             "request failed for <redacted-url>/?api_key=<redacted>",
         )
 
-    def test_client_error_redaction_is_safe_for_ha_state(self) -> None:
+    def test_client_error_messages_are_bounded_for_ha_state(self) -> None:
         client = self.api.BeestatClient(
             object(),
             "secret-token",
@@ -91,10 +109,12 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            client.redact_error(
-                "Cannot connect to https://api.test/?api_key=secret-token"
-            ),
-            "Cannot connect to <redacted-url>/?api_key=<redacted>",
+            client.redact_error(RuntimeError("network-response-secret")),
+            "Beestat network request failed",
+        )
+        self.assertEqual(
+            client.redact_error(KeyError("unexpected-response-secret")),
+            "Unexpected integration error (KeyError)",
         )
 
     def test_sync_true_response_is_success_without_rows(self) -> None:
@@ -113,6 +133,48 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await client.async_sync_resource("runtime"), [])
 
         self.assertEqual(session.call_count, 2)
+
+    async def test_http_error_does_not_expose_response_body(self) -> None:
+        secret = "http-response-secret"
+        session = _FakeSession(
+            [_FakeResponse({}, status=500, text=f"failure: {secret}")]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            r"Failed Beestat call thermostat\.read_id: "
+            r"thermostat\.read_id returned HTTP 500",
+        ) as raised:
+            await client.async_read_id("thermostat")
+
+        self.assertNotIn(secret, str(raised.exception))
+
+    async def test_invalid_json_error_does_not_expose_parser_detail(self) -> None:
+        secret = "parser-response-secret"
+        session = _FakeSession(
+            [_FakeResponse({}, json_error=ValueError(secret))]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            r"Failed Beestat call thermostat\.read_id: "
+            r"Beestat returned invalid response data",
+        ) as raised:
+            await client.async_read_id("thermostat")
+
+        self.assertNotIn(secret, str(raised.exception))
 
     def test_read_boolean_response_is_not_silently_empty(self) -> None:
         with self.assertRaisesRegex(
@@ -144,9 +206,18 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
 
 class _FakeResponse:
-    def __init__(self, payload) -> None:
-        self.status = 200
+    def __init__(
+        self,
+        payload,
+        *,
+        status: int = 200,
+        text: str | None = None,
+        json_error: Exception | None = None,
+    ) -> None:
+        self.status = status
         self._payload = payload
+        self._text = text
+        self._json_error = json_error
 
     async def __aenter__(self):
         return self
@@ -155,10 +226,12 @@ class _FakeResponse:
         return None
 
     async def json(self, *, content_type=None):
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
     async def text(self) -> str:
-        return str(self._payload)
+        return self._text if self._text is not None else str(self._payload)
 
 
 class _FakeSession:
@@ -168,7 +241,12 @@ class _FakeSession:
 
     def get(self, _url, *, params):
         self.call_count += 1
-        return _FakeResponse(next(self._payloads))
+        response = next(self._payloads)
+        return (
+            response
+            if isinstance(response, _FakeResponse)
+            else _FakeResponse(response)
+        )
 
 
 if __name__ == "__main__":

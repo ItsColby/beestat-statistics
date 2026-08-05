@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,14 @@ IGNORED_DIRECTORY_NAMES = {
     "venv",
 }
 
-EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b", re.IGNORECASE)
+HOSTNAME_TOKEN_RE = re.compile(r"[A-Z0-9_.-]+", re.IGNORECASE)
+LOCAL_HOSTNAME_SUFFIXES = {"home", "lan", "local"}
+EMAIL_LOCAL_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._%+-"
+)
+EMAIL_DOMAIN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"
+)
 PUBLIC_SAFETY_PATTERNS = (
     (
         "absolute Windows path",
@@ -55,10 +63,6 @@ PUBLIC_SAFETY_PATTERNS = (
         ),
     ),
     (
-        "local hostname",
-        re.compile(r"(?i)(?:[a-z0-9_-]+\x2e)+(?:home|lan|local)(?![a-z0-9_-])"),
-    ),
-    (
         "private key",
         re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
     ),
@@ -74,6 +78,50 @@ PUBLIC_SAFETY_PATTERNS = (
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("OpenAI API key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
 )
+
+
+def _contains_local_hostname(text: str) -> bool:
+    """Return whether text contains a dotted local hostname in linear time."""
+
+    for match in HOSTNAME_TOKEN_RE.finditer(text):
+        labels = match.group(0).strip(".").casefold().split(".")
+        if (
+            len(labels) > 1
+            and labels[-1] in LOCAL_HOSTNAME_SUFFIXES
+            and all(_valid_hostname_label(label) for label in labels)
+        ):
+            return True
+    return False
+
+
+def _valid_hostname_label(label: str) -> bool:
+    return bool(label) and all(char.isalnum() or char in "-_" for char in label)
+
+
+def _email_addresses(text: str) -> Iterator[tuple[str, str]]:
+    """Yield email address and domain pairs without backtracking."""
+
+    search_from = 0
+    while (at_index := text.find("@", search_from)) >= 0:
+        start = at_index
+        while start > 0 and text[start - 1] in EMAIL_LOCAL_CHARS:
+            start -= 1
+
+        end = at_index + 1
+        while end < len(text) and text[end] in EMAIL_DOMAIN_CHARS:
+            end += 1
+
+        domain = text[at_index + 1 : end].rstrip(".")
+        address = f"{text[start:at_index]}@{domain}"
+        _, separator, top_level = domain.rpartition(".")
+        if (
+            start < at_index
+            and separator
+            and len(top_level) >= 2
+            and top_level.isalpha()
+        ):
+            yield address, domain
+        search_from = at_index + 1
 
 
 def _candidate_files(root: Path = ROOT) -> list[Path]:
@@ -123,9 +171,11 @@ def _text_failures(text: str) -> set[str]:
     failures = {
         label for label, pattern in PUBLIC_SAFETY_PATTERNS if pattern.search(text)
     }
-    for match in EMAIL_RE.finditer(text):
-        address = match.group(0).casefold()
-        domain = match.group(1).casefold()
+    if _contains_local_hostname(text):
+        failures.add("local hostname")
+    for raw_address, raw_domain in _email_addresses(text):
+        address = raw_address.casefold()
+        domain = raw_domain.casefold()
         if address not in ALLOWED_EMAILS and domain not in ALLOWED_EMAIL_DOMAINS:
             failures.add("non-example email address")
     return failures

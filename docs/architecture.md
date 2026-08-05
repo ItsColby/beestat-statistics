@@ -120,6 +120,9 @@
 - API parsing, authentication mechanics, request safety limits, normalization,
   diagnostics redaction, unique-ID composition, statistics metadata, and
   cumulative Recorder math are implementation invariants, not preferences.
+- Remote response bodies and arbitrary API error payload details must not enter
+  exceptions, logs, entity attributes, diagnostics, or exception chains. Keep
+  HA-visible failures bounded to the operation, HTTP status, and safe category.
 - Source-scope changes may alter future entity exposure and import membership,
   but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
   units, statistic metadata, or previously imported Recorder history.

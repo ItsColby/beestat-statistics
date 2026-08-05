@@ -905,9 +905,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "pytest-homeassistant-custom-component==0.13.345",
             ],
             "requirements-ha-test-next.txt": [
-                "homeassistant==2026.8.0b4",
+                "homeassistant==2026.8.0b5",
                 "pytest==9.0.3",
-                "pytest-homeassistant-custom-component==0.13.352",
+                "pytest-homeassistant-custom-component==0.13.353",
             ],
         }
         for relative_path, expected_lines in expected_requirements.items():

@@ -37,12 +37,33 @@ class PublicSafetyGuardTests(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertIn("private IPv4 address", _text_failures(sample))
 
+    def test_local_hostname_detection_handles_multiple_labels(self) -> None:
+        self.assertIn(
+            "local hostname",
+            _text_failures("service.zone_a" + ".lan"),
+        )
+        self.assertNotIn(
+            "local hostname",
+            _text_failures("service.zone_a" + ".example"),
+        )
+
+    def test_local_hostname_detection_handles_long_non_match_linearly(self) -> None:
+        text = ("segment." * 20_000) + "example"
+        self.assertNotIn("local hostname", _text_failures(text))
+
     def test_public_examples_and_github_noreply_are_allowed(self) -> None:
         text = (
             "person@example.com person@example.test "
             "1361774+ItsColby@users.noreply.github.com noreply@github.com"
         )
         self.assertEqual(set(), _text_failures(text))
+
+    def test_email_detection_preserves_sentence_punctuation(self) -> None:
+        self.assertIn(
+            "non-example email address",
+            _text_failures("Contact person" + "@real-domain.dev."),
+        )
+        self.assertEqual(set(), _text_failures("Contact person@example.com."))
 
     def test_guard_scans_tracked_and_untracked_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

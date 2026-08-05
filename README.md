@@ -241,7 +241,7 @@ The `beestat_statistics.repair_filter_change_boundary` service action assigns a 
 
 ## Diagnostics
 
-Home Assistant diagnostics are available from the integration entry. Diagnostics redact the API key, API URL, Beestat account fingerprint, Beestat IDs, Home Assistant entity IDs, and device identifiers, and include status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts, automatic filter-alert dismissal results, freshness, and compact thermostat/profile summaries. Raw Beestat history is not included.
+Home Assistant diagnostics are available from the integration entry. Diagnostics redact the API key, API URL, Beestat account fingerprint, Beestat IDs, Home Assistant entity IDs, and device identifiers, and include status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts, automatic filter-alert dismissal results, freshness, and compact thermostat/profile summaries. Remote response bodies and arbitrary API error payload details are never included; HA-visible failures use bounded operation, status, and category messages. Raw Beestat history is not included.
 
 For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, and the complete effective mappings without contacting Beestat or changing Home Assistant state. The response deliberately excludes the API key and API URL, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
 
