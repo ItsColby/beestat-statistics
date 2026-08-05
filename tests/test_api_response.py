@@ -122,6 +122,21 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("RuntimeError@synthetic:fail:17", fingerprint)
         self.assertNotIn("private-response-secret", fingerprint)
 
+    def test_exception_fingerprint_is_sanitized_and_bounded(self) -> None:
+        exception_type = type("Private!" + ("x" * 256), (RuntimeError,), {})
+        err = exception_type("private-response-secret")
+        frame = traceback.FrameSummary(
+            str(ROOT / (("module!" + ("y" * 256)) + ".py")),
+            17,
+            "fail!" + ("z" * 256),
+        )
+        with patch.object(self.api.traceback, "extract_tb", return_value=[frame]):
+            fingerprint = self.api.exception_fingerprint(err)
+
+        self.assertLessEqual(len(fingerprint), 160)
+        self.assertNotIn("!", fingerprint)
+        self.assertNotIn("private-response-secret", fingerprint)
+
     def test_sync_true_response_is_success_without_rows(self) -> None:
         self.assertEqual(self.api._normalize_rows(True, allow_boolean=True), [])
 
