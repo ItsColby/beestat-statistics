@@ -1,5 +1,6 @@
-# Tracks the Home Assistant integration quality rules this HACS integration has
-# current evidence for. Omitted rules are not claimed.
+# Descriptive evidence against Home Assistant's integration quality rules, not
+# a certification target or backlog. Omitted rules are not claimed and create
+# work only when they provide concrete local value.
 rules:
   # Bronze
   action-setup: done

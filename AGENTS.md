@@ -7,6 +7,19 @@ Apply global Codex preferences first. This file owns repo-local guidance for the
 Read `docs/architecture.md` before structural, API-boundary, entity,
 config-flow, Recorder/statistics, or release-layout changes.
 
+## Optimization And Quality Target
+
+Optimize for David's private Home Assistant runtime: correctness, privacy,
+recoverability, low maintenance, Home Assistant compatibility, and clear Codex
+operation. Use Home Assistant's current
+[integration quality scale rules](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/)
+as a required starting reference for holistic reviews and material design or
+behavior changes, but evaluate each applicable rule by evidence and local value.
+The scale is not a certification target or automatic backlog. Do not pursue an
+omitted rule, coverage percentage, strict-typing campaign, or architectural
+expansion unless it closes a concrete risk or materially improves future work.
+`quality_scale.yaml` is descriptive compatibility evidence under this policy.
+
 ## Public Privacy Boundary
 
 - This repository is public. Do not commit personal names, private email addresses, local filesystem paths, private Home Assistant entity IDs, household room/device names, private hostnames, private IP addresses, screenshots, diagnostics, logs, tokens, credentials, or local deployment evidence.
