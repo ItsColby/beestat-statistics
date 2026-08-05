@@ -1166,6 +1166,8 @@ def _configured_thermostat(
         filter_lifetime_runtime_hours=250.0,
         filter_max_age_days=90,
         filter_notice_days=7,
+        device_identifiers=(),
+        device_connections=(),
     )
 
 

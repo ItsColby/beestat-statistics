@@ -8,6 +8,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 
+from .config_model import filter_boundary_status
 from .const import (
     CONF_ACCOUNT_FINGERPRINT,
     CONF_API_BASE,
@@ -19,11 +20,7 @@ from .const import (
     CONF_OCCUPANCY_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_ID,
 )
-from .coordinator import (
-    BeestatRuntimeData,
-    ThermostatRuntimeSummary,
-    filter_boundary_status,
-)
+from .coordinator import BeestatRuntimeData, ThermostatRuntimeSummary
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 TO_REDACT = {

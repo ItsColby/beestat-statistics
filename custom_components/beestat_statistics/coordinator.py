@@ -750,21 +750,6 @@ def _runtime_seconds_on_date(
     return _sum_fan_seconds(matched_rows)
 
 
-def filter_boundary_status(thermostat: ConfiguredThermostat) -> str:
-    """Return the persisted click-boundary lifecycle state."""
-
-    if thermostat.filter_changed_at is not None:
-        if (
-            thermostat.filter_change_day_runtime_baseline_seconds is not None
-            and thermostat.filter_change_boundary_reconciled_at is not None
-        ):
-            return "finalized"
-        return "pending_data"
-    if thermostat.filter_change_day_runtime_baseline_seconds is not None:
-        return "legacy_snapshot"
-    return "legacy_date_only"
-
-
 def _filter_runtime_hours(
     rows: list[dict[str, Any]],
     changed_date: date | None,

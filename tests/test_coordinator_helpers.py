@@ -180,7 +180,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         configured = self.config_model.ConfiguredThermostat
 
         self.assertEqual(
-            self.coordinator.filter_boundary_status(
+            self.config_model.filter_boundary_status(
                 configured(
                     thermostat_id=1,
                     slug="zone_a",
@@ -194,7 +194,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             "pending_data",
         )
         self.assertEqual(
-            self.coordinator.filter_boundary_status(
+            self.config_model.filter_boundary_status(
                 configured(
                     thermostat_id=1,
                     slug="zone_a",
@@ -235,7 +235,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.coordinator.filter_boundary_status(thermostat),
+            self.config_model.filter_boundary_status(thermostat),
             "pending_data",
         )
 
