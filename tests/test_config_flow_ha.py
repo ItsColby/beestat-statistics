@@ -7,11 +7,11 @@ current Python environment cannot install Home Assistant.
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
 import types
-from typing import Any
 import unittest
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,13 +20,12 @@ if str(ROOT) not in sys.path:
 
 try:
     import pytest
-
     from homeassistant.config_entries import (
-        ConfigEntryState,
         SOURCE_IMPORT,
         SOURCE_REAUTH,
         SOURCE_RECONFIGURE,
         SOURCE_USER,
+        ConfigEntryState,
     )
     from homeassistant.const import CONF_API_KEY
     from homeassistant.core import HomeAssistant
@@ -35,15 +34,15 @@ try:
 except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
     raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
 
-from custom_components.beestat_statistics.api import (  # noqa: E402
-    BeestatApiError,
-    BeestatAuthError,
-)
-from custom_components.beestat_statistics import (  # noqa: E402
+from custom_components.beestat_statistics import (
     async_migrate_entry,
     async_setup,
 )
-from custom_components.beestat_statistics.const import (  # noqa: E402
+from custom_components.beestat_statistics.api import (
+    BeestatApiError,
+    BeestatAuthError,
+)
+from custom_components.beestat_statistics.const import (
     API_BASE,
     ATTR_CONFIG_ENTRY_ID,
     CONF_ACCOUNT_FINGERPRINT,

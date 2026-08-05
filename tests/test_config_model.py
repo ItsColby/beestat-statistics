@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import importlib.util
-from pathlib import Path
 import sys
 import types
 import unittest
-
+from dataclasses import dataclass
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_config_model_test"
@@ -726,14 +725,22 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(
             errors,
             (
-                "thermostat 1 climate_entity_id: "
-                "sensor.zone_a_temperature (expected climate)",
-                "thermostat 1 filter_changed_entity_id: "
-                "sensor.filter_changed (expected input_datetime)",
-                "sensor 2 temperature_entity_id: "
-                "binary_sensor.guest_motion (expected sensor)",
-                "sensor 2 motion_entity_id: "
-                "sensor.guest_temperature (expected binary_sensor)",
+                (
+                    "thermostat 1 climate_entity_id: "
+                    "sensor.zone_a_temperature (expected climate)"
+                ),
+                (
+                    "thermostat 1 filter_changed_entity_id: "
+                    "sensor.filter_changed (expected input_datetime)"
+                ),
+                (
+                    "sensor 2 temperature_entity_id: "
+                    "binary_sensor.guest_motion (expected sensor)"
+                ),
+                (
+                    "sensor 2 motion_entity_id: "
+                    "sensor.guest_temperature (expected binary_sensor)"
+                ),
             ),
         )
 

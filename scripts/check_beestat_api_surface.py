@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -231,13 +231,13 @@ def comparable_file(value: dict[str, Any]) -> dict[str, Any]:
 def extract_exposed_methods(text: str) -> dict[str, list[str]] | None:
     """Extract public/private method names from a PHP $exposed declaration."""
 
-    match = re.search(r"public\s+static\s+\$exposed\s*=\s*\[(.*?)\];", text, re.S)
+    match = re.search(r"public\s+static\s+\$exposed\s*=\s*\[(.*?)\];", text, re.DOTALL)
     if match is None:
         return None
 
     exposed: dict[str, list[str]] = {}
     for scope in ("private", "public"):
-        scope_match = re.search(rf"'{scope}'\s*=>\s*\[(.*?)\]", match.group(1), re.S)
+        scope_match = re.search(rf"'{scope}'\s*=>\s*\[(.*?)\]", match.group(1), re.DOTALL)
         if scope_match is None:
             exposed[scope] = []
             continue

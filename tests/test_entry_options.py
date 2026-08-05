@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
 import importlib.util
-from pathlib import Path
 import sys
 import types
 import unittest
+from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
-
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_entry_options_test"
@@ -70,6 +69,25 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
     async def test_set_filter_changed_date_refreshes_when_dismiss_fails(self) -> None:
         api = sys.modules[f"{PACKAGE}.api"]
         coordinator = _FakeCoordinator(dismiss_error=api.BeestatApiError("failed"))
+
+        await self.entry_options.async_set_filter_changed_date(
+            coordinator,
+            1001,
+            date(2026, 7, 5),
+        )
+
+        self.assertEqual(
+            coordinator.config_entry.options["thermostats"],
+            [{"id": 1001, "filter_changed_date": "2026-07-05"}],
+        )
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
+        self.assertEqual(coordinator.rebuild_count, 0)
+
+    async def test_set_filter_changed_date_survives_unexpected_dismiss_error(
+        self,
+    ) -> None:
+        coordinator = _FakeCoordinator(dismiss_error=RuntimeError("unexpected"))
 
         await self.entry_options.async_set_filter_changed_date(
             coordinator,

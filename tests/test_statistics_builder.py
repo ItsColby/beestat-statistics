@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import importlib.util
-from pathlib import Path
 import sys
 import types
 import unittest
+from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
-
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_test"

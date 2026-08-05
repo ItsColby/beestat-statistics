@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.check_public_safety import (
     ROOT,
@@ -38,13 +38,9 @@ class PublicSafetyGuardTests(unittest.TestCase):
                 self.assertIn("private IPv4 address", _text_failures(sample))
 
     def test_public_examples_and_github_noreply_are_allowed(self) -> None:
-        text = " ".join(
-            (
-                "person@example.com",
-                "person@example.test",
-                "1361774+ItsColby@users.noreply.github.com",
-                "noreply@github.com",
-            )
+        text = (
+            "person@example.com person@example.test "
+            "1361774+ItsColby@users.noreply.github.com noreply@github.com"
         )
         self.assertEqual(set(), _text_failures(text))
 

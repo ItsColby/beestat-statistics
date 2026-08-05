@@ -7,15 +7,16 @@ from datetime import date, datetime, time, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .config_model import BeestatConfig, build_sensor_statistics as build_sensor_specs
+from .config_model import BeestatConfig
+from .config_model import build_sensor_statistics as build_sensor_specs
 from .const import (
     RUNTIME_FIELD_GROUPS,
-    SUMMARY_MEAN_STATISTICS,
-    SUMMARY_SUM_STATISTICS,
     STATISTIC_MEAN_TYPE_ARITHMETIC,
     STATISTIC_MEAN_TYPE_NONE,
     STATISTIC_SOURCE,
     STATISTIC_UNIT_CLASS_DURATION,
+    SUMMARY_MEAN_STATISTICS,
+    SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
 )
 

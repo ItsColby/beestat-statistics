@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
 import types
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_config_flow_helper_test"

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-import logging
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -62,7 +62,7 @@ class ThermostatMetadata:
     next_scheduled_climate_ref: str | None
     next_scheduled_climate_name: str | None
     next_scheduled_at: datetime | None
-    schedule_profiles: tuple["ScheduleProfile", ...]
+    schedule_profiles: tuple[ScheduleProfile, ...]
     active_sensor_count: int
     active_sensor_names: tuple[str, ...]
     current_profile_sensor_names: tuple[str, ...]
@@ -851,7 +851,7 @@ def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
             continue
         try:
             return ZoneInfo(value)
-        except Exception:
+        except ZoneInfoNotFoundError:
             continue
     return fallback
 
@@ -987,7 +987,9 @@ def _parse_datetime(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             return None
     if parsed.tzinfo is None:

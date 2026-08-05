@@ -3,23 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date as dt_date, datetime, time, timedelta, timezone
+from datetime import date as dt_date
+from datetime import datetime, time, timedelta, timezone
 from functools import partial
-import logging
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
-
 from homeassistant.components.recorder import get_instance as get_recorder_instance
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
     statistics_during_period,
 )
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState, SOURCE_IMPORT
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigEntryState
 from homeassistant.const import (
     CONF_API_KEY,
     CONF_SCAN_INTERVAL,
@@ -46,17 +46,19 @@ from homeassistant.helpers.event import (
 from .api import BeestatApiError, BeestatAuthError, BeestatClient
 from .config_model import (
     ConfiguredThermostat,
-    build_sensor_statistics as build_sensor_specs,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
 )
-from .configuration import configuration_response
+from .config_model import (
+    build_sensor_statistics as build_sensor_specs,
+)
 from .config_payload import (
     entry_data_from_yaml,
     entry_options_from_yaml,
     entry_runtime_config_data,
     migrate_entry_payload,
 )
+from .configuration import configuration_response
 from .const import (
     API_BASE,
     ATTR_CONFIG_ENTRY_ID,
@@ -66,8 +68,8 @@ from .const import (
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
-    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
     CONF_FILTER_MAX_AGE_DAYS,
     CONF_FILTER_NOTICE_DAYS,
@@ -1100,10 +1102,7 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a Beestat Statistics config entry."""
 
-    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        return False
-
-    return True
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_config_entry_device(
@@ -1241,7 +1240,7 @@ def _default_problem_entity_id(
 
 def _is_generic_problem_entity_id(entity_id: str) -> bool:
     object_id = entity_id.split(".", 1)[-1]
-    return object_id.endswith("_problem") or object_id.endswith("_problem_2")
+    return object_id.endswith(("_problem", "_problem_2"))
 
 
 @callback
@@ -1598,9 +1597,7 @@ def _statistic_row_in_range(
     local_day = start.astimezone(local_tz).date()
     if start_day is not None and local_day < start_day:
         return False
-    if end_day is not None and local_day > end_day:
-        return False
-    return True
+    return end_day is None or local_day <= end_day
 
 
 def _point_window(
@@ -1744,7 +1741,9 @@ def _parse_beestat_time(value: Any) -> datetime | None:
         return None
     text = str(value)
     try:
-        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))

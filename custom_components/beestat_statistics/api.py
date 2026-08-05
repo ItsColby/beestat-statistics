@@ -183,10 +183,8 @@ class BeestatClient:
                     async with self._session.get(self._api_base, params=params) as response:
                         if response.status in (401, 403):
                             raise BeestatAuthError(
-                                (
-                                    f"{resource}.{method} authentication failed "
-                                    f"with HTTP {response.status}"
-                                )
+                                f"{resource}.{method} authentication failed "
+                                f"with HTTP {response.status}"
                             )
                         if response.status >= 400:
                             body = self.redact_error(await response.text())[:200]

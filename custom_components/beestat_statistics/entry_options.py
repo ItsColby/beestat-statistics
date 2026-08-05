@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
 import logging
+from datetime import date, datetime
 
 from .api import BeestatApiError
 from .config_payload import update_thermostat_override_options
@@ -11,7 +11,6 @@ from .const import (
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,10 +97,11 @@ async def _async_apply_filter_change(
         raise
     try:
         dismissed = await coordinator.async_dismiss_filter_alerts(thermostat_id)
-    except BeestatApiError as err:
+    except Exception as err:  # noqa: BLE001 - dismissal is explicitly best-effort
         _LOGGER.warning(
-            "Unable to dismiss Beestat filter alerts after a filter change: %s",
-            err,
+            "Unable to dismiss Beestat filter alerts after a filter change; "
+            "the local filter change was saved (%s)",
+            type(err).__name__,
         )
     else:
         if dismissed:

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 import re
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -427,6 +426,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("python -m pip install -r requirements-ha-test.txt", workflow)
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", workflow)
+        self.assertIn("astral-sh/ruff-action@v4.1.0", workflow)
+        self.assertIn('version: "0.16.1"', workflow)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
 

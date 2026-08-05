@@ -23,6 +23,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+      - name: Ruff
+        uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "0.16.1"
+          src: >-
+            custom_components
+            tests
+            scripts
       - run: python -m unittest discover -s tests
       - run: python -m compileall -q custom_components/beestat_statistics tests scripts
       - run: python scripts/check_public_safety.py

@@ -42,7 +42,7 @@ async def async_setup_entry(
 
 def _build_entities(
     coordinator: BeestatRuntimeDataCoordinator,
-) -> list["BeestatFilterChangedDate"]:
+) -> list[BeestatFilterChangedDate]:
     data = coordinator.data
     if data is None:
         return []

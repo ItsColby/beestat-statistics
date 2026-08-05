@@ -15,14 +15,13 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .alerts import classify_active_alerts
 from .config_model import ConfiguredThermostat
 from .const import thermostat_entity_unique_id
-from .alerts import classify_active_alerts
 from .coordinator import (
     BeestatRuntimeData,
     BeestatRuntimeDataCoordinator,
@@ -169,7 +168,7 @@ async def async_setup_entry(
 
 def _build_entities(
     coordinator: BeestatRuntimeDataCoordinator,
-) -> list["BeestatSensor"]:
+) -> list[BeestatSensor]:
     entities: list[BeestatSensor] = [
         BeestatSensor(coordinator, description, service_device_info())
         for description in GLOBAL_SENSOR_DESCRIPTIONS

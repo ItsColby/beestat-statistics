@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import hashlib
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY
@@ -36,8 +35,8 @@ from .config_payload import (
     merge_import_options,
     options_from_user_input,
     split_entry_payload,
-    update_source_scope_options,
     update_sensor_override_options,
+    update_source_scope_options,
     update_thermostat_override_options,
 )
 from .const import (

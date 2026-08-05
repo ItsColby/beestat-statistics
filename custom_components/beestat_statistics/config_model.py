@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-import re
 from typing import Any
 
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
-    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
     CONF_FILTER_MAX_AGE_DAYS,
     CONF_FILTER_NOTICE_DAYS,
@@ -33,10 +33,10 @@ from .const import (
     DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
     DEFAULT_FILTER_MAX_AGE_DAYS,
     DEFAULT_FILTER_NOTICE_DAYS,
-    SensorStatistic,
     STATISTIC_UNIT_CLASS_TEMPERATURE,
     STATISTIC_UNIT_CLASS_UNITLESS,
     UNIT_FAHRENHEIT,
+    SensorStatistic,
 )
 
 _AIR_QUALITY_CAPABILITIES = {"airquality", "air_quality"}
