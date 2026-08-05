@@ -76,8 +76,9 @@
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button first persists the local date and exact UTC click timestamp, because
   the physical replacement must not be lost when Beestat is stale or unavailable.
-  Pending derived runtime is zero rather than charging earlier same-day runtime to
-  the new filter. The coordinator then reconciles the timestamp against a bounded
+  Pending derived runtime excludes the ambiguous change day rather than charging
+  earlier same-day runtime to the new filter, while still counting unambiguous
+  later-date runtime. The coordinator then reconciles the timestamp against a bounded
   raw-runtime read, rounds to the nearest 5-minute source boundary, stores that
   day's fan-runtime baseline, and retries every 15 minutes while source data is
   not ready. Same-day forecasts subtract the finalized baseline. A manual date

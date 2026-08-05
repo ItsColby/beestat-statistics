@@ -782,7 +782,10 @@ def _filter_runtime_hours(
         and thermostat.filter_changed_at is not None
         and thermostat.filter_change_boundary_reconciled_at is None
     ):
-        return 0.0
+        return _runtime_hours_since(
+            rows,
+            changed_date + timedelta(days=1) if changed_date is not None else None,
+        )
     return _runtime_hours_since(
         rows,
         changed_date,

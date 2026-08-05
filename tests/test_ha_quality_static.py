@@ -423,10 +423,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
-        self.assertIn("python -m pip install -r requirements-ha-test.txt", workflow)
+        self.assertIn("python -m pip install -r ${{ matrix.requirements }}", workflow)
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", workflow)
-        self.assertIn("astral-sh/ruff-action@v4.1.0", workflow)
+        self.assertRegex(
+            workflow,
+            r"astral-sh/ruff-action@[0-9a-f]{40} # v4\.1\.0",
+        )
         self.assertIn('version: "0.16.1"', workflow)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
@@ -865,6 +868,50 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertRegex(workflow, r"(?m)^  schedule:\s*$")
         self.assertRegex(workflow, r'(?m)^    - cron: "\d+ \d+ \* \* \d"\s*$')
+
+    def test_workflows_pin_actions_and_cover_supported_ha_versions(self) -> None:
+        workflows = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / ".github/workflows").iterdir())
+            if path.suffix in {".yaml", ".yml"}
+        )
+        action_refs = re.findall(r"(?m)^\s*- uses: [^@\s]+@([^\s#]+)", workflows)
+
+        self.assertGreater(len(action_refs), 0)
+        for action_ref in action_refs:
+            self.assertRegex(action_ref, r"^[0-9a-f]{40}$")
+
+        validate = (ROOT / ".github/workflows/validate.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("matrix:", validate)
+        self.assertIn("requirements-ha-test.txt", validate)
+        self.assertIn("requirements-ha-test-next.txt", validate)
+        self.assertIn("name: Release gate", validate)
+        self.assertIn("needs: [unit, home_assistant, hassfest, hacs]", validate)
+
+        expected_requirements = {
+            "requirements-ha-test.txt": [
+                "homeassistant==2026.7.1",
+                "pytest==9.0.3",
+                "pytest-homeassistant-custom-component==0.13.345",
+            ],
+            "requirements-ha-test-next.txt": [
+                "homeassistant==2026.8.0b4",
+                "pytest==9.0.3",
+                "pytest-homeassistant-custom-component==0.13.352",
+            ],
+        }
+        for relative_path, expected_lines in expected_requirements.items():
+            self.assertEqual(
+                (ROOT / relative_path).read_text(encoding="utf-8").splitlines(),
+                expected_lines,
+            )
+
+        dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        self.assertEqual(dependabot.count("package-ecosystem:"), 1)
+        self.assertIn("package-ecosystem: github-actions", dependabot)
+        self.assertNotIn("package-ecosystem: pip", dependabot)
 
     def test_device_entity_names_do_not_repeat_integration_name(self) -> None:
         strings = _json_file(

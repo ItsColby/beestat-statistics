@@ -223,6 +223,28 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0.0,
         )
 
+    def test_pending_click_boundary_counts_complete_later_days(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
+        )
+
+        self.assertEqual(
+            self.coordinator._filter_runtime_hours(
+                [
+                    {"date": "2026-07-05", "sum_fan": 14400},
+                    {"date": "2026-07-06", "sum_fan": 7200},
+                ],
+                date(2026, 7, 5),
+                thermostat,
+                "home_assistant",
+            ),
+            2.0,
+        )
+
     def test_click_boundary_with_unverified_baseline_remains_pending(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
