@@ -36,6 +36,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
+_FILTER_BOUNDARY_FAST_RETRY_WINDOW = timedelta(hours=6)
 
 if TYPE_CHECKING:
     from .runtime import BeestatStatisticsConfigEntry
@@ -213,16 +214,57 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         )
 
     @callback
-    def async_schedule_filter_boundary_reconcile(self) -> None:
+    def async_schedule_filter_boundary_reconcile(
+        self,
+        config: BeestatConfig | None = None,
+    ) -> None:
         """Schedule one bounded retry while an exact boundary is pending."""
 
-        if self._cancel_filter_boundary_retry is not None:
+        if (
+            self._cancel_filter_boundary_retry is not None
+            or not self._has_fast_retryable_filter_boundary(config)
+        ):
             return
         self._cancel_filter_boundary_retry = async_call_later(
             self.hass,
             _FILTER_BOUNDARY_RETRY_DELAY,
             self._async_retry_filter_boundaries,
         )
+
+    @callback
+    def _has_fast_retryable_filter_boundary(
+        self,
+        config: BeestatConfig | None = None,
+    ) -> bool:
+        """Return whether one recent click still merits 15-minute retries."""
+
+        if config is None:
+            data = self.data
+            if data is None:
+                return False
+            config = data.config
+        now = datetime.now(timezone.utc)
+        for thermostat in config.thermostats:
+            current_override = effective_thermostat_override(
+                self.config_entry.data,
+                self.config_entry.options,
+                thermostat.thermostat_id,
+            )
+            changed_at = thermostat.filter_changed_at
+            reconciled_at = thermostat.filter_change_boundary_reconciled_at
+            if current_override is not None:
+                changed_at = _parse_datetime(
+                    current_override.get(CONF_FILTER_CHANGED_AT)
+                )
+                reconciled_at = _parse_datetime(
+                    current_override.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT)
+                )
+            if reconciled_at is None and _filter_boundary_fast_retry_due(
+                changed_at,
+                now,
+            ):
+                return True
+        return False
 
     @callback
     def _async_cancel_filter_boundary_retry(self) -> None:
@@ -576,7 +618,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         self.last_filter_boundary_pending_count = pending_count
         if pending_count:
-            self.async_schedule_filter_boundary_reconcile()
+            self.async_schedule_filter_boundary_reconcile(config)
         else:
             self._async_cancel_filter_boundary_retry()
 
@@ -828,6 +870,18 @@ def _raw_filter_boundary(
         effective_at=effective_at,
         source_data_end=source_data_end,
     )
+
+
+def _filter_boundary_fast_retry_due(
+    changed_at: datetime | None,
+    now: datetime,
+) -> bool:
+    """Return whether a pending click remains in the fast retry window."""
+
+    if changed_at is None or changed_at.tzinfo is None or now.tzinfo is None:
+        return False
+    age = now.astimezone(timezone.utc) - changed_at.astimezone(timezone.utc)
+    return timedelta(0) <= age <= _FILTER_BOUNDARY_FAST_RETRY_WINDOW
 
 
 def _floor_five_minutes(value: datetime) -> datetime:

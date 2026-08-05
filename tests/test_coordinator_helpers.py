@@ -6,7 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -222,6 +222,85 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ),
             0.0,
         )
+
+    def test_filter_boundary_fast_retry_window_is_bounded(self) -> None:
+        now = datetime.fromisoformat("2026-07-06T03:00:00+00:00")
+
+        self.assertTrue(
+            self.coordinator._filter_boundary_fast_retry_due(
+                now - timedelta(hours=5, minutes=59),
+                now,
+            )
+        )
+        self.assertFalse(
+            self.coordinator._filter_boundary_fast_retry_due(
+                now - timedelta(hours=6, minutes=1),
+                now,
+            )
+        )
+        self.assertFalse(
+            self.coordinator._filter_boundary_fast_retry_due(
+                now + timedelta(minutes=1),
+                now,
+            )
+        )
+
+    def test_filter_boundary_scheduler_skips_expired_pending_click(self) -> None:
+        coordinator = object.__new__(
+            self.coordinator.BeestatRuntimeDataCoordinator
+        )
+        coordinator.hass = types.SimpleNamespace()
+        coordinator._cancel_filter_boundary_retry = None
+        coordinator.config_entry = types.SimpleNamespace(
+            data={},
+            options={
+                "thermostats": [
+                    {
+                        "id": 1,
+                        "filter_changed_at": (
+                            datetime.now(timezone.utc) - timedelta(hours=7)
+                        ).isoformat(),
+                    }
+                ]
+            },
+        )
+        coordinator.data = types.SimpleNamespace(
+            config=self.config_model.BeestatConfig(
+                thermostats=(
+                    self.config_model.ConfiguredThermostat(
+                        thermostat_id=1,
+                        slug="zone_a",
+                        name="Zone A",
+                        filter_changed_at=datetime.now(timezone.utc)
+                        - timedelta(hours=7),
+                    ),
+                ),
+                sensors=(),
+            )
+        )
+
+        coordinator.async_schedule_filter_boundary_reconcile()
+
+        self.assertIsNone(coordinator._cancel_filter_boundary_retry)
+
+        recent_config = self.config_model.BeestatConfig(
+            thermostats=(
+                self.config_model.ConfiguredThermostat(
+                    thermostat_id=1,
+                    slug="zone_a",
+                    name="Zone A",
+                    filter_changed_at=datetime.now(timezone.utc)
+                    - timedelta(hours=1),
+                ),
+            ),
+            sensors=(),
+        )
+        coordinator.config_entry.options["thermostats"][0]["filter_changed_at"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat()
+        coordinator.async_schedule_filter_boundary_reconcile(recent_config)
+
+        self.assertIsNotNone(coordinator._cancel_filter_boundary_retry)
 
     def test_pending_click_boundary_counts_complete_later_days(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
@@ -566,7 +645,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             last_filter_boundary_reconciled_count=0,
             last_filter_boundary_reconcile_error=None,
             last_filter_boundary_reconcile_attempt_at=None,
-            async_schedule_filter_boundary_reconcile=lambda: None,
+            async_schedule_filter_boundary_reconcile=lambda *_args: None,
             _async_cancel_filter_boundary_retry=lambda: None,
         )
 
@@ -645,7 +724,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             last_filter_boundary_reconciled_count=0,
             last_filter_boundary_reconcile_error=None,
             last_filter_boundary_reconcile_attempt_at=None,
-            async_schedule_filter_boundary_reconcile=lambda: None,
+            async_schedule_filter_boundary_reconcile=lambda *_args: None,
             _async_cancel_filter_boundary_retry=lambda: None,
         )
 
