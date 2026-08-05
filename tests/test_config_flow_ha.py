@@ -138,7 +138,10 @@ async def test_mapped_entities_link_without_shared_device_ownership(
     assert entity.device_entry is not None
     assert entity.device_entry.id == source_device.id
     assert current_device is not None
-    assert set(current_device.config_entries) == {source_entry.entry_id}
+    if hasattr(current_device, "config_entry_id"):
+        assert current_device.config_entry_id == source_entry.entry_id
+    else:
+        assert set(current_device.config_entries) == {source_entry.entry_id}
     assert current_entity is not None
     assert current_entity.device_id == source_device.id
 
