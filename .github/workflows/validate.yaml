@@ -82,8 +82,8 @@ jobs:
         include:
           - name: Minimum Core 2026.7.1
             requirements: requirements-ha-test.txt
-          - name: Core 2026.8 beta
-            requirements: requirements-ha-test-next.txt
+          - name: Current Core 2026.8.0
+            requirements: requirements-ha-test-current.txt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

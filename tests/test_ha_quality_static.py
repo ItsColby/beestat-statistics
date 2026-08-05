@@ -931,7 +931,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn("matrix:", validate)
         self.assertIn("requirements-ha-test.txt", validate)
-        self.assertIn("requirements-ha-test-next.txt", validate)
+        self.assertIn("requirements-ha-test-current.txt", validate)
         self.assertIn("name: Release gate", validate)
         self.assertIn("needs: [unit, home_assistant, hassfest, hacs]", validate)
 
@@ -941,8 +941,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "pytest==9.0.3",
                 "pytest-homeassistant-custom-component==0.13.345",
             ],
-            "requirements-ha-test-next.txt": [
-                "homeassistant==2026.8.0b5",
+            "requirements-ha-test-current.txt": [
+                "homeassistant==2026.8.0",
                 "pytest==9.0.3",
                 "pytest-homeassistant-custom-component==0.13.353",
             ],
