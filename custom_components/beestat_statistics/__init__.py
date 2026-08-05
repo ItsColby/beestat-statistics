@@ -61,6 +61,7 @@ from .config_payload import (
 from .configuration import configuration_response
 from .const import (
     API_BASE,
+    ATTR_CHANGED_AT,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_END_DATE,
     ATTR_SKIP_SYNC,
@@ -107,11 +108,13 @@ from .const import (
     SERVICE_GET_CONFIGURATION,
     SERVICE_IMPORT_STATISTICS,
     SERVICE_REBUILD_STATISTICS,
+    SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
     sensor_entity_unique_id,
     thermostat_entity_unique_id,
 )
 from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
 from .entity import async_register_service_device
+from .entry_options import async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
     CumulativeStatisticSeed,
@@ -264,6 +267,7 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
+
 IMPORT_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_POINT_LOOKBACK_DAYS): vol.All(
@@ -286,6 +290,14 @@ REBUILD_SERVICE_SCHEMA = vol.Schema(
 GET_CONFIGURATION_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+    }
+)
+
+REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Required(CONF_THERMOSTAT_ID): vol.Coerce(int),
+        vol.Required(ATTR_CHANGED_AT): cv.datetime,
     }
 )
 
@@ -924,6 +936,60 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 translation_domain=DOMAIN,
                 translation_key="statistics_import_failed",
             ) from err
+
+    async def async_handle_repair_filter_change_boundary(
+        call: ServiceCall,
+    ) -> None:
+        entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
+        if (
+            entry is None
+            or entry.domain != DOMAIN
+            or entry.state is not ConfigEntryState.LOADED
+            or (runtime := getattr(entry, "runtime_data", None)) is None
+            or runtime.coordinator.data is None
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="no_loaded_entry",
+            )
+        thermostat_id = call.data[CONF_THERMOSTAT_ID]
+        thermostat = next(
+            (
+                item
+                for item in runtime.coordinator.data.config.thermostats
+                if item.thermostat_id == thermostat_id
+            ),
+            None,
+        )
+        if thermostat is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_thermostat_id",
+                translation_placeholders={"thermostat_id": str(thermostat_id)},
+            )
+        changed_at = call.data[ATTR_CHANGED_AT]
+        if changed_at.tzinfo is None:
+            changed_at = changed_at.replace(tzinfo=runtime.coordinator.local_tz)
+        changed_at = changed_at.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        if changed_at > now or changed_at < now - timedelta(days=31):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="filter_change_boundary_out_of_range",
+            )
+        saved_date = thermostat.filter_changed_date
+        repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
+        if saved_date is None or saved_date != repair_date:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="filter_change_boundary_date_mismatch",
+            )
+        await async_mark_filter_changed(
+            runtime.coordinator,
+            thermostat_id,
+            changed_at,
+            dismiss_alerts=False,
+        )
     hass.services.async_register(
         DOMAIN,
         SERVICE_IMPORT_STATISTICS,
@@ -944,6 +1010,13 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         SERVICE_REBUILD_STATISTICS,
         async_handle_rebuild_service,
         schema=REBUILD_SERVICE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+        async_handle_repair_filter_change_boundary,
+        schema=REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA,
     )
 
     if conf := config.get(DOMAIN):

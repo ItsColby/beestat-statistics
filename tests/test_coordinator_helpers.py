@@ -8,6 +8,7 @@ import types
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -38,6 +39,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 "homeassistant.core",
                 "homeassistant.exceptions",
                 "homeassistant.helpers",
+                "homeassistant.helpers.event",
                 "homeassistant.helpers.update_coordinator",
             )
         }
@@ -139,6 +141,102 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 thermostat_id=1001,
                 target_date=date(2026, 7, 6),
             )
+        )
+
+    def test_raw_filter_boundary_rounds_to_nearest_five_minute_interval(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+        rows = [
+            {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+            {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+            {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 120},
+        ]
+
+        boundary = self.coordinator._raw_filter_boundary(rows, changed_at)
+
+        self.assertIsNotNone(boundary)
+        self.assertEqual(boundary.baseline_seconds, 480)
+        self.assertEqual(
+            boundary.source_data_end,
+            datetime.fromisoformat("2026-07-05T21:50:00+00:00"),
+        )
+        self.assertEqual(
+            boundary.effective_at,
+            datetime.fromisoformat("2026-07-05T21:50:00+00:00"),
+        )
+
+    def test_raw_filter_boundary_remains_pending_until_click_bucket_exists(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+
+        self.assertIsNone(
+            self.coordinator._raw_filter_boundary(
+                [
+                    {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+                ],
+                changed_at,
+            )
+        )
+
+    def test_filter_boundary_status_distinguishes_pending_and_legacy_records(self) -> None:
+        configured = self.config_model.ConfiguredThermostat
+
+        self.assertEqual(
+            self.coordinator.filter_boundary_status(
+                configured(
+                    thermostat_id=1,
+                    slug="zone_a",
+                    name="Zone A",
+                    filter_changed_date=date(2026, 7, 5),
+                    filter_changed_at=datetime.fromisoformat(
+                        "2026-07-05T21:48:00+00:00"
+                    ),
+                )
+            ),
+            "pending_data",
+        )
+        self.assertEqual(
+            self.coordinator.filter_boundary_status(
+                configured(
+                    thermostat_id=1,
+                    slug="zone_a",
+                    name="Zone A",
+                    filter_changed_date=date(2026, 7, 5),
+                )
+            ),
+            "legacy_date_only",
+        )
+
+    def test_pending_click_boundary_starts_new_filter_runtime_at_zero(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
+        )
+
+        self.assertEqual(
+            self.coordinator._filter_runtime_hours(
+                [{"date": "2026-07-05", "sum_fan": 14400}],
+                date(2026, 7, 5),
+                thermostat,
+                "home_assistant",
+            ),
+            0.0,
+        )
+
+    def test_click_boundary_with_unverified_baseline_remains_pending(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
+            filter_change_day_runtime_baseline_seconds=14400,
+        )
+
+        self.assertEqual(
+            self.coordinator.filter_boundary_status(thermostat),
+            "pending_data",
         )
 
     def test_filter_changed_date_walks_nested_filter_payloads(self) -> None:
@@ -363,6 +461,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         core = types.ModuleType("homeassistant.core")
         exceptions = types.ModuleType("homeassistant.exceptions")
         helpers = types.ModuleType("homeassistant.helpers")
+        event = types.ModuleType("homeassistant.helpers.event")
         update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
         aiohttp = types.ModuleType("aiohttp")
 
@@ -371,10 +470,12 @@ class CoordinatorHelpersTest(unittest.TestCase):
         exceptions.ConfigEntryAuthFailed = type("ConfigEntryAuthFailed", (Exception,), {})
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
+        event.async_call_later = lambda *_args, **_kwargs: lambda: None
         aiohttp.ClientError = RuntimeError
         aiohttp.ClientSession = object
 
         helpers.update_coordinator = update_coordinator
+        helpers.event = event
         homeassistant.core = core
         homeassistant.exceptions = exceptions
         homeassistant.helpers = helpers
@@ -384,7 +485,73 @@ class CoordinatorHelpersTest(unittest.TestCase):
         sys.modules["homeassistant.core"] = core
         sys.modules["homeassistant.exceptions"] = exceptions
         sys.modules["homeassistant.helpers"] = helpers
+        sys.modules["homeassistant.helpers.event"] = event
         sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
+
+
+class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
+    """Validate pending boundary persistence across the real coordinator method."""
+
+    setUp = CoordinatorHelpersTest.setUp
+    tearDown = CoordinatorHelpersTest.tearDown
+    _install_fake_homeassistant_modules = (
+        CoordinatorHelpersTest._install_fake_homeassistant_modules
+    )
+
+    async def test_pending_boundary_finalizes_from_raw_runtime_rows(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1001,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_at=changed_at,
+        )
+        entry = types.SimpleNamespace(data={}, options={})
+
+        def update_entry(_entry, *, options):
+            entry.options = options
+
+        coordinator = types.SimpleNamespace(
+            _client=types.SimpleNamespace(
+                async_read_runtime_thermostat=AsyncMock(
+                    return_value=[
+                        {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+                        {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+                        {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+                    ]
+                ),
+                redact_error=lambda err: str(err),
+            ),
+            _local_tz=ZoneInfo("America/New_York"),
+            config_entry=entry,
+            hass=types.SimpleNamespace(
+                config_entries=types.SimpleNamespace(async_update_entry=update_entry)
+            ),
+            last_filter_boundary_pending_count=0,
+            last_filter_boundary_reconciled_count=0,
+            last_filter_boundary_reconcile_error=None,
+            last_filter_boundary_reconcile_attempt_at=None,
+            async_schedule_filter_boundary_reconcile=lambda: None,
+            _async_cancel_filter_boundary_retry=lambda: None,
+        )
+
+        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
+            coordinator,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=(),
+            ),
+        )
+
+        saved = entry.options["thermostats"][0]
+        self.assertEqual(saved["filter_change_day_runtime_baseline_seconds"], 480)
+        self.assertEqual(
+            saved["filter_change_boundary_source_data_end"],
+            "2026-07-05T21:50:00+00:00",
+        )
+        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
 
 
 class _FakeDataUpdateCoordinator:

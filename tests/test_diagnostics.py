@@ -50,6 +50,7 @@ class DiagnosticsTest(unittest.TestCase):
                 "homeassistant.core",
                 "homeassistant.exceptions",
                 "homeassistant.helpers",
+                "homeassistant.helpers.event",
                 "homeassistant.helpers.update_coordinator",
             )
         }
@@ -168,6 +169,10 @@ class DiagnosticsTest(unittest.TestCase):
                 last_filter_alert_dismiss_matched=1,
                 last_filter_alert_dismissed=1,
                 last_filter_alert_dismiss_error=None,
+                last_filter_boundary_reconcile_attempt_at=None,
+                last_filter_boundary_reconciled_count=0,
+                last_filter_boundary_pending_count=0,
+                last_filter_boundary_reconcile_error=None,
             )
         )
         entry = FakeEntry(
@@ -212,6 +217,7 @@ class DiagnosticsTest(unittest.TestCase):
         core = types.ModuleType("homeassistant.core")
         exceptions = types.ModuleType("homeassistant.exceptions")
         helpers = types.ModuleType("homeassistant.helpers")
+        event = types.ModuleType("homeassistant.helpers.event")
         update_coordinator = types.ModuleType(
             "homeassistant.helpers.update_coordinator"
         )
@@ -228,10 +234,12 @@ class DiagnosticsTest(unittest.TestCase):
             (Exception,),
             {},
         )
+        event.async_call_later = lambda *_args, **_kwargs: lambda: None
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
 
         components.diagnostics = diagnostics
+        helpers.event = event
         helpers.update_coordinator = update_coordinator
         homeassistant.components = components
         homeassistant.config_entries = config_entries
@@ -249,6 +257,7 @@ class DiagnosticsTest(unittest.TestCase):
         sys.modules["homeassistant.core"] = core
         sys.modules["homeassistant.exceptions"] = exceptions
         sys.modules["homeassistant.helpers"] = helpers
+        sys.modules["homeassistant.helpers.event"] = event
         sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
 
 

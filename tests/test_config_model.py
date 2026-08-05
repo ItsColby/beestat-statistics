@@ -351,6 +351,43 @@ class ConfigModelTest(unittest.TestCase):
             28800,
         )
 
+    def test_thermostat_override_parses_exact_filter_boundary_metadata(self) -> None:
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=(),
+            config_data={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                        "filter_change_day_runtime_baseline_seconds": 28800,
+                        "filter_change_boundary_reconciled_at": (
+                            "2026-07-05T22:05:00+00:00"
+                        ),
+                        "filter_change_boundary_source_data_end": (
+                            "2026-07-05T21:50:00+00:00"
+                        ),
+                    }
+                ]
+            },
+        )
+
+        thermostat = config.thermostats[0]
+        self.assertEqual(
+            thermostat.filter_changed_at.isoformat(),
+            "2026-07-05T21:48:00+00:00",
+        )
+        self.assertEqual(
+            thermostat.filter_change_boundary_reconciled_at.isoformat(),
+            "2026-07-05T22:05:00+00:00",
+        )
+        self.assertEqual(
+            thermostat.filter_change_boundary_source_data_end.isoformat(),
+            "2026-07-05T21:50:00+00:00",
+        )
+
     def test_negative_filter_change_day_runtime_baseline_is_ignored(self) -> None:
         config = config_model.build_beestat_config(
             FakeHass({}),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import BeestatApiError, BeestatAuthError, BeestatClient
@@ -18,13 +20,20 @@ from .config_model import (
     ConfiguredThermostat,
     build_beestat_config,
 )
-from .config_payload import entry_runtime_config_data
+from .config_payload import (
+    entry_runtime_config_data,
+    update_thermostat_override_options,
+)
 from .const import (
+    CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+    CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
+    CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     DOMAIN,
     FILTER_RECENT_RUNTIME_DAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+_FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
 
 if TYPE_CHECKING:
     from .runtime import BeestatStatisticsConfigEntry
@@ -114,6 +123,15 @@ class BeestatRuntimeData:
     sensor_metadata: dict[int, SensorMetadata]
 
 
+@dataclass(frozen=True, slots=True)
+class RawFilterBoundary:
+    """One reconciled raw-runtime boundary at Beestat's source resolution."""
+
+    baseline_seconds: float
+    effective_at: datetime
+    source_data_end: datetime
+
+
 class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     """Coordinate Beestat runtime sync/read calls for sensors and imports."""
 
@@ -154,6 +172,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_filter_alert_dismiss_matched: int | None = None
         self.last_filter_alert_dismissed: int | None = None
         self.last_filter_alert_dismiss_error: str | None = None
+        self.last_filter_boundary_reconcile_attempt_at: datetime | None = None
+        self.last_filter_boundary_reconciled_count: int = 0
+        self.last_filter_boundary_pending_count: int = 0
+        self.last_filter_boundary_reconcile_error: str | None = None
+        self._cancel_filter_boundary_retry: Callable[[], None] | None = None
+        config_entry.async_on_unload(self._async_cancel_filter_boundary_retry)
 
     @property
     def status(self) -> str:
@@ -185,6 +209,36 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             thermostat_id=thermostat_id,
             target_date=target_date,
         )
+
+    @callback
+    def async_schedule_filter_boundary_reconcile(self) -> None:
+        """Schedule one bounded retry while an exact boundary is pending."""
+
+        if self._cancel_filter_boundary_retry is not None:
+            return
+        self._cancel_filter_boundary_retry = async_call_later(
+            self.hass,
+            _FILTER_BOUNDARY_RETRY_DELAY,
+            self._async_retry_filter_boundaries,
+        )
+
+    @callback
+    def _async_cancel_filter_boundary_retry(self) -> None:
+        if self._cancel_filter_boundary_retry is None:
+            return
+        self._cancel_filter_boundary_retry()
+        self._cancel_filter_boundary_retry = None
+
+    async def _async_retry_filter_boundaries(self, _now: datetime) -> None:
+        self._cancel_filter_boundary_retry = None
+        try:
+            await self.async_refresh_runtime(skip_sync=False, summary_window=True)
+        except Exception as err:  # noqa: BLE001 - coordinator retains normal status
+            _LOGGER.warning(
+                "Beestat filter boundary reconciliation retry remains pending (%s)",
+                type(err).__name__,
+            )
+            self.async_schedule_filter_boundary_reconcile()
 
     @callback
     def async_rebuild_runtime_from_cached_rows(self) -> None:
@@ -346,6 +400,13 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             sensor_rows_tuple = tuple(
                 row for row in sensor_rows if not row.get("deleted")
             )
+            config = build_beestat_config(
+                self.hass,
+                thermostat_rows_tuple,
+                sensor_rows_tuple,
+                entry_runtime_config_data(self.config_entry),
+            )
+            await self._async_reconcile_pending_filter_boundaries(config)
             if summary_window:
                 today = datetime.now(timezone.utc).astimezone(self._local_tz).date()
                 config = build_beestat_config(
@@ -415,6 +476,91 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_error_at = datetime.now(timezone.utc)
         self.async_update_listeners()
 
+    async def _async_reconcile_pending_filter_boundaries(
+        self,
+        config: BeestatConfig,
+    ) -> None:
+        """Finalize persisted click timestamps from bounded raw runtime rows."""
+
+        pending = [
+            thermostat
+            for thermostat in config.thermostats
+            if thermostat.filter_changed_at is not None
+            and thermostat.filter_change_boundary_reconciled_at is None
+        ]
+        self.last_filter_boundary_pending_count = len(pending)
+        self.last_filter_boundary_reconciled_count = 0
+        self.last_filter_boundary_reconcile_error = None
+        if not pending:
+            self._async_cancel_filter_boundary_retry()
+            return
+
+        self.last_filter_boundary_reconcile_attempt_at = datetime.now(timezone.utc)
+        options = dict(self.config_entry.options)
+        pending_count = 0
+        for thermostat in pending:
+            changed_at = thermostat.filter_changed_at
+            if changed_at is None:  # pragma: no cover - narrowed above
+                continue
+            local_date = changed_at.astimezone(self._local_tz).date()
+            window_start = datetime.combine(local_date, time.min).replace(
+                tzinfo=self._local_tz
+            ).astimezone(timezone.utc)
+            window_end = min(
+                datetime.now(timezone.utc),
+                changed_at + timedelta(minutes=5),
+            )
+            try:
+                rows = await self._client.async_read_runtime_thermostat(
+                    thermostat.thermostat_id,
+                    window_start.isoformat(),
+                    window_end.isoformat(),
+                )
+            except Exception as err:  # noqa: BLE001 - primary runtime remains usable
+                pending_count += 1
+                self.last_filter_boundary_reconcile_error = self._client.redact_error(
+                    err
+                )
+                _LOGGER.warning(
+                    "Unable to reconcile a pending Beestat filter boundary (%s)",
+                    type(err).__name__,
+                )
+                continue
+
+            boundary = _raw_filter_boundary(rows, changed_at)
+            if boundary is None:
+                pending_count += 1
+                continue
+            reconciled_at = datetime.now(timezone.utc)
+            options = update_thermostat_override_options(
+                self.config_entry.data,
+                options,
+                thermostat.thermostat_id,
+                {
+                    CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: (
+                        boundary.baseline_seconds
+                    ),
+                    CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT: (
+                        reconciled_at.isoformat()
+                    ),
+                    CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END: (
+                        boundary.source_data_end.isoformat()
+                    ),
+                },
+            )
+            self.last_filter_boundary_reconciled_count += 1
+
+        if options != dict(self.config_entry.options):
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                options=options,
+            )
+        self.last_filter_boundary_pending_count = pending_count
+        if pending_count:
+            self.async_schedule_filter_boundary_reconcile()
+        else:
+            self._async_cancel_filter_boundary_retry()
+
     def _build_runtime_data(
         self,
         rows: list[dict[str, Any]],
@@ -469,14 +615,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 lag_days=max(lag_days, 0) if lag_days is not None else None,
                 filter_changed_date=changed_date,
                 filter_changed_source=changed_source,
-                filter_runtime_hours=_runtime_hours_since(
+                filter_runtime_hours=_filter_runtime_hours(
                     thermostat_rows,
                     changed_date,
-                    change_day_baseline_seconds=(
-                        thermostat.filter_change_day_runtime_baseline_seconds
-                        if changed_source == "home_assistant"
-                        else None
-                    ),
+                    thermostat,
+                    changed_source,
                 ),
                 recent_runtime_hours_per_day=_recent_runtime_hours_per_day(
                     thermostat_rows,
@@ -605,6 +748,89 @@ def _runtime_seconds_on_date(
     if not matched_rows:
         return None
     return _sum_fan_seconds(matched_rows)
+
+
+def filter_boundary_status(thermostat: ConfiguredThermostat) -> str:
+    """Return the persisted click-boundary lifecycle state."""
+
+    if thermostat.filter_changed_at is not None:
+        if (
+            thermostat.filter_change_day_runtime_baseline_seconds is not None
+            and thermostat.filter_change_boundary_reconciled_at is not None
+        ):
+            return "finalized"
+        return "pending_data"
+    if thermostat.filter_change_day_runtime_baseline_seconds is not None:
+        return "legacy_snapshot"
+    return "legacy_date_only"
+
+
+def _filter_runtime_hours(
+    rows: list[dict[str, Any]],
+    changed_date: date | None,
+    thermostat: ConfiguredThermostat,
+    changed_source: str | None,
+) -> float | None:
+    """Return runtime without charging pre-click runtime to a pending reset."""
+
+    if (
+        changed_source == "home_assistant"
+        and thermostat.filter_changed_at is not None
+        and thermostat.filter_change_boundary_reconciled_at is None
+    ):
+        return 0.0
+    return _runtime_hours_since(
+        rows,
+        changed_date,
+        change_day_baseline_seconds=(
+            thermostat.filter_change_day_runtime_baseline_seconds
+            if changed_source == "home_assistant"
+            else None
+        ),
+    )
+
+
+def _raw_filter_boundary(
+    rows: list[dict[str, Any]],
+    changed_at: datetime,
+) -> RawFilterBoundary | None:
+    """Return a five-minute boundary once raw data covers the click bucket."""
+
+    if changed_at.tzinfo is None:
+        raise ValueError("changed_at must be timezone-aware")
+    changed_at = changed_at.astimezone(timezone.utc)
+    parsed_rows = [
+        (timestamp, row)
+        for row in rows
+        if (timestamp := _parse_datetime(row.get("timestamp"))) is not None
+    ]
+    if not parsed_rows:
+        return None
+    source_data_end = max(timestamp for timestamp, _row in parsed_rows)
+    click_bucket = _floor_five_minutes(changed_at)
+    if source_data_end < click_bucket:
+        return None
+    effective_at = _nearest_five_minutes(changed_at)
+    baseline_seconds = sum(
+        _float_or_zero(row.get("fan"))
+        for timestamp, row in parsed_rows
+        if timestamp < effective_at
+    )
+    return RawFilterBoundary(
+        baseline_seconds=baseline_seconds,
+        effective_at=effective_at,
+        source_data_end=source_data_end,
+    )
+
+
+def _floor_five_minutes(value: datetime) -> datetime:
+    epoch = int(value.astimezone(timezone.utc).timestamp())
+    return datetime.fromtimestamp((epoch // 300) * 300, tz=timezone.utc)
+
+
+def _nearest_five_minutes(value: datetime) -> datetime:
+    epoch = int(value.astimezone(timezone.utc).timestamp())
+    return datetime.fromtimestamp(((epoch + 150) // 300) * 300, tz=timezone.utc)
 
 
 def _recent_runtime_hours_per_day(

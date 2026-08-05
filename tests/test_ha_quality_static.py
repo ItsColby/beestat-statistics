@@ -624,7 +624,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             {
                 "beestat_auth_failed",
                 "beestat_request_failed",
-                "filter_runtime_summary_unavailable",
+                "filter_change_boundary_date_mismatch",
+                "filter_change_boundary_out_of_range",
                 "no_loaded_entry",
                 "invalid_rebuild_date_range",
                 "unknown_thermostat_id",

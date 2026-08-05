@@ -30,6 +30,32 @@ get_configuration:
       selector:
         config_entry:
           integration: beestat_statistics
+repair_filter_change_boundary:
+  name: Repair filter change boundary
+  description: Assign an exact timestamp to an existing Home Assistant filter-change date and reconcile its five-minute Beestat runtime boundary. Intended for a verified recent historical button press; it does not dismiss alerts or write Ecobee settings.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Loaded Beestat Statistics configuration entry that owns the thermostat.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    thermostat_id:
+      name: Thermostat ID
+      description: Configured Beestat thermostat ID whose saved filter date matches the timestamp's local date.
+      required: true
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    changed_at:
+      name: Changed at
+      description: Verified filter-change timestamp from the last 31 days. A value without an offset is interpreted in Home Assistant's local timezone.
+      required: true
+      selector:
+        datetime: {}
 rebuild_statistics:
   name: Rebuild Beestat statistics
   description: Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally limited to one thermostat and local date range.

@@ -11,7 +11,10 @@ from .const import (
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
+    CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+    CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+    CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -156,10 +159,14 @@ def _yaml_thermostats_with_filter_boundaries(
         if existing is None or CONF_FILTER_CHANGED_DATE not in existing:
             continue
         item[CONF_FILTER_CHANGED_DATE] = existing[CONF_FILTER_CHANGED_DATE]
-        if CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS in existing:
-            item[CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS] = existing[
-                CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS
-            ]
+        for field in (
+            CONF_FILTER_CHANGED_AT,
+            CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
+        ):
+            if field in existing:
+                item[field] = existing[field]
         preserved_boundary = True
     return imported if preserved_boundary else None
 
@@ -224,6 +231,9 @@ def update_thermostat_override_options(
             CONF_TEMPERATURE_ENTITY_ID,
             CONF_OCCUPANCY_ENTITY_ID,
             CONF_MOTION_ENTITY_ID,
+            CONF_FILTER_CHANGED_AT,
+            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
+            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
             CONF_FILTER_CHANGED_ENTITY_ID,
             CONF_FILTER_CHANGED_DATE,
