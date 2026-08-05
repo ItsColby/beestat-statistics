@@ -6,9 +6,13 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-from .config_model import BeestatConfig, ConfiguredSensor, ConfiguredThermostat
+from .config_model import (
+    BeestatConfig,
+    ConfiguredSensor,
+    ConfiguredThermostat,
+    filter_boundary_status,
+)
 from .const import CONF_SENSORS, CONF_THERMOSTATS
-from .coordinator import filter_boundary_status
 
 
 def configuration_response(

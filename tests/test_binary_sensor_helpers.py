@@ -45,6 +45,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                 "homeassistant.helpers.device_registry",
                 "homeassistant.helpers.entity",
                 "homeassistant.helpers.entity_platform",
+                "homeassistant.helpers.event",
                 "homeassistant.helpers.update_coordinator",
             )
         }
@@ -188,6 +189,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         device_registry = types.ModuleType("homeassistant.helpers.device_registry")
         entity = types.ModuleType("homeassistant.helpers.entity")
         entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
+        event = types.ModuleType("homeassistant.helpers.event")
         update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
 
         aiohttp.ClientError = RuntimeError
@@ -214,6 +216,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
             DIAGNOSTIC="diagnostic",
         )
         entity_platform.AddConfigEntryEntitiesCallback = object
+        event.async_call_later = lambda *_args, **_kwargs: lambda: None
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
         update_coordinator.CoordinatorEntity = _FakeCoordinatorEntity
@@ -222,6 +225,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         helpers.device_registry = device_registry
         helpers.entity = entity
         helpers.entity_platform = entity_platform
+        helpers.event = event
         helpers.update_coordinator = update_coordinator
         homeassistant.components = components
         homeassistant.config_entries = config_entries
@@ -242,6 +246,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         sys.modules["homeassistant.helpers.device_registry"] = device_registry
         sys.modules["homeassistant.helpers.entity"] = entity
         sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
+        sys.modules["homeassistant.helpers.event"] = event
         sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
 
 

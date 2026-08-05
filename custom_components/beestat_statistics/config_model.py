@@ -148,6 +148,21 @@ class BeestatConfig:
     local_room_sensor_count: int = 0
 
 
+def filter_boundary_status(thermostat: ConfiguredThermostat) -> str:
+    """Return the persisted click-boundary lifecycle state."""
+
+    if thermostat.filter_changed_at is not None:
+        if (
+            thermostat.filter_change_day_runtime_baseline_seconds is not None
+            and thermostat.filter_change_boundary_reconciled_at is not None
+        ):
+            return "finalized"
+        return "pending_data"
+    if thermostat.filter_change_day_runtime_baseline_seconds is not None:
+        return "legacy_snapshot"
+    return "legacy_date_only"
+
+
 def build_beestat_config(
     hass: Any,
     thermostat_rows: tuple[dict[str, Any], ...],

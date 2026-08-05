@@ -10,9 +10,9 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .config_model import ConfiguredThermostat
+from .config_model import ConfiguredThermostat, filter_boundary_status
 from .const import thermostat_entity_unique_id
-from .coordinator import BeestatRuntimeDataCoordinator, filter_boundary_status
+from .coordinator import BeestatRuntimeDataCoordinator
 from .entity import (
     async_add_new_entities,
     thermostat_device_info,
