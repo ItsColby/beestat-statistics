@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timezone
 
+from .api import exception_fingerprint
 from .config_payload import update_thermostat_override_options
 from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
@@ -69,7 +70,7 @@ async def async_mark_filter_changed(
     except Exception as err:  # noqa: BLE001 - the physical change is already durable
         _LOGGER.warning(
             "Saved filter change; exact Beestat runtime boundary remains pending (%s)",
-            type(err).__name__,
+            exception_fingerprint(err),
         )
         coordinator.async_schedule_filter_boundary_reconcile()
 
@@ -116,7 +117,7 @@ async def _async_apply_filter_change(
         except Exception as err:  # noqa: BLE001 - persistence is the primary contract
             _LOGGER.warning(
                 "Saved filter change but cached runtime state could not be rebuilt (%s)",
-                type(err).__name__,
+                exception_fingerprint(err),
             )
     else:
         try:
@@ -136,7 +137,7 @@ async def _async_apply_filter_change(
         _LOGGER.warning(
             "Unable to dismiss Beestat filter alerts after a filter change; "
             "the local filter change was saved (%s)",
-            type(err).__name__,
+            exception_fingerprint(err),
         )
     else:
         if dismissed:

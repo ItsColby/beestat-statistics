@@ -43,7 +43,12 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 
-from .api import BeestatApiError, BeestatAuthError, BeestatClient
+from .api import (
+    BeestatApiError,
+    BeestatAuthError,
+    BeestatClient,
+    exception_fingerprint,
+)
 from .config_model import (
     ConfiguredThermostat,
     configured_override_entity_domain_errors,
@@ -539,9 +544,10 @@ class BeestatStatisticsImporter:
             value.astimezone(self._local_tz).date() for value in latest_by_id.values()
         )
         window_start = latest_day - timedelta(days=DEFAULT_SUMMARY_OVERLAP_DAYS)
-        window_end = _latest_summary_day(cached_rows) or datetime.now(
-            timezone.utc
-        ).astimezone(self._local_tz).date()
+        window_end = (
+            _latest_summary_day(cached_rows)
+            or datetime.now(timezone.utc).astimezone(self._local_tz).date()
+        )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
             return SummaryImportPlan(
@@ -611,7 +617,6 @@ class BeestatStatisticsImporter:
             return list(runtime_data.summary_rows)
         return await self._client.async_read_id("runtime_thermostat_summary")
 
-
     async def _async_latest_cumulative_starts(
         self,
         statistic_ids: Iterable[str],
@@ -648,7 +653,9 @@ class BeestatStatisticsImporter:
         thermostat_id: int | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
         start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
-        thermostat_data_end = _thermostat_data_end_map(list(runtime_data.thermostat_rows))
+        thermostat_data_end = _thermostat_data_end_map(
+            list(runtime_data.thermostat_rows)
+        )
 
         rows_by_id: dict[int, list[dict[str, Any]]] = {}
         thermostat_ids = sorted(
@@ -742,7 +749,9 @@ class BeestatStatisticsImporter:
     ) -> dict[int, list[dict[str, Any]]]:
         start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
         sensor_to_thermostat = _sensor_thermostat_map(list(runtime_data.sensor_rows))
-        thermostat_data_end = _thermostat_data_end_map(list(runtime_data.thermostat_rows))
+        thermostat_data_end = _thermostat_data_end_map(
+            list(runtime_data.thermostat_rows)
+        )
         configured_sensor_ids = {
             sensor.sensor_id
             for sensor in runtime_data.config.sensors
@@ -829,6 +838,7 @@ class BeestatStatisticsImporter:
             )
             return []
 
+
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up Beestat Statistics and import YAML configuration if present."""
 
@@ -861,7 +871,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             runtime.coordinator.async_record_import_error(err)
             _LOGGER.error(
                 "Unexpected Beestat statistics import service failure (%s)",
-                type(err).__name__,
+                exception_fingerprint(err),
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -939,7 +949,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             runtime.coordinator.async_record_import_error(err)
             _LOGGER.error(
                 "Unexpected Beestat statistics rebuild service failure (%s)",
-                type(err).__name__,
+                exception_fingerprint(err),
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -999,6 +1009,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             changed_at,
             dismiss_alerts=False,
         )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_IMPORT_STATISTICS,
@@ -1112,7 +1123,7 @@ async def async_setup_entry(
             if not scheduled_import_unavailable_logged:
                 _LOGGER.info(
                     "Beestat statistics import is unavailable (%s)",
-                    type(err).__name__,
+                    exception_fingerprint(err),
                 )
                 scheduled_import_unavailable_logged = True
         else:
@@ -1620,9 +1631,7 @@ def _filter_summary_rows_by_thermostat(
     if thermostat_id is None:
         return rows
     return [
-        row
-        for row in rows
-        if _row_int(row, "thermostat_id", "id") == thermostat_id
+        row for row in rows if _row_int(row, "thermostat_id", "id") == thermostat_id
     ]
 
 
@@ -1835,7 +1844,10 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
         elif row.get("timestamp") is not None:
             key = (id_field, row.get(id_field), "timestamp", row["timestamp"])
         else:
-            key = ("row", tuple(sorted((str(key), str(value)) for key, value in row.items())))
+            key = (
+                "row",
+                tuple(sorted((str(key), str(value)) for key, value in row.items())),
+            )
         deduped[key] = row
     return sorted(
         deduped.values(),

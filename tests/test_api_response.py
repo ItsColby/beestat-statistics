@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import traceback
 import types
 import unittest
 from pathlib import Path
@@ -29,12 +30,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
     """Validate Beestat response helpers without requiring aiohttp."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
-                "aiohttp",
-            )
-        }
+        self._old_modules = {key: sys.modules.get(key) for key in ("aiohttp",)}
         aiohttp = types.ModuleType("aiohttp")
         aiohttp.ClientError = RuntimeError
         aiohttp.ClientSession = object
@@ -117,6 +113,15 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             "Unexpected integration error (KeyError)",
         )
 
+    def test_exception_fingerprint_is_useful_without_exception_content(self) -> None:
+        err = RuntimeError("private-response-secret")
+        frame = traceback.FrameSummary(str(ROOT / "synthetic.py"), 17, "fail")
+        with patch.object(self.api.traceback, "extract_tb", return_value=[frame]):
+            fingerprint = self.api.exception_fingerprint(err)
+
+        self.assertEqual("RuntimeError@synthetic:fail:17", fingerprint)
+        self.assertNotIn("private-response-secret", fingerprint)
+
     def test_sync_true_response_is_success_without_rows(self) -> None:
         self.assertEqual(self.api._normalize_rows(True, allow_boolean=True), [])
 
@@ -157,9 +162,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_json_error_does_not_expose_parser_detail(self) -> None:
         secret = "parser-response-secret"
-        session = _FakeSession(
-            [_FakeResponse({}, json_error=ValueError(secret))]
-        )
+        session = _FakeSession([_FakeResponse({}, json_error=ValueError(secret))])
         client = self.api.BeestatClient(
             session,
             "secret-token",
@@ -243,9 +246,7 @@ class _FakeSession:
         self.call_count += 1
         response = next(self._payloads)
         return (
-            response
-            if isinstance(response, _FakeResponse)
-            else _FakeResponse(response)
+            response if isinstance(response, _FakeResponse) else _FakeResponse(response)
         )
 
 
