@@ -316,7 +316,7 @@ Home Assistant harness checks require Linux with Python `3.14`. CI runs the harn
 python -m pip install pytest-homeassistant-custom-component==0.13.345
 python -m pip install --upgrade -r requirements-ha-test.txt
 pytest tests/test_config_flow_ha.py -q
-python -m pip install pytest-homeassistant-custom-component==0.13.353
+python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test-current.txt
 pytest tests/test_config_flow_ha.py -q
 ```
@@ -325,7 +325,7 @@ On Windows, run the same harness through Docker Desktop or WSL from the reposito
 
 ```powershell
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.345 && python -m pip install --upgrade -r requirements-ha-test.txt && pytest tests/test_config_flow_ha.py -q"
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.353 && python -m pip install --upgrade -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest

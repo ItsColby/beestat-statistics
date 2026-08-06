@@ -100,7 +100,7 @@ jobs:
             harness: 0.13.345
           - name: Current Core 2026.8.0
             requirements: requirements-ha-test-current.txt
-            harness: 0.13.353
+            harness: 0.13.354
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

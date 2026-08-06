@@ -26,5 +26,9 @@
   demonstrated ceiling; and remove the redundant Ruff GitHub Action dependency.
 - Enforce Ruff's exception-name suffix rule to prevent ambiguous custom
   exception names from entering the integration.
+- Add zero-baseline Ruff Bugbear, timezone-awareness, and logging checks while
+  retaining the existing debugger-statement rule.
+- Validate current stable Core `2026.8.0` with test harness `0.13.354`, whose
+  dependency metadata now targets that final release directly.
 - Exercise the native filter date entity's exact click-boundary attributes,
   update path, and unavailable state with Home Assistant runtime models.
