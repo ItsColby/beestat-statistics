@@ -21,8 +21,8 @@
   maintainability in the integration's real private deployment.
 - Run the latest Ruff, ShellCheck, actionlint, and zizmor releases directly in
   validation; enable Ruff's stable native, blind-exception, and Pylint
-  convention checks; retain ambiguous-Unicode detection; ratchet complexity to
-  the current demonstrated ceiling; and remove the redundant Ruff GitHub
-  Action dependency.
+  convention checks; retain ambiguous-Unicode detection; add focused network,
+  cryptography, and comprehension checks; ratchet complexity to the current
+  demonstrated ceiling; and remove the redundant Ruff GitHub Action dependency.
 - Exercise the native filter date entity's exact click-boundary attributes,
   update path, and unavailable state with Home Assistant runtime models.
