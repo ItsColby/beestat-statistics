@@ -461,13 +461,17 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", workflow)
-        self.assertRegex(
-            workflow,
-            r"astral-sh/ruff-action@[0-9a-f]{40} # v4\.1\.0",
-        )
+        self.assertNotIn("astral-sh/ruff-action@", workflow)
         self.assertNotIn('version: "0.16.1"', workflow)
-        self.assertIn("ruff format --check custom_components tests scripts", workflow)
-        self.assertIn("python -m pip install --upgrade zizmor", workflow)
+        self.assertIn(
+            "python -m pip install --upgrade ruff shellcheck-py zizmor", workflow
+        )
+        self.assertIn(
+            "python -m ruff format --check custom_components tests scripts", workflow
+        )
+        self.assertIn("python -m ruff check custom_components tests scripts", workflow)
+        self.assertIn("python -m ruff --version", workflow)
+        self.assertNotIn("shellcheck-py==", workflow)
         self.assertIn(
             "go install github.com/rhysd/actionlint/cmd/actionlint@latest",
             workflow,
@@ -483,8 +487,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             workflow,
         )
         self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade ruff mypy zizmor",
+            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade "
+            "ruff mypy shellcheck-py zizmor",
             readme,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade "
+            "ruff mypy shellcheck-py zizmor",
+            agents,
         )
         self.assertIn(
             ".\\.venv\\Scripts\\zizmor.exe --persona auditor .",

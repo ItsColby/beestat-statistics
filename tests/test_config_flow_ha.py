@@ -77,6 +77,7 @@ from custom_components.beestat_statistics.const import (
     SERVICE_GET_CONFIGURATION,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
+from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entity import (
     async_remove_cross_integration_device_ownership,
     link_entity_to_device,
@@ -1060,6 +1061,65 @@ async def test_native_filter_button_forwards_exact_aware_click_time(
     mark_changed.assert_awaited_once_with(coordinator, 1001, changed_at)
 
 
+async def test_native_filter_date_exposes_and_updates_click_boundary(
+    hass: HomeAssistant,
+) -> None:
+    changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+    reconciled_at = datetime.fromisoformat("2026-07-06T06:05:00+00:00")
+    source_data_end = datetime.fromisoformat("2026-07-06T04:00:00+00:00")
+    thermostat = _configured_thermostat(
+        thermostat_id=1001,
+        name="Zone A",
+        slug="zone_a",
+        filter_changed_date=changed_at.date(),
+        filter_changed_at=changed_at,
+        filter_change_day_runtime_baseline_seconds=7200.0,
+        filter_change_boundary_reconciled_at=reconciled_at,
+        filter_change_boundary_source_data_end=source_data_end,
+    )
+    summary = types.SimpleNamespace(
+        filter_changed_date=changed_at.date(),
+        filter_changed_source="home_assistant_override",
+    )
+    coordinator = types.SimpleNamespace(
+        hass=hass,
+        last_update_success=True,
+        data=types.SimpleNamespace(
+            config=types.SimpleNamespace(thermostats=(thermostat,)),
+            thermostats={1001: summary},
+        ),
+    )
+    entity = BeestatFilterChangedDate(coordinator, thermostat)
+
+    assert entity.available
+    assert entity.native_value == changed_at.date()
+    assert entity.extra_state_attributes == {
+        "source": "home_assistant_override",
+        "home_assistant_override_date": "2026-07-05",
+        "filter_changed_at": "2026-07-05T21:48:00+00:00",
+        "boundary_status": "finalized",
+        "change_day_runtime_baseline_seconds": 7200.0,
+        "boundary_reconciled_at": "2026-07-06T06:05:00+00:00",
+        "boundary_source_data_end": "2026-07-06T04:00:00+00:00",
+        "boundary_precision_minutes": 5,
+        "legacy_helper_entity_id": None,
+    }
+
+    new_date = date(2026, 7, 7)
+    with patch(
+        "custom_components.beestat_statistics.date.async_set_filter_changed_date",
+        new_callable=AsyncMock,
+    ) as set_date:
+        await entity.async_set_value(new_date)
+
+    set_date.assert_awaited_once_with(coordinator, 1001, new_date)
+
+    coordinator.data.config = types.SimpleNamespace(thermostats=())
+    assert not entity.available
+    assert entity.native_value is None
+    assert entity.extra_state_attributes is None
+
+
 async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> None:
     """Test the options flow stores native thermostat mapping overrides."""
 
@@ -1213,6 +1273,9 @@ def _configured_thermostat(
     device_id: str | None = None,
     filter_change_day_runtime_baseline_seconds: float | None = None,
     filter_changed_date: date | None = None,
+    filter_changed_at: datetime | None = None,
+    filter_change_boundary_reconciled_at: datetime | None = None,
+    filter_change_boundary_source_data_end: datetime | None = None,
 ) -> ConfiguredThermostat:
     return ConfiguredThermostat(
         thermostat_id=thermostat_id,
@@ -1221,9 +1284,12 @@ def _configured_thermostat(
         climate_entity_id=climate_entity_id,
         device_id=device_id,
         filter_changed_date=filter_changed_date,
+        filter_changed_at=filter_changed_at,
         filter_change_day_runtime_baseline_seconds=(
             filter_change_day_runtime_baseline_seconds
         ),
+        filter_change_boundary_reconciled_at=(filter_change_boundary_reconciled_at),
+        filter_change_boundary_source_data_end=(filter_change_boundary_source_data_end),
     )
 
 
