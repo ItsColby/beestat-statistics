@@ -19,7 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .alerts import classify_active_alerts
+from .alerts import active_alert_examples, classify_active_alerts
 from .config_model import ConfiguredThermostat
 from .const import thermostat_entity_unique_id
 from .coordinator import (
@@ -222,6 +222,7 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "last_import_skipped_windows",
             "last_import_skipped_runtime_sensor_windows",
             "last_import_skipped_runtime_thermostat_windows",
+            "last_import_skipped_window_examples",
             "last_import_summary_mode",
             "last_import_summary_window_start",
             "last_import_summary_window_end",
@@ -323,6 +324,9 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             ),
             "last_import_skipped_runtime_thermostat_windows": (
                 self.coordinator.last_import_skipped_runtime_thermostat_windows
+            ),
+            "last_import_skipped_window_examples": list(
+                self.coordinator.last_import_skipped_window_examples
             ),
             "last_import_summary_mode": self.coordinator.last_import_summary_mode,
             "last_import_summary_window_start": (
@@ -985,7 +989,7 @@ def _active_alert_attributes(
     metadata = _thermostat_metadata(coordinator, thermostat_id)
     if metadata is None:
         return None
-    return {"active_alerts": list(metadata.active_alerts)}
+    return {"active_alerts": active_alert_examples(metadata.active_alerts)}
 
 
 def _active_alert_category(
@@ -1007,7 +1011,7 @@ def _active_alert_category_attributes(
         return None
     return {
         "alert_category": _classify_active_alerts(metadata.active_alerts),
-        "active_alerts": list(metadata.active_alerts),
+        "active_alerts": active_alert_examples(metadata.active_alerts),
     }
 
 

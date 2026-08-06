@@ -180,13 +180,14 @@ New active Beestat thermostats or sensors discovered after setup are added on th
 
 Diagnostic, profile, mapping, filter-boundary, and alert-detail state attributes
 are available in current Home Assistant state but are excluded from Recorder history
-to avoid retaining noisy metadata on every state write.
+to avoid retaining noisy metadata on every state write. Active-alert surfaces keep
+the complete count and category while showing at most three alert examples.
 
 The Status sensor attributes include HomeKit mapping counts for thermostats and room sensors, so you can see whether Beestat is enriching local HomeKit devices or using Beestat-only fallback devices. The HomeKit mapping incomplete problem binary sensor uses the same counts.
 
 If a Beestat-only fallback device disappears from current Beestat metadata, Home Assistant can remove that stale Beestat device manually from the device page. Shared HomeKit/Ecobee devices are not removed by this integration.
 
-If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override and reload the integration.
+If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. The warning follows referenced entity-registry removal, rename, and recovery without waiting for an integration reload. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override when the mapping intentionally changed.
 
 When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list.
 
@@ -241,7 +242,7 @@ The `beestat_statistics.repair_filter_change_boundary` service action assigns a 
 
 ## Diagnostics
 
-Home Assistant diagnostics are available from the integration entry. Diagnostics redact the API key, API URL, Beestat account fingerprint, Beestat IDs, Home Assistant entity IDs, and device identifiers, and include status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts, automatic filter-alert dismissal results, freshness, and compact thermostat/profile summaries. Remote response bodies and arbitrary API error payload details are never included; HA-visible failures use bounded operation, status, and category messages. Raw Beestat history is not included.
+Home Assistant diagnostics are available from the integration entry. Diagnostics redact the API key, API URL, Beestat account fingerprint, Beestat IDs, Home Assistant entity IDs, and device identifiers, and include status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts plus at most three identifier-free resource/time examples, automatic filter-alert dismissal results, freshness, and compact thermostat/profile summaries. Remote response bodies and arbitrary API error payload details are never included; HA-visible failures use bounded operation, status, and category messages. Raw Beestat history is not included.
 
 For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, and the complete effective mappings without contacting Beestat or changing Home Assistant state. The response deliberately excludes the API key and API URL, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
 

@@ -29,6 +29,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import (
+    Event,
     HomeAssistant,
     ServiceCall,
     ServiceResponse,
@@ -128,6 +129,7 @@ from .entity import (
     is_beestat_only_device,
 )
 from .entry_options import async_mark_filter_changed
+from .import_evidence import SkippedWindowEvidence
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
     CumulativeStatisticSeed,
@@ -346,6 +348,7 @@ class ImportResult:
     skipped_windows: int
     skipped_runtime_thermostat_windows: int
     skipped_runtime_sensor_windows: int
+    skipped_window_examples: tuple[dict[str, str], ...]
     latest_start_by_statistic_id: dict[str, str | None]
     summary_mode: str
     summary_window_start: str | None
@@ -401,7 +404,7 @@ class BeestatStatisticsImporter:
                 summary_plan.rows,
                 thermostat_id,
             )
-            skipped_windows: list[dict[str, Any]] = []
+            skipped_windows = SkippedWindowEvidence()
             thermostat_rows_by_id = await self._async_fetch_thermostat_rows(
                 lookback_days,
                 runtime_data,
@@ -453,17 +456,12 @@ class BeestatStatisticsImporter:
                 source_rows=len(summary_rows)
                 + sum(len(rows) for rows in thermostat_rows_by_id.values())
                 + sum(len(rows) for rows in sensor_rows_by_id.values()),
-                skipped_windows=len(skipped_windows),
-                skipped_runtime_thermostat_windows=sum(
-                    1
-                    for item in skipped_windows
-                    if item["resource"] == "runtime_thermostat"
+                skipped_windows=skipped_windows.total_count,
+                skipped_runtime_thermostat_windows=(
+                    skipped_windows.runtime_thermostat_count
                 ),
-                skipped_runtime_sensor_windows=sum(
-                    1
-                    for item in skipped_windows
-                    if item["resource"] == "runtime_sensor"
-                ),
+                skipped_runtime_sensor_windows=skipped_windows.runtime_sensor_count,
+                skipped_window_examples=skipped_windows.examples,
                 latest_start_by_statistic_id=latest_start_by_id,
                 summary_mode=summary_plan.mode,
                 summary_window_start=_format_day(summary_plan.window_start),
@@ -481,6 +479,7 @@ class BeestatStatisticsImporter:
                     result.skipped_runtime_thermostat_windows
                 ),
                 skipped_runtime_sensor_windows=result.skipped_runtime_sensor_windows,
+                skipped_window_examples=result.skipped_window_examples,
                 summary_mode=result.summary_mode,
                 summary_window_start=result.summary_window_start,
                 summary_window_end=result.summary_window_end,
@@ -650,7 +649,7 @@ class BeestatStatisticsImporter:
         self,
         lookback_days: int,
         runtime_data: BeestatRuntimeData,
-        skipped_windows: list[dict[str, Any]],
+        skipped_windows: SkippedWindowEvidence,
         *,
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
@@ -693,7 +692,7 @@ class BeestatStatisticsImporter:
         thermostat_id: int,
         start: datetime,
         end: datetime,
-        skipped_windows: list[dict[str, Any]],
+        skipped_windows: SkippedWindowEvidence,
     ) -> list[dict[str, Any]]:
         try:
             return await self._client.async_read_runtime_thermostat(
@@ -725,13 +724,10 @@ class BeestatStatisticsImporter:
                 )
                 return rows
 
-            skipped_windows.append(
-                {
-                    "resource": "runtime_thermostat",
-                    "thermostat_id": thermostat_id,
-                    "start": _format_beestat_time(start),
-                    "end": _format_beestat_time(end),
-                }
+            skipped_windows.record(
+                "runtime_thermostat",
+                start=_format_beestat_time(start),
+                end=_format_beestat_time(end),
             )
             _LOGGER.warning(
                 "Skipping Beestat runtime_thermostat window start=%s end=%s: %s",
@@ -745,7 +741,7 @@ class BeestatStatisticsImporter:
         self,
         lookback_days: int,
         runtime_data: BeestatRuntimeData,
-        skipped_windows: list[dict[str, Any]],
+        skipped_windows: SkippedWindowEvidence,
         *,
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
@@ -797,7 +793,7 @@ class BeestatStatisticsImporter:
         sensor_id: int,
         start: datetime,
         end: datetime,
-        skipped_windows: list[dict[str, Any]],
+        skipped_windows: SkippedWindowEvidence,
     ) -> list[dict[str, Any]]:
         try:
             return await self._client.async_read_runtime_sensor(
@@ -829,13 +825,10 @@ class BeestatStatisticsImporter:
                 )
                 return rows
 
-            skipped_windows.append(
-                {
-                    "resource": "runtime_sensor",
-                    "sensor_id": sensor_id,
-                    "start": _format_beestat_time(start),
-                    "end": _format_beestat_time(end),
-                }
+            skipped_windows.record(
+                "runtime_sensor",
+                start=_format_beestat_time(start),
+                end=_format_beestat_time(end),
             )
             _LOGGER.warning(
                 "Skipping Beestat runtime_sensor window start=%s end=%s: %s",
@@ -1117,6 +1110,7 @@ async def async_setup_entry(
             ),
         )
     _async_update_override_issues(hass, entry)
+    _async_track_override_issue_updates(hass, entry)
 
     scheduled_import_unavailable_logged = False
 
@@ -1496,6 +1490,38 @@ def _async_update_override_issues(
 ) -> None:
     _async_update_missing_override_entity_issue(hass, entry)
     _async_update_invalid_override_domain_issue(hass, entry)
+
+
+@callback
+def _async_track_override_issue_updates(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> None:
+    """Refresh mapping Repairs when a referenced registry entity changes."""
+
+    watched_entity_ids = frozenset(
+        configured_override_entity_ids(entry_runtime_config_data(entry))
+    )
+    if not watched_entity_ids:
+        return
+
+    @callback
+    def handle_registry_update(event: Event[Any]) -> None:
+        changed_entity_ids = {
+            str(value)
+            for key in ("entity_id", "old_entity_id")
+            if (value := event.data.get(key)) is not None
+        }
+        if watched_entity_ids.isdisjoint(changed_entity_ids):
+            return
+        _async_update_override_issues(hass, entry)
+
+    entry.async_on_unload(
+        hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            handle_registry_update,
+        )
+    )
 
 
 @callback

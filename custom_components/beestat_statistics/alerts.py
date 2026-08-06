@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+MAX_STATE_ALERT_EXAMPLES = 3
+
+
+def active_alert_examples(
+    alerts: tuple[dict[str, Any], ...],
+) -> list[dict[str, Any]]:
+    """Return bounded alert examples for ordinary entity state."""
+
+    return [dict(alert) for alert in alerts[:MAX_STATE_ALERT_EXAMPLES]]
+
 
 def classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
     """Return a compact category for active thermostat alerts."""

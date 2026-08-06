@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .alerts import classify_active_alerts
+from .alerts import active_alert_examples, classify_active_alerts
 from .config_model import ConfiguredSensor, ConfiguredThermostat
 from .const import sensor_entity_unique_id, thermostat_entity_unique_id
 from .coordinator import (
@@ -123,6 +123,7 @@ class BeestatImportPartialProblemBinarySensor(
             "last_import_skipped_runtime_sensor_windows",
             "last_import_skipped_runtime_thermostat_windows",
             "last_import_skipped_windows",
+            "last_import_skipped_window_examples",
         }
     )
 
@@ -157,6 +158,9 @@ class BeestatImportPartialProblemBinarySensor(
             ),
             "last_import_skipped_runtime_sensor_windows": (
                 self.coordinator.last_import_skipped_runtime_sensor_windows
+            ),
+            "last_import_skipped_window_examples": list(
+                self.coordinator.last_import_skipped_window_examples
             ),
         }
 
@@ -362,7 +366,7 @@ class BeestatThermostatAlertProblemBinarySensor(
         return {
             "active_alert_count": metadata.active_alert_count,
             "alert_category": classify_active_alerts(metadata.active_alerts),
-            "active_alerts": list(metadata.active_alerts),
+            "active_alerts": active_alert_examples(metadata.active_alerts),
         }
 
     @property

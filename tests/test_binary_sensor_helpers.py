@@ -163,6 +163,13 @@ class BinarySensorHelpersTest(unittest.TestCase):
             },
         )
         fake_coordinator = _FakeCoordinator(data)
+        fake_coordinator.last_import_skipped_window_examples = (
+            {
+                "resource": "runtime_sensor",
+                "start": "2026-07-01 00:00:00",
+                "end": "2026-07-02 00:00:00",
+            },
+        )
 
         entities = self.binary_sensor._build_entities(fake_coordinator)
         by_key = {
@@ -178,6 +185,18 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(by_key["runtime_summary_stale"].is_on)
         self.assertTrue(by_key["cloud_data_stale"].is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
+        self.assertEqual(
+            by_key["statistics_import_partial"].extra_state_attributes[
+                "last_import_skipped_window_examples"
+            ],
+            [
+                {
+                    "resource": "runtime_sensor",
+                    "start": "2026-07-01 00:00:00",
+                    "end": "2026-07-02 00:00:00",
+                }
+            ],
+        )
 
     def test_filter_due_sensor_uses_latest_thermostat_options(self) -> None:
         old = self.config_model.ConfiguredThermostat(
@@ -329,6 +348,7 @@ class _FakeCoordinator:
         self.last_import_skipped_windows = 0
         self.last_import_skipped_runtime_thermostat_windows = 0
         self.last_import_skipped_runtime_sensor_windows = 0
+        self.last_import_skipped_window_examples = ()
 
 
 class _FakeCoordinatorEntity(_Subscriptable):

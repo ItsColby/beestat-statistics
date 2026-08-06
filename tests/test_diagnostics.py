@@ -158,6 +158,13 @@ class DiagnosticsTest(unittest.TestCase):
                 last_import_skipped_windows=0,
                 last_import_skipped_runtime_thermostat_windows=0,
                 last_import_skipped_runtime_sensor_windows=0,
+                last_import_skipped_window_examples=(
+                    {
+                        "resource": "runtime_sensor",
+                        "start": "2026-07-01 00:00:00",
+                        "end": "2026-07-02 00:00:00",
+                    },
+                ),
                 last_import_summary_mode="windowed",
                 last_import_summary_window_start="2026-06-28",
                 last_import_summary_window_end="2026-07-05",
@@ -198,6 +205,16 @@ class DiagnosticsTest(unittest.TestCase):
 
         self.assertIsInstance(result["beestat_data"]["thermostats"], list)
         self.assertIsInstance(result["beestat_data"]["sensors"], list)
+        self.assertEqual(
+            result["coordinator"]["last_import_skipped_window_examples"],
+            [
+                {
+                    "resource": "runtime_sensor",
+                    "start": "2026-07-01 00:00:00",
+                    "end": "2026-07-02 00:00:00",
+                }
+            ],
+        )
         self.assertNotIn("secret-key", text)
         self.assertNotIn("fingerprint-secret", text)
         self.assertNotIn("https://api.example.test/", text)

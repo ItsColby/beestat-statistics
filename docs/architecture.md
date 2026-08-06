@@ -140,6 +140,13 @@
   public fixtures, or public documentation examples.
 - Keep filter-date source, helper, and click-boundary attributes available in
   current state but excluded from Recorder history.
+- Keep partial-import and active-alert evidence bounded in ordinary entity
+  state. Preserve complete counts/categories, retain at most three
+  private-identifier-free examples, and put broader aggregate evidence in
+  redacted on-demand diagnostics.
+- Refresh enabled override mapping Repairs when a referenced entity-registry
+  record is removed, renamed, or restored, and remove the listener on unload.
+  Do not silently rewrite the explicit YAML/options mapping owner.
 - Persist the physical filter-change event before fallible cloud work. A pending
   five-minute boundary must be visible in diagnostics, retry without blocking the
   normal coordinator, and never revert the saved click timestamp. Re-read the

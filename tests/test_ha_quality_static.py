@@ -866,6 +866,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn("self.last_error = str(err)", coordinator_text)
 
         self.assertIn("ir.async_create_issue(", init_text)
+        self.assertIn("er.EVENT_ENTITY_REGISTRY_UPDATED", init_text)
+        self.assertIn("_async_track_override_issue_updates(hass, entry)", init_text)
         self.assertIn("_MISSING_OVERRIDE_ENTITIES_ISSUE_ID", init_text)
         self.assertIn("_INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID", init_text)
         self.assertIn("entry_runtime_config_data", init_text)
@@ -875,6 +877,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn(
             "configured_override_entity_domain_errors(entry_runtime_config_data(entry))",
+            init_text,
+        )
+        self.assertIn(
+            "entry.async_on_unload(\n        hass.bus.async_listen(",
             init_text,
         )
         self.assertTrue(

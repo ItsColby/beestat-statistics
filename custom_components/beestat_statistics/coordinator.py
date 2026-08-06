@@ -179,6 +179,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_skipped_windows: int | None = None
         self.last_import_skipped_runtime_thermostat_windows: int | None = None
         self.last_import_skipped_runtime_sensor_windows: int | None = None
+        self.last_import_skipped_window_examples: tuple[dict[str, str], ...] = ()
         self.last_import_summary_mode: str | None = None
         self.last_import_summary_window_start: str | None = None
         self.last_import_summary_window_end: str | None = None
@@ -403,6 +404,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         skipped_windows: int,
         skipped_runtime_thermostat_windows: int,
         skipped_runtime_sensor_windows: int,
+        skipped_window_examples: tuple[dict[str, str], ...],
         summary_mode: str,
         summary_window_start: str | None,
         summary_window_end: str | None,
@@ -424,6 +426,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             skipped_runtime_thermostat_windows
         )
         self.last_import_skipped_runtime_sensor_windows = skipped_runtime_sensor_windows
+        self.last_import_skipped_window_examples = skipped_window_examples
         self.last_import_summary_mode = summary_mode
         self.last_import_summary_window_start = summary_window_start
         self.last_import_summary_window_end = summary_window_end
