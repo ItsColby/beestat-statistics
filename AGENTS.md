@@ -53,7 +53,14 @@ full local tier:
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
-.\.venv\Scripts\zizmor.exe --persona auditor .
+$env:GH_TOKEN = gh auth token
+if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }
+try {
+  .\.venv\Scripts\zizmor.exe --strict-collection --persona auditor .
+  if ($LASTEXITCODE -ne 0) { throw "zizmor audit failed" }
+} finally {
+  Remove-Item Env:GH_TOKEN
+}
 .\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
 .\.venv\Scripts\python.exe scripts\check_public_safety.py
 ```
