@@ -406,6 +406,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "repair-issues",
             "runtime-data",
             "stale-devices",
+            "strict-typing",
         ):
             self.assertIn(f"  {rule}: done", text)
 
@@ -421,7 +422,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             )
 
         self.assertIsNone(re.search(r"^  test-coverage:", text, re.MULTILINE))
-        self.assertNotIn("strict-typing:", text)
 
     def test_ci_python_matches_advertised_home_assistant_target(self) -> None:
         hacs = _json_file("hacs.json")
@@ -468,6 +468,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn("ruff format --check custom_components tests scripts", workflow)
         self.assertIn("python -m pip install --upgrade zizmor", workflow)
+        self.assertIn(
+            "go install github.com/rhysd/actionlint/cmd/actionlint@latest",
+            workflow,
+        )
+        self.assertIn("actionlint -version", workflow)
+        self.assertIn("shellcheck --version", workflow)
+        self.assertIn("run: actionlint", workflow)
         self.assertIn("zizmor --persona auditor .", workflow)
         self.assertIn("python -m mypy --version", workflow)
         self.assertIn("python -m pip install --upgrade mypy", workflow)

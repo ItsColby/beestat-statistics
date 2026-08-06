@@ -308,7 +308,7 @@ Upstream Beestat API drift check:
 
 The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream changes before refreshing it with `--update`; do not treat a changed snapshot as approval to broaden the Home Assistant integration scope.
 
-The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence. Omitted rules are intentionally unclaimed until matching coverage, typing, or runtime evidence exists.
+The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
 Home Assistant harness checks require Linux with Python `3.14`. CI runs the harness against both the minimum supported stable Core version pinned in `requirements-ha-test.txt` and David's current deployed Core line pinned in `requirements-ha-test-current.txt`. Advance the current lane only after the matching stable Home Assistant release and test harness are available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
@@ -328,8 +328,9 @@ docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m 
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.353 && python -m pip install --upgrade -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
 ```
 
-The workflow pins every third-party action to a full commit SHA, runs `zizmor`
-in auditor mode, and reports the current Ruff, mypy, and zizmor versions.
+The workflow pins every third-party action to a full commit SHA, runs the latest
+actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
+Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
 unit, both Home Assistant harness lanes, Hassfest, and HACS validation all
