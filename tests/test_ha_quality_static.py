@@ -448,12 +448,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("harness: 0.13.345", workflow)
         self.assertIn("harness: 0.13.353", workflow)
         harness_install = (
-            "python -m pip install "
-            "pytest-homeassistant-custom-component==${{ matrix.harness }}"
+            'python -m pip install "pytest-homeassistant-custom-component=='
+            '$HARNESS_VERSION"'
         )
-        requirements_install = (
-            "python -m pip install --upgrade -r ${{ matrix.requirements }}"
-        )
+        requirements_install = 'python -m pip install --upgrade -r "$REQUIREMENTS_FILE"'
+        self.assertIn("HARNESS_VERSION: ${{ matrix.harness }}", workflow)
+        self.assertIn("REQUIREMENTS_FILE: ${{ matrix.requirements }}", workflow)
         self.assertIn(harness_install, workflow)
         self.assertIn(requirements_install, workflow)
         self.assertLess(
@@ -467,13 +467,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn("ruff format --check custom_components tests scripts", workflow)
+        self.assertIn("python -m pip install --upgrade zizmor", workflow)
+        self.assertIn("zizmor --persona auditor .", workflow)
+        self.assertIn("python -m mypy --version", workflow)
         self.assertIn("python -m pip install --upgrade mypy", workflow)
         self.assertIn(
             "python -m mypy --strict custom_components/beestat_statistics",
             workflow,
         )
         self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade ruff mypy",
+            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade ruff mypy zizmor",
+            readme,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\zizmor.exe --persona auditor .",
             readme,
         )
         self.assertIn(
@@ -519,15 +526,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             <= set(lint["extend-select"])
         )
         self.assertEqual(["T20"], lint["per-file-ignores"]["scripts/**"])
-        self.assertEqual(
-            [
-                {
-                    "module": "beestat_statistics.sensor",
-                    "disable_error_code": ["misc"],
-                }
-            ],
-            config["tool"]["mypy"]["overrides"],
-        )
+        self.assertTrue(config["tool"]["mypy"]["strict"])
+        self.assertNotIn("overrides", config["tool"]["mypy"])
 
     def test_readme_home_assistant_commands_install_harness_before_core(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -744,11 +744,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertIn("def _summary_available", sensor_text)
         self.assertIn("def _thermostat_metadata_available", sensor_text)
-        self.assertGreaterEqual(
-            sensor_text.count(
-                "available_fn=lambda coordinator, thermostat_id=thermostat_id"
-            ),
-            11,
+        self.assertGreaterEqual(sensor_text.count("available_fn=partial("), 11)
+        self.assertNotIn(
+            "lambda coordinator, thermostat_id=thermostat_id",
+            sensor_text,
         )
 
     def test_user_visible_exceptions_and_repairs_are_translated(self) -> None:
@@ -1062,14 +1061,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             )
 
         harness_install = (
-            "python -m pip install "
-            "pytest-homeassistant-custom-component==${{ matrix.harness }}"
+            'python -m pip install "pytest-homeassistant-custom-component=='
+            '$HARNESS_VERSION"'
         )
-        requirements_install = (
-            "python -m pip install --upgrade -r ${{ matrix.requirements }}"
-        )
+        requirements_install = 'python -m pip install --upgrade -r "$REQUIREMENTS_FILE"'
         self.assertIn("harness: 0.13.345", validate)
         self.assertIn("harness: 0.13.353", validate)
+        self.assertIn("HARNESS_VERSION: ${{ matrix.harness }}", validate)
+        self.assertIn("REQUIREMENTS_FILE: ${{ matrix.requirements }}", validate)
         self.assertLess(
             validate.index(harness_install), validate.index(requirements_install)
         )
@@ -1082,6 +1081,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
         self.assertEqual(dependabot.count("package-ecosystem:"), 1)
         self.assertIn("package-ecosystem: github-actions", dependabot)
+        self.assertIn("default-days: 7", dependabot)
         self.assertNotIn("package-ecosystem: pip", dependabot)
 
     def test_device_entity_names_do_not_repeat_integration_name(self) -> None:

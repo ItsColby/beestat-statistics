@@ -291,12 +291,13 @@ This repository is a HACS custom integration. The Beestat API client is intentio
 Local pure-module checks:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy
+.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy zizmor
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
+.\.venv\Scripts\zizmor.exe --persona auditor .
 ```
 
 Upstream Beestat API drift check:
@@ -327,11 +328,24 @@ docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m 
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.353 && python -m pip install --upgrade -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
 ```
 
-The workflow pins every third-party action to a full commit SHA. Dependabot proposes weekly GitHub Actions updates, and the stable **Release gate** check succeeds only when unit, both Home Assistant harness lanes, hassfest, and HACS validation all succeed.
+The workflow pins every third-party action to a full commit SHA, runs `zizmor`
+in auditor mode, and reports the current Ruff, mypy, and zizmor versions.
+Dependabot proposes weekly GitHub Actions updates after a seven-day stability
+and supply-chain cooldown. The stable **Release gate** check succeeds only when
+unit, both Home Assistant harness lanes, Hassfest, and HACS validation all
+succeed.
 
 ## Release Publishing
 
-Do not use a direct push to `main` as the first build check. Push a release-candidate branch, wait for every **Validate** pull-request job to reach terminal success, then merge. After the merge, wait for the `main` **Validate** run to reach terminal success before creating the immutable tag and GitHub Release. A source push alone is not a completed Home Assistant integration release.
+Do not use a direct push to `main` as the first build check. Push a
+release-candidate branch, wait for every **Validate** pull-request job to reach
+terminal success, then merge. After the merge, wait for the `main` **Validate**
+run and CodeQL analysis of the exact commit to complete, scan the complete
+Validate logs, and inspect open code-scanning alerts. CodeQL workflow success
+means the analysis ran; it does not mean the result contains no findings.
+Resolve or explicitly disposition candidate-introduced alerts before creating
+the immutable tag and GitHub Release. A source push alone is not a completed
+Home Assistant integration release.
 
 Before publishing a release intended for HACS, verify the repository still has a public description, relevant Home Assistant/HACS topics, issues enabled, a brand icon, passing unit and Home Assistant tests, passing Hassfest, passing HACS Action, and a GitHub release tag matching the manifest version.
 

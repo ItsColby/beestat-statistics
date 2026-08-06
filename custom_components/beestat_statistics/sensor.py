@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.components.sensor import (
@@ -365,17 +366,15 @@ def _thermostat_sensor_descriptions(
             name="Runtime summary latest date",
             translation_key="runtime_summary_latest_date",
             device_class=SensorDeviceClass.DATE,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _summary_available(coordinator, thermostat_id)
-            ),
+            available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "runtime_summary_latest_date",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _summary_value(
-                coordinator,
-                thermostat_id,
-                "latest_date",
+            value_fn=partial(
+                _summary_value,
+                thermostat_id=thermostat_id,
+                field="latest_date",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -388,17 +387,15 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.DAYS,
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _summary_available(coordinator, thermostat_id)
-            ),
+            available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "runtime_summary_lag_days",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _summary_value(
-                coordinator,
-                thermostat_id,
-                "lag_days",
+            value_fn=partial(
+                _summary_value,
+                thermostat_id=thermostat_id,
+                field="lag_days",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -408,24 +405,22 @@ def _thermostat_sensor_descriptions(
             ),
             name="Current comfort profile",
             translation_key="current_comfort_profile",
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "current_comfort_profile",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "current_climate_name",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="current_climate_name",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _comfort_profile_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _comfort_profile_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -435,24 +430,22 @@ def _thermostat_sensor_descriptions(
             ),
             name="Scheduled comfort profile",
             translation_key="scheduled_comfort_profile",
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "scheduled_comfort_profile",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "scheduled_climate_name",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="scheduled_climate_name",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _scheduled_profile_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _scheduled_profile_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -463,24 +456,22 @@ def _thermostat_sensor_descriptions(
             name="Next scheduled comfort profile time",
             translation_key="next_scheduled_comfort_profile_time",
             device_class=SensorDeviceClass.TIMESTAMP,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "next_scheduled_comfort_profile_time",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "next_scheduled_at",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="next_scheduled_at",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _next_scheduled_profile_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _next_scheduled_profile_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -492,19 +483,18 @@ def _thermostat_sensor_descriptions(
             translation_key="active_sensor_count",
             native_unit_of_measurement="sensors",
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "active_sensor_count",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "active_sensor_count",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="active_sensor_count",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -516,24 +506,22 @@ def _thermostat_sensor_descriptions(
             translation_key="cloud_data_end",
             device_class=SensorDeviceClass.TIMESTAMP,
             entity_category=EntityCategory.DIAGNOSTIC,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "cloud_data_end",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "data_end",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="data_end",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _data_window_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _data_window_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -547,19 +535,18 @@ def _thermostat_sensor_descriptions(
             native_unit_of_measurement=UnitOfTime.MINUTES,
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "cloud_data_lag_minutes",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "data_lag_minutes",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="data_lag_minutes",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -571,24 +558,22 @@ def _thermostat_sensor_descriptions(
             translation_key="active_alert_count",
             native_unit_of_measurement="alerts",
             entity_category=EntityCategory.DIAGNOSTIC,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "active_alert_count",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_value(
-                    coordinator,
-                    thermostat_id,
-                    "active_alert_count",
-                )
+            value_fn=partial(
+                _thermostat_metadata_value,
+                thermostat_id=thermostat_id,
+                field="active_alert_count",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _active_alert_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _active_alert_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -603,16 +588,17 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "active_alert_category",
             ),
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _thermostat_metadata_available(coordinator, thermostat_id)
+            available_fn=partial(
+                _thermostat_metadata_available,
+                thermostat_id=thermostat_id,
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _active_alert_category(coordinator, thermostat_id)
+            value_fn=partial(
+                _active_alert_category,
+                thermostat_id=thermostat_id,
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _active_alert_category_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _active_alert_category_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -625,17 +611,15 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _summary_available(coordinator, thermostat_id)
-            ),
+            available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_runtime_hours",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _summary_value(
-                coordinator,
-                thermostat_id,
-                "filter_runtime_hours",
+            value_fn=partial(
+                _summary_value,
+                thermostat_id=thermostat_id,
+                field="filter_runtime_hours",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -647,17 +631,15 @@ def _thermostat_sensor_descriptions(
             translation_key="filter_recent_runtime_hours_per_day",
             native_unit_of_measurement="h/d",
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _summary_available(coordinator, thermostat_id)
-            ),
+            available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_recent_runtime_hours_per_day",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _summary_value(
-                coordinator,
-                thermostat_id,
-                "recent_runtime_hours_per_day",
+            value_fn=partial(
+                _summary_value,
+                thermostat_id=thermostat_id,
+                field="recent_runtime_hours_per_day",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -670,27 +652,23 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(
-                    coordinator, thermostat_id, "remaining_runtime_hours"
-                )
-                is not None
+            available_fn=partial(
+                _filter_forecast_available,
+                thermostat_id=thermostat_id,
+                field="remaining_runtime_hours",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_remaining_runtime_hours",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(
-                    coordinator,
-                    thermostat_id,
-                    "remaining_runtime_hours",
-                )
+            value_fn=partial(
+                _filter_forecast_value,
+                thermostat_id=thermostat_id,
+                field="remaining_runtime_hours",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _filter_forecast_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _filter_forecast_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -701,21 +679,23 @@ def _thermostat_sensor_descriptions(
             name="Filter runtime due date",
             translation_key="filter_runtime_due_date",
             device_class=SensorDeviceClass.DATE,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "runtime_due_date")
-                is not None
+            available_fn=partial(
+                _filter_forecast_available,
+                thermostat_id=thermostat_id,
+                field="runtime_due_date",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_runtime_due_date",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "runtime_due_date")
+            value_fn=partial(
+                _filter_forecast_value,
+                thermostat_id=thermostat_id,
+                field="runtime_due_date",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _filter_forecast_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _filter_forecast_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -726,21 +706,23 @@ def _thermostat_sensor_descriptions(
             name="Filter max age due date",
             translation_key="filter_max_age_due_date",
             device_class=SensorDeviceClass.DATE,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "max_age_due_date")
-                is not None
+            available_fn=partial(
+                _filter_forecast_available,
+                thermostat_id=thermostat_id,
+                field="max_age_due_date",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_max_age_due_date",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "max_age_due_date")
+            value_fn=partial(
+                _filter_forecast_value,
+                thermostat_id=thermostat_id,
+                field="max_age_due_date",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _filter_forecast_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _filter_forecast_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -751,21 +733,23 @@ def _thermostat_sensor_descriptions(
             name="Filter due date",
             translation_key="filter_due_date",
             device_class=SensorDeviceClass.DATE,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "due_date")
-                is not None
+            available_fn=partial(
+                _filter_forecast_available,
+                thermostat_id=thermostat_id,
+                field="due_date",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_due_date",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "due_date")
+            value_fn=partial(
+                _filter_forecast_value,
+                thermostat_id=thermostat_id,
+                field="due_date",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _filter_forecast_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _filter_forecast_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
         BeestatSensorEntityDescription(
@@ -778,21 +762,23 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.DAYS,
             state_class=SensorStateClass.MEASUREMENT,
-            available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "days_remaining")
-                is not None
+            available_fn=partial(
+                _filter_forecast_available,
+                thermostat_id=thermostat_id,
+                field="days_remaining",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
                 "filter_days_remaining",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "days_remaining")
+            value_fn=partial(
+                _filter_forecast_value,
+                thermostat_id=thermostat_id,
+                field="days_remaining",
             ),
-            extra_attributes_fn=(
-                lambda coordinator, thermostat_id=thermostat_id: (
-                    _filter_forecast_attributes(coordinator, thermostat_id)
-                )
+            extra_attributes_fn=partial(
+                _filter_forecast_attributes,
+                thermostat_id=thermostat_id,
             ),
         ),
     )
@@ -887,6 +873,14 @@ def _filter_forecast_value(
     if forecast is None:
         return None
     return cast(SensorValue, getattr(forecast, field))
+
+
+def _filter_forecast_available(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    field: str,
+) -> bool:
+    return _filter_forecast_value(coordinator, thermostat_id, field) is not None
 
 
 def _filter_forecast_attributes(
