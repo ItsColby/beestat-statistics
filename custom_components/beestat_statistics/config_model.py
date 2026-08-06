@@ -668,9 +668,10 @@ def _find_local_by_entity(
 
 
 def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
+    # Keep Home Assistant optional so pure config-model tests can import this module.
     try:
-        from homeassistant.helpers import device_registry as dr
-        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
     except ImportError:
         return ()
 
