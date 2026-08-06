@@ -11,12 +11,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 REPO = "beestat/app"
 BRANCH = "master"
 GITHUB_API_ROOT = f"https://api.github.com/repos/{REPO}"
 RAW_ROOT = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
+ALLOWED_REQUEST_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
 DEFAULT_SNAPSHOT = (
     Path(__file__).resolve().parents[1] / "docs" / "beestat-api-surface.json"
 )
@@ -286,6 +288,19 @@ def _request_json(url: str) -> Any:
     return json.loads(_request_text(url))
 
 
+def _validated_request_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in ALLOWED_REQUEST_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
+        raise ValueError("Unsupported API surface URL")
+    return url
+
+
 def _request_text(url: str) -> str:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -293,8 +308,9 @@ def _request_text(url: str) -> str:
     }
     if token := os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=30) as response:
+    validated_url = _validated_request_url(url)
+    request = Request(validated_url, headers=headers)  # noqa: S310 - validated HTTPS host
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - validated HTTPS host
         return response.read().decode("utf-8")
 
 

@@ -101,6 +101,28 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
         self.assertEqual(self.checker.diff_surface(expected, current_same), [])
         self.assertEqual(len(self.checker.diff_surface(expected, current_changed)), 1)
 
+    def test_request_url_allows_only_expected_https_hosts(self) -> None:
+        credentialed_url = f"https://user{chr(64)}api.github.com/repos/beestat/app"
+        for url in (
+            "https://api.github.com/repos/beestat/app",
+            "https://raw.githubusercontent.com/beestat/app/master/api/index.php",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(url, self.checker._validated_request_url(url))
+
+        for url in (
+            "http://api.github.com/repos/beestat/app",
+            "https://example.com/beestat/app",
+            credentialed_url,
+            "https://api.github.com:444/repos/beestat/app",
+            "file:///tmp/beestat-api.json",
+        ):
+            with (
+                self.subTest(url=url),
+                self.assertRaisesRegex(ValueError, "Unsupported API surface URL"),
+            ):
+                self.checker._validated_request_url(url)
+
 
 if __name__ == "__main__":
     unittest.main()
