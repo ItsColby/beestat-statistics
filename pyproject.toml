@@ -6,6 +6,7 @@ line-length = 88
 extend-select = [
   "A001",
   "ASYNC",
+  "BLE",
   "C901",
   "G",
   "ICN001",
@@ -16,6 +17,7 @@ extend-select = [
   "PERF",
   "PGH",
   "PIE",
+  "PLC",
   "PLE",
   "PLW",
   "RET",
@@ -49,13 +51,10 @@ ignore = [
   "ASYNC110",
   "ASYNC240",
   "PLW0108",
-  "RUF001",
-  "RUF002",
-  "RUF003",
 ]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 20
+max-complexity = 11
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/**" = ["T20"]
