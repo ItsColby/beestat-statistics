@@ -84,15 +84,15 @@ upgrade rather than testing a beta as a release gate.
 python -m pip install pytest-homeassistant-custom-component==0.13.345
 python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pytest tests/test_config_flow_ha.py -q
-python -m pip install pytest-homeassistant-custom-component==0.13.353
+python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test-current.txt
 python -m pytest tests/test_config_flow_ha.py -q
 ```
 
-Install the harness before upgrading to the exact Core under test. The current
-harness can temporarily declare a beta Core after the matching final release is
-available, which makes a single requirements transaction unresolvable even
-though the harness works with the final release.
+Keep the harness and exact Core installation as separate steps. The current
+harness matches stable Core directly, but the daily upstream harness can
+temporarily declare a beta while the matching final Core is already released;
+do not encode that transient pair in one requirements transaction.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run these lanes in Docker or defer them to the GitHub workflow. If

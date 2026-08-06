@@ -446,7 +446,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
         self.assertIn("harness: 0.13.345", workflow)
-        self.assertIn("harness: 0.13.353", workflow)
+        self.assertIn("harness: 0.13.354", workflow)
         harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component=='
             '$HARNESS_VERSION"'
@@ -533,9 +533,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(
             {
                 "ASYNC",
+                "B",
                 "BLE",
                 "C4",
                 "C901",
+                "DTZ",
+                "LOG",
                 "N818",
                 "PERF",
                 "PLC",
@@ -563,7 +566,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         lanes = (
             ("0.13.345", "requirements-ha-test.txt"),
-            ("0.13.353", "requirements-ha-test-current.txt"),
+            ("0.13.354", "requirements-ha-test-current.txt"),
         )
 
         for harness, requirements in lanes:
@@ -1096,7 +1099,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         requirements_install = 'python -m pip install --upgrade -r "$REQUIREMENTS_FILE"'
         self.assertIn("harness: 0.13.345", validate)
-        self.assertIn("harness: 0.13.353", validate)
+        self.assertIn("harness: 0.13.354", validate)
         self.assertIn("HARNESS_VERSION: ${{ matrix.harness }}", validate)
         self.assertIn("REQUIREMENTS_FILE: ${{ matrix.requirements }}", validate)
         self.assertLess(
