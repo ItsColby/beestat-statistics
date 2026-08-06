@@ -17,9 +17,16 @@ from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGED_AT,
+    CONF_FILTER_CHANGED_DATE,
     CONF_MOTION_ENTITY_ID,
     CONF_OCCUPANCY_ENTITY_ID,
+    CONF_OVERRIDE_NAME,
+    CONF_POINT_LOOKBACK_DAYS,
+    CONF_SCAN_INTERVAL_SECONDS,
+    CONF_SENSORS,
+    CONF_SLUG,
     CONF_TEMPERATURE_ENTITY_ID,
+    CONF_THERMOSTATS,
 )
 from .coordinator import BeestatRuntimeData, ThermostatRuntimeSummary
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
@@ -30,17 +37,24 @@ TO_REDACT = {
     CONF_ACCOUNT_FINGERPRINT,
     "id",
     "identifier",
+    CONF_OVERRIDE_NAME,
+    CONF_SLUG,
     "sensor_id",
     "thermostat_id",
     "thermostat_slug",
     "last_filter_alert_dismiss_thermostat_id",
     CONF_FILTER_CHANGED_AT,
+    CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_CLIMATE_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_OCCUPANCY_ENTITY_ID,
     CONF_MOTION_ENTITY_ID,
+    "current_profile",
+    "scheduled_profile",
+    "next_scheduled_profile",
+    "next_scheduled_at",
 }
 
 
@@ -54,10 +68,7 @@ async def async_get_config_entry_diagnostics(
     data = runtime.coordinator.data if runtime else None
     redaction_values = _redaction_values(entry.data)
     diagnostics = {
-        "entry": {
-            "data": async_redact_data(entry.data, TO_REDACT),
-            "options": dict(entry.options),
-        },
+        "entry": _entry_diagnostics(entry),
         "coordinator": {
             "status": runtime.coordinator.status if runtime else "not_loaded",
             "last_error": _redacted_text(
@@ -214,6 +225,74 @@ async def async_get_config_entry_diagnostics(
         },
     }
     return async_redact_data(diagnostics, TO_REDACT)
+
+
+def _entry_diagnostics(entry: BeestatStatisticsConfigEntry) -> dict[str, Any]:
+    """Return an allow-listed aggregate of the saved config-entry payload."""
+
+    return {
+        "version": entry.version,
+        "minor_version": entry.minor_version,
+        "connection": {
+            "api_key_configured": bool(entry.data.get(CONF_API_KEY)),
+            "api_base_configured": bool(entry.data.get(CONF_API_BASE)),
+            "account_fingerprint_configured": bool(
+                entry.data.get(CONF_ACCOUNT_FINGERPRINT)
+            ),
+        },
+        "timing": {
+            CONF_POINT_LOOKBACK_DAYS: _safe_int(
+                entry.options.get(
+                    CONF_POINT_LOOKBACK_DAYS,
+                    entry.data.get(CONF_POINT_LOOKBACK_DAYS),
+                )
+            ),
+            CONF_SCAN_INTERVAL_SECONDS: _safe_int(
+                entry.options.get(
+                    CONF_SCAN_INTERVAL_SECONDS,
+                    entry.data.get(CONF_SCAN_INTERVAL_SECONDS),
+                )
+            ),
+        },
+        "saved_overrides": {
+            CONF_THERMOSTATS: _override_summary(entry, CONF_THERMOSTATS),
+            CONF_SENSORS: _override_summary(entry, CONF_SENSORS),
+        },
+    }
+
+
+def _override_summary(
+    entry: BeestatStatisticsConfigEntry,
+    key: str,
+) -> dict[str, str | int]:
+    """Return the owner and row count for one saved override collection."""
+
+    if key in entry.options:
+        source = "options"
+        value = entry.options[key]
+    elif key in entry.data:
+        source = "data"
+        value = entry.data[key]
+    else:
+        source = "automatic"
+        value = ()
+    count = (
+        sum(1 for item in value if isinstance(item, Mapping))
+        if isinstance(value, list | tuple)
+        else 0
+    )
+    return {"source": source, "count": count}
+
+
+def _safe_int(value: Any) -> int | None:
+    """Return an integer config value without failing diagnostics."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except TypeError, ValueError:
+        return None
 
 
 def _thermostat_diagnostics(data: BeestatRuntimeData) -> list[dict[str, Any]]:

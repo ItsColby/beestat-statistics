@@ -263,11 +263,47 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertEqual(self.sensor._classify_active_alerts(()), "none")
 
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
-        alerts = tuple({"code": str(index)} for index in range(5))
+        alerts = tuple(
+            {
+                "code": str(index),
+                "type": "t" * 200 if index == 0 else "thermostat",
+                "severity": "low",
+                "timestamp": f"2026-07-0{index + 1} 12:00:00",
+                "text": (
+                    "Replace private filter"
+                    if index == 0
+                    else f"Private room detail {index}"
+                ),
+                "guid": f"private-alert-guid-{index}",
+            }
+            for index in range(5)
+        )
 
         self.assertEqual(
             self.sensor.active_alert_examples(alerts),
-            [{"code": "0"}, {"code": "1"}, {"code": "2"}],
+            [
+                {
+                    "category": "maintenance",
+                    "code": "0",
+                    "type": "t" * 96,
+                    "severity": "low",
+                    "timestamp": "2026-07-01 12:00:00",
+                },
+                {
+                    "category": "unknown",
+                    "code": "1",
+                    "type": "thermostat",
+                    "severity": "low",
+                    "timestamp": "2026-07-02 12:00:00",
+                },
+                {
+                    "category": "unknown",
+                    "code": "2",
+                    "type": "thermostat",
+                    "severity": "low",
+                    "timestamp": "2026-07-03 12:00:00",
+                },
+            ],
         )
 
     def _install_fake_homeassistant_modules(self) -> None:

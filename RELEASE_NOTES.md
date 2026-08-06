@@ -12,7 +12,12 @@
 - Refresh enabled mapping Repairs immediately when a referenced entity-registry
   record is removed, renamed, or restored, with listener cleanup on unload.
 - Bound ordinary active-alert detail to three examples while preserving the
-  complete count and category.
+  complete count and category; omit arbitrary remote text/source identifiers
+  and cap every retained scalar.
+- Redact override names/slugs, filter-change dates, and comfort-profile
+  names/timing from downloadable diagnostics. Replace raw config-entry payload
+  serialization with an allow-listed ownership/count summary so unknown future
+  saved fields fail closed while useful aggregate health evidence remains.
 
 ## Fixed
 

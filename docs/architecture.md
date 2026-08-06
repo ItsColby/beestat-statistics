@@ -144,6 +144,11 @@
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in
   redacted on-demand diagnostics.
+- Downloadable diagnostics redact user-assigned names/slugs, exact filter-change
+  dates and timestamps, local entity/device/source identifiers, and comfort-profile
+  names/timing. Saved config-entry data/options are represented by an allow-listed
+  ownership/count summary so unknown future fields fail closed. Preserve aggregate
+  counts and health evidence instead.
 - Refresh enabled override mapping Repairs when a referenced entity-registry
   record is removed, renamed, or restored, and remove the listener on unload.
   Do not silently rewrite the explicit YAML/options mapping owner.
