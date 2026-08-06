@@ -8,7 +8,7 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -130,7 +130,7 @@ class DiagnosticsTest(unittest.TestCase):
                 thermostats=(thermostat,),
                 sensors=(sensor,),
             ),
-            fetched_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),

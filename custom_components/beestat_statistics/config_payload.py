@@ -47,7 +47,7 @@ def split_entry_payload(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Split config-entry data from user-tunable options."""
 
-    data = {
+    data: dict[str, Any] = {
         CONF_API_KEY: _clean_string(payload[CONF_API_KEY]),
         CONF_API_BASE: _clean_string(payload.get(CONF_API_BASE, API_BASE)) or API_BASE,
     }
@@ -91,7 +91,7 @@ def connection_data_from_user_input(
 def entry_data_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
     """Return config-entry data fields from YAML/import config."""
 
-    data = {
+    data: dict[str, Any] = {
         CONF_API_KEY: _clean_string(conf[CONF_API_KEY]),
         CONF_API_BASE: _clean_string(conf[CONF_API_BASE]) or API_BASE,
     }
@@ -396,7 +396,7 @@ def _find_override_item(items: list[dict[str, Any]], item_id: int) -> dict[str, 
 def _override_id(item: Mapping[str, Any]) -> int | None:
     try:
         return int(item.get(CONF_ID, -1))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

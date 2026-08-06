@@ -903,20 +903,23 @@ def _resource_options(
         labels[item_id] = str(item.name)
     rows = getattr(data, rows_attribute, ()) if data is not None else ()
     for row in rows:
-        item_id = _resource_row_id(row)
-        if item_id is None:
+        row_id = _resource_row_id(row)
+        if row_id is None:
             continue
-        label = row.get("name") or f"{fallback_label} {item_id}"
-        labels.setdefault(item_id, str(label))
+        label = row.get("name") or f"{fallback_label} {row_id}"
+        labels.setdefault(row_id, str(label))
         if _source_flag_enabled(row.get("inactive")):
-            inactive.add(item_id)
+            inactive.add(row_id)
     config_data = entry_runtime_config_data(entry)
     for item in config_data.get(override_key, ()):
         if not isinstance(item, Mapping):
             continue
+        raw_item_id = item.get(CONF_ID)
+        if raw_item_id is None:
+            continue
         try:
-            item_id = int(item.get(CONF_ID))
-        except (TypeError, ValueError):
+            item_id = int(raw_item_id)
+        except TypeError, ValueError:
             continue
         labels.setdefault(item_id, f"Saved {fallback_label.lower()} {item_id}")
 
@@ -943,7 +946,7 @@ def _resource_row_id(row: Mapping[str, Any]) -> int | None:
             continue
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return None
 

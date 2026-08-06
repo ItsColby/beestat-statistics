@@ -7,7 +7,7 @@ import sys
 import types
 import unittest
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -96,7 +96,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                 thermostats=(thermostat,),
                 sensors=(sensor,),
             ),
-            fetched_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),
@@ -125,7 +125,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                     slug="main",
                     label="Main",
                     data_begin=None,
-                    data_end=datetime(2026, 7, 5, 11, tzinfo=timezone.utc),
+                    data_end=datetime(2026, 7, 5, 11, tzinfo=UTC),
                     data_lag_minutes=180,
                     current_climate_ref=None,
                     current_climate_name=None,
@@ -200,7 +200,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         data = self.coordinator.BeestatRuntimeData(
             config=self.config_model.BeestatConfig(thermostats=(old,), sensors=()),
-            fetched_at=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),

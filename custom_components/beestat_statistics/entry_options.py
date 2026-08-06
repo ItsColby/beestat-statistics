@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING, cast
 
 from .api import exception_fingerprint
 from .config_payload import update_thermostat_override_options
@@ -17,9 +18,13 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .coordinator import BeestatRuntimeDataCoordinator
+    from .runtime import BeestatStatisticsConfigEntry
+
 
 async def async_set_filter_changed_date(
-    coordinator,
+    coordinator: BeestatRuntimeDataCoordinator,
     thermostat_id: int,
     changed_date: date,
 ) -> None:
@@ -38,7 +43,7 @@ async def async_set_filter_changed_date(
 
 
 async def async_mark_filter_changed(
-    coordinator,
+    coordinator: BeestatRuntimeDataCoordinator,
     thermostat_id: int,
     changed_at: datetime,
     *,
@@ -48,7 +53,7 @@ async def async_mark_filter_changed(
 
     if changed_at.tzinfo is None:
         raise ValueError("changed_at must be timezone-aware")
-    changed_at = changed_at.astimezone(timezone.utc)
+    changed_at = changed_at.astimezone(UTC)
     changed_date = changed_at.astimezone(coordinator.local_tz).date()
     await _async_apply_filter_change(
         coordinator,
@@ -76,7 +81,7 @@ async def async_mark_filter_changed(
 
 
 async def _async_apply_filter_change(
-    coordinator,
+    coordinator: BeestatRuntimeDataCoordinator,
     thermostat_id: int,
     changed_date: date,
     *,
@@ -90,7 +95,7 @@ async def _async_apply_filter_change(
 ) -> None:
     """Persist one filter change and refresh its derived runtime state."""
 
-    entry = coordinator.config_entry
+    entry = cast("BeestatStatisticsConfigEntry", coordinator.config_entry)
     new_options = update_thermostat_override_options(
         entry.data,
         entry.options,
@@ -152,4 +157,4 @@ def _isoformat_or_none(value: datetime | None) -> str | None:
         return None
     if value.tzinfo is None:
         raise ValueError("filter boundary timestamps must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat()
+    return value.astimezone(UTC).isoformat()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from .const import (
@@ -253,25 +253,29 @@ def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str,
     for item in _override_items(config_data.get(CONF_THERMOSTATS)):
         if _is_disabled(item):
             continue
-        for field in (
-            CONF_CLIMATE_ENTITY_ID,
-            CONF_TEMPERATURE_ENTITY_ID,
-            CONF_OCCUPANCY_ENTITY_ID,
-            CONF_MOTION_ENTITY_ID,
-            CONF_FILTER_CHANGED_ENTITY_ID,
-        ):
-            if entity_id := _string_or_none(item.get(field)):
-                references.append(entity_id)
+        references.extend(
+            entity_id
+            for field in (
+                CONF_CLIMATE_ENTITY_ID,
+                CONF_TEMPERATURE_ENTITY_ID,
+                CONF_OCCUPANCY_ENTITY_ID,
+                CONF_MOTION_ENTITY_ID,
+                CONF_FILTER_CHANGED_ENTITY_ID,
+            )
+            if (entity_id := _string_or_none(item.get(field)))
+        )
     for item in _override_items(config_data.get(CONF_SENSORS)):
         if _is_disabled(item):
             continue
-        for field in (
-            CONF_TEMPERATURE_ENTITY_ID,
-            CONF_OCCUPANCY_ENTITY_ID,
-            CONF_MOTION_ENTITY_ID,
-        ):
-            if entity_id := _string_or_none(item.get(field)):
-                references.append(entity_id)
+        references.extend(
+            entity_id
+            for field in (
+                CONF_TEMPERATURE_ENTITY_ID,
+                CONF_OCCUPANCY_ENTITY_ID,
+                CONF_MOTION_ENTITY_ID,
+            )
+            if (entity_id := _string_or_none(item.get(field)))
+        )
     return tuple(dict.fromkeys(references))
 
 
@@ -515,7 +519,9 @@ def _sensor_from_row(
         row,
         "thermostat_id",
     )
-    thermostat = thermostat_by_id.get(thermostat_id)
+    thermostat = (
+        thermostat_by_id.get(thermostat_id) if thermostat_id is not None else None
+    )
     local = _match_local_sensor(row, override, local_sensors)
     if _is_thermostat_sensor(row) and thermostat is not None:
         local = None
@@ -997,7 +1003,7 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return None
 
@@ -1022,14 +1028,14 @@ def _date_or_none(value: Any) -> date | None:
 def _float_or_default(value: Any, default: float) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
 def _nonnegative_float_or_none(value: Any) -> float | None:
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     return parsed if parsed >= 0 else None
 
@@ -1039,20 +1045,20 @@ def _aware_datetime_or_none(value: Any) -> datetime | None:
         parsed = value
     elif isinstance(value, str):
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value)
         except ValueError:
             return None
     else:
         return None
     if parsed.tzinfo is None:
         return None
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _int_or_default(value: Any, default: int) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 

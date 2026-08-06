@@ -119,7 +119,7 @@ def _normalize_rows(
         return rows
     if isinstance(data, dict):
         if data and all(isinstance(value, dict) for value in data.values()):
-            rows: list[dict[str, Any]] = []
+            rows = []
             for key, value in data.items():
                 row = dict(value)
                 row.setdefault("id", key)
@@ -242,7 +242,7 @@ class BeestatClient:
             except BeestatAuthError:
                 raise
             except (
-                asyncio.TimeoutError,
+                TimeoutError,
                 aiohttp.ClientError,
                 ValueError,
                 BeestatApiError,

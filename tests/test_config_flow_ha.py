@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -988,7 +988,7 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
 ) -> None:
     entry = _add_mock_entry(hass)
     local_tz = ZoneInfo("America/New_York")
-    repair_at = (datetime.now(timezone.utc) - timedelta(days=1)).astimezone(local_tz)
+    repair_at = (datetime.now(UTC) - timedelta(days=1)).astimezone(local_tz)
     repair_at = repair_at.replace(microsecond=0)
     thermostat = _configured_thermostat(
         thermostat_id=1001,
@@ -1024,7 +1024,7 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
 
     mark_changed.assert_awaited_once()
     assert mark_changed.await_args.args[1] == 1001
-    assert mark_changed.await_args.args[2] == repair_at.astimezone(timezone.utc)
+    assert mark_changed.await_args.args[2] == repair_at.astimezone(UTC)
     assert mark_changed.await_args.kwargs == {"dismiss_alerts": False}
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -15,7 +15,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -36,6 +35,16 @@ from .entity import (
 )
 from .filter_forecast import FilterForecast, build_filter_forecast
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+
+if TYPE_CHECKING:
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers.device_registry import DeviceInfo
+else:
+    try:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers.device_registry import DeviceInfo
+    except ImportError:  # pragma: no cover - lightweight unit-test stubs
+        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 SensorValue = str | int | float | date | datetime | None
 
@@ -797,7 +806,7 @@ def _summary_value(
     data: BeestatRuntimeData | None = coordinator.data
     if data is None or thermostat_id not in data.thermostats:
         return None
-    return getattr(data.thermostats[thermostat_id], field)
+    return cast(SensorValue, getattr(data.thermostats[thermostat_id], field))
 
 
 def _summary_available(
@@ -833,7 +842,7 @@ def _thermostat_metadata_value(
     metadata = _thermostat_metadata(coordinator, thermostat_id)
     if metadata is None:
         return None
-    return getattr(metadata, field)
+    return cast(SensorValue, getattr(metadata, field))
 
 
 def _thermostat_config(
@@ -877,7 +886,7 @@ def _filter_forecast_value(
     forecast = _filter_forecast(coordinator, thermostat_id)
     if forecast is None:
         return None
-    return getattr(forecast, field)
+    return cast(SensorValue, getattr(forecast, field))
 
 
 def _filter_forecast_attributes(

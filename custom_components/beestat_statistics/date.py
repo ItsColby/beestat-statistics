@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 from homeassistant.components.date import DateEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -21,6 +21,16 @@ from .entity import (
 )
 from .entry_options import async_set_filter_changed_date
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+
+if TYPE_CHECKING:
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers.device_registry import DeviceInfo
+else:
+    try:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers.device_registry import DeviceInfo
+    except ImportError:  # pragma: no cover - lightweight unit-test stubs
+        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 PARALLEL_UPDATES = 0
 

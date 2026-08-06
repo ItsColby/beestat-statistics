@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
@@ -28,7 +27,16 @@ from .entry_options import async_mark_filter_changed
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers.device_registry import DeviceInfo
+
     from . import BeestatStatisticsImporter
+else:
+    try:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers.device_registry import DeviceInfo
+    except ImportError:  # pragma: no cover - lightweight unit-test stubs
+        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,7 +131,7 @@ class BeestatButton(ButtonEntity):
         except BeestatAuthError as err:
             if action != "refresh_runtime":
                 self._coordinator.async_record_import_error(err)
-            self._coordinator.config_entry.async_start_reauth_if_available(
+            self._coordinator.beestat_config_entry.async_start_reauth_if_available(
                 self._coordinator.hass
             )
             raise HomeAssistantError(
@@ -197,7 +205,7 @@ class BeestatFilterChangedButton(ButtonEntity):
                 dt_util.now(),
             )
         except BeestatAuthError:
-            self._coordinator.config_entry.async_start_reauth_if_available(
+            self._coordinator.beestat_config_entry.async_start_reauth_if_available(
                 self._coordinator.hass
             )
             raise HomeAssistantError(
