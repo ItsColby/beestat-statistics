@@ -49,6 +49,8 @@ full local tier:
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
+.\.venv\Scripts\ruff.exe check custom_components tests scripts
+.\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
 .\.venv\Scripts\python.exe scripts\check_public_safety.py
 ```

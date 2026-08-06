@@ -428,6 +428,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
         )
@@ -467,6 +468,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             ".\\.venv\\Scripts\\ruff.exe format --check "
             "custom_components tests scripts",
             readme,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\ruff.exe check custom_components tests scripts",
+            agents,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\ruff.exe format --check "
+            "custom_components tests scripts",
+            agents,
         )
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
