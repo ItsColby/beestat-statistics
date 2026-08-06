@@ -435,24 +435,23 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             encoding="utf-8"
         )
         required_pins = {
-            "homeassistant==2026.7.1",
+            "homeassistant==2026.8.0",
             "pytest==9.0.3",
         }
 
-        self.assertEqual(hacs["homeassistant"], "2026.7.1")
+        self.assertEqual(hacs["homeassistant"], "2026.8.0")
         self.assertIn("asyncio_mode = auto", pytest_ini)
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
-        self.assertIn("harness: 0.13.345", workflow)
-        self.assertIn("harness: 0.13.354", workflow)
         harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component=='
-            '$HARNESS_VERSION"'
+            'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
         )
-        requirements_install = 'python -m pip install --upgrade -r "$REQUIREMENTS_FILE"'
-        self.assertIn("HARNESS_VERSION: ${{ matrix.harness }}", workflow)
-        self.assertIn("REQUIREMENTS_FILE: ${{ matrix.requirements }}", workflow)
+        requirements_install = (
+            "python -m pip install --upgrade -r requirements-ha-test.txt"
+        )
+        self.assertNotIn("matrix:", workflow)
+        self.assertNotIn("requirements-ha-test-current.txt", workflow)
         self.assertIn(harness_install, workflow)
         self.assertIn(requirements_install, workflow)
         self.assertLess(
@@ -583,28 +582,22 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
     def test_readme_home_assistant_commands_install_harness_before_core(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        lanes = (
-            ("0.13.345", "requirements-ha-test.txt"),
-            ("0.13.354", "requirements-ha-test-current.txt"),
+        local_commands = (
+            "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
+            "python -m pip install --upgrade -r requirements-ha-test.txt\n"
+            "pytest tests/test_config_flow_ha.py -q"
+        )
+        docker_commands = (
+            "python -m pip install --upgrade pip && "
+            "python -m pip install "
+            "pytest-homeassistant-custom-component==0.13.354 && "
+            "python -m pip install --upgrade -r requirements-ha-test.txt && "
+            "pytest tests/test_config_flow_ha.py -q"
         )
 
-        for harness, requirements in lanes:
-            local_commands = (
-                "python -m pip install "
-                f"pytest-homeassistant-custom-component=={harness}\n"
-                f"python -m pip install --upgrade -r {requirements}\n"
-                "pytest tests/test_config_flow_ha.py -q"
-            )
-            docker_commands = (
-                "python -m pip install --upgrade pip && "
-                "python -m pip install "
-                f"pytest-homeassistant-custom-component=={harness} && "
-                f"python -m pip install --upgrade -r {requirements} && "
-                "pytest tests/test_config_flow_ha.py -q"
-            )
-            with self.subTest(requirements=requirements):
-                self.assertIn(local_commands, readme)
-                self.assertIn(docker_commands, readme)
+        self.assertIn(local_commands, readme)
+        self.assertIn(docker_commands, readme)
+        self.assertNotIn("requirements-ha-test-current.txt", readme)
 
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
         text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
@@ -952,6 +945,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("domain: automation", blueprint)
+        self.assertIn("min_version: 2026.8.0", blueprint)
         self.assertIn("trigger: numeric_state", blueprint)
         self.assertIn("selector:\n        action: {}", blueprint)
         self.assertNotIn("trigger: template", blueprint)
@@ -1111,18 +1105,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         validate = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("matrix:", validate)
+        self.assertNotIn("matrix:", validate)
         self.assertIn("requirements-ha-test.txt", validate)
-        self.assertIn("requirements-ha-test-current.txt", validate)
+        self.assertNotIn("requirements-ha-test-current.txt", validate)
         self.assertIn("name: Release gate", validate)
         self.assertIn("needs: [unit, home_assistant, hassfest, hacs]", validate)
 
         expected_requirements = {
             "requirements-ha-test.txt": [
-                "homeassistant==2026.7.1",
-                "pytest==9.0.3",
-            ],
-            "requirements-ha-test-current.txt": [
                 "homeassistant==2026.8.0",
                 "pytest==9.0.3",
             ],
@@ -1133,15 +1123,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 expected_lines,
             )
 
+        self.assertFalse((ROOT / "requirements-ha-test-current.txt").exists())
         harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component=='
-            '$HARNESS_VERSION"'
+            'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
         )
-        requirements_install = 'python -m pip install --upgrade -r "$REQUIREMENTS_FILE"'
-        self.assertIn("harness: 0.13.345", validate)
-        self.assertIn("harness: 0.13.354", validate)
-        self.assertIn("HARNESS_VERSION: ${{ matrix.harness }}", validate)
-        self.assertIn("REQUIREMENTS_FILE: ${{ matrix.requirements }}", validate)
+        requirements_install = (
+            "python -m pip install --upgrade -r requirements-ha-test.txt"
+        )
+        self.assertIn(harness_install, validate)
+        self.assertIn(requirements_install, validate)
         self.assertLess(
             validate.index(harness_install), validate.index(requirements_install)
         )
