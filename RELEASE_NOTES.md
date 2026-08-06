@@ -24,5 +24,7 @@
   convention checks; retain ambiguous-Unicode detection; add focused network,
   cryptography, and comprehension checks; ratchet complexity to the current
   demonstrated ceiling; and remove the redundant Ruff GitHub Action dependency.
+- Enforce Ruff's exception-name suffix rule to prevent ambiguous custom
+  exception names from entering the integration.
 - Exercise the native filter date entity's exact click-boundary attributes,
   update path, and unavailable state with Home Assistant runtime models.

@@ -15,6 +15,7 @@ extend-select = [
   "N805",
   "N806",
   "N815",
+  "N818",
   "PERF",
   "PGH",
   "PIE",
