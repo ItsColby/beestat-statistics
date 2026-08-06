@@ -738,7 +738,7 @@ class BeestatStatisticsImporter:
                 "Skipping Beestat runtime_thermostat window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
-                self._client.redact_error(err),
+                exception_fingerprint(err),
             )
             return []
 
@@ -839,7 +839,7 @@ class BeestatStatisticsImporter:
                 "Skipping Beestat runtime_sensor window start=%s end=%s: %s",
                 _format_beestat_time(start),
                 _format_beestat_time(end),
-                self._client.redact_error(err),
+                exception_fingerprint(err),
             )
             return []
 

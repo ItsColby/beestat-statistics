@@ -21,6 +21,9 @@
 
 ## Fixed
 
+- Avoid formatting possibly credential-bearing Beestat API exception text in
+  skipped-window warnings; log only the bounded private-safe exception
+  fingerprint.
 - Install the Home Assistant test harness before upgrading to the exact Core
   release under test, avoiding resolver failures when the newest harness still
   declares a matching beta Core dependency.

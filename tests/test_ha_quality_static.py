@@ -912,6 +912,16 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             3,
         )
 
+    def test_skipped_window_logs_do_not_format_api_exceptions(self) -> None:
+        """CodeQL-sensitive logs must not read possibly credential-bearing text."""
+
+        init_text = (
+            ROOT / "custom_components/beestat_statistics/__init__.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("self._client.redact_error(err)", init_text)
+        self.assertGreaterEqual(init_text.count("exception_fingerprint(err)"), 5)
+
     def test_import_lifecycle_uses_entity_state_not_custom_bus_events(self) -> None:
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
