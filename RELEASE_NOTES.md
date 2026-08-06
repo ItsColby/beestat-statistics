@@ -7,6 +7,12 @@
   integration-owned module, function, and line for local diagnosis.
 - Validate the integration against current stable Home Assistant Core
   `2026.8.0` in addition to the minimum supported `2026.7.1` release.
+- Preserve complete partial-import counts while retaining at most three
+  identifier-free skipped-window examples in current state and diagnostics.
+- Refresh enabled mapping Repairs immediately when a referenced entity-registry
+  record is removed, renamed, or restored, with listener cleanup on unload.
+- Bound ordinary active-alert detail to three examples while preserving the
+  complete count and category.
 
 ## Fixed
 

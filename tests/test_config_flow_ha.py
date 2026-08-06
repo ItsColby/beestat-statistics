@@ -34,12 +34,15 @@ try:
     from homeassistant.data_entry_flow import FlowResultType
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
     from homeassistant.helpers.entity import Entity
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
     raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
 
 from custom_components.beestat_statistics import (
+    _async_track_override_issue_updates,
+    _async_update_override_issues,
     async_migrate_entry,
     async_setup,
 )
@@ -149,6 +152,56 @@ async def test_mapped_entities_link_without_shared_device_ownership(
         assert set(current_device.config_entries) == {source_entry.entry_id}
     assert current_entity is not None
     assert current_entity.device_id == source_device.id
+
+
+async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
+    hass: HomeAssistant,
+) -> None:
+    """Test a removed mapping raises a Repair and recovery clears it promptly."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    source_entity = entity_registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "room-sensor-a-temperature",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_a_temperature",
+    )
+    helper_entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2002,
+                    CONF_TEMPERATURE_ENTITY_ID: source_entity.entity_id,
+                }
+            ],
+        },
+    )
+    issue_registry = ir.async_get(hass)
+
+    _async_update_override_issues(hass, helper_entry)
+    _async_track_override_issue_updates(hass, helper_entry)
+    assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
+
+    entity_registry.async_remove(source_entity.entity_id)
+    await hass.async_block_till_done()
+    assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities")
+
+    restored_entity = entity_registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "room-sensor-a-temperature-restored",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_a_temperature",
+    )
+    await hass.async_block_till_done()
+    assert restored_entity.entity_id == source_entity.entity_id
+    assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
 
 
 @pytest.fixture(autouse=True)

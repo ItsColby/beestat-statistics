@@ -262,6 +262,14 @@ class SensorHelpersTest(unittest.TestCase):
         )
         self.assertEqual(self.sensor._classify_active_alerts(()), "none")
 
+    def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
+        alerts = tuple({"code": str(index)} for index in range(5))
+
+        self.assertEqual(
+            self.sensor.active_alert_examples(alerts),
+            [{"code": "0"}, {"code": "1"}, {"code": "2"}],
+        )
+
     def _install_fake_homeassistant_modules(self) -> None:
         aiohttp = types.ModuleType("aiohttp")
         homeassistant = types.ModuleType("homeassistant")

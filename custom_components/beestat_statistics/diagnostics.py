@@ -100,6 +100,11 @@ async def async_get_config_entry_diagnostics(
             )
             if runtime
             else None,
+            "last_import_skipped_window_examples": list(
+                runtime.coordinator.last_import_skipped_window_examples
+            )
+            if runtime
+            else [],
             "last_import_summary_mode": runtime.coordinator.last_import_summary_mode
             if runtime
             else None,
