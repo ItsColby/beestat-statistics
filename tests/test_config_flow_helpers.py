@@ -40,6 +40,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
                 "homeassistant.core",
                 "homeassistant.helpers",
                 "homeassistant.helpers.aiohttp_client",
+                "homeassistant.helpers.issue_registry",
                 "homeassistant.helpers.selector",
                 "voluptuous",
             )
@@ -140,6 +141,39 @@ class ConfigFlowHelpersTest(unittest.TestCase):
             )
         )
 
+    def test_validated_connection_change_requires_known_same_account(self) -> None:
+        current = {
+            "account_fingerprint": {
+                "thermostat_id_hashes": ["shared", "old"],
+                "signature": "old-signature",
+            }
+        }
+
+        self.assertTrue(
+            self.config_flow._validated_connection_change_is_safe(
+                current,
+                {
+                    "thermostat_id_hashes": ["shared", "new"],
+                    "signature": "new-signature",
+                },
+            )
+        )
+        self.assertFalse(
+            self.config_flow._validated_connection_change_is_safe(
+                current,
+                {
+                    "thermostat_id_hashes": ["other"],
+                    "signature": "other-signature",
+                },
+            )
+        )
+        self.assertFalse(
+            self.config_flow._validated_connection_change_is_safe({}, current)
+        )
+        self.assertFalse(
+            self.config_flow._validated_connection_change_is_safe(current, None)
+        )
+
     def _install_fake_modules(self) -> None:
         aiohttp = types.ModuleType("aiohttp")
         homeassistant = types.ModuleType("homeassistant")
@@ -148,6 +182,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         core = types.ModuleType("homeassistant.core")
         helpers = types.ModuleType("homeassistant.helpers")
         aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
+        issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
         selector = types.ModuleType("homeassistant.helpers.selector")
         voluptuous = types.ModuleType("voluptuous")
 
@@ -162,6 +197,9 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         core.HomeAssistant = object
         core.callback = lambda func: func
         aiohttp_client.async_get_clientsession = lambda _hass: object()
+        issue_registry.IssueSeverity = types.SimpleNamespace(WARNING="warning")
+        issue_registry.async_create_issue = lambda *args, **kwargs: None
+        issue_registry.async_delete_issue = lambda *args, **kwargs: None
         selector.BooleanSelector = _NoopInit
         selector.EntitySelector = _NoopInit
         selector.EntitySelectorConfig = _NoopInit
@@ -185,6 +223,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         homeassistant.const = const
         homeassistant.core = core
         helpers.aiohttp_client = aiohttp_client
+        helpers.issue_registry = issue_registry
         helpers.selector = selector
         homeassistant.helpers = helpers
 
@@ -195,6 +234,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         sys.modules["homeassistant.core"] = core
         sys.modules["homeassistant.helpers"] = helpers
         sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client
+        sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
         sys.modules["homeassistant.helpers.selector"] = selector
         sys.modules["voluptuous"] = voluptuous
 

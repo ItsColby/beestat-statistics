@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 try:
     import pytest
+    import voluptuous as vol
     from homeassistant.config_entries import (
         SOURCE_IMPORT,
         SOURCE_REAUTH,
@@ -41,6 +42,7 @@ except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
     raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
 
 from custom_components.beestat_statistics import (
+    CONFIG_SCHEMA,
     _async_track_override_issue_updates,
     _async_update_override_issues,
     async_migrate_entry,
@@ -84,6 +86,10 @@ from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entity import (
     async_remove_cross_integration_device_ownership,
     link_entity_to_device,
+)
+from custom_components.beestat_statistics.issues import (
+    YAML_CONNECTION_CHANGE_ISSUE_ID,
+    async_set_yaml_connection_change_issue,
 )
 
 pytestmark = [
@@ -457,31 +463,49 @@ async def test_import_flow_creates_config_entry(hass: HomeAssistant) -> None:
     }
 
 
+async def test_yaml_schema_rejects_whitespace_only_api_key() -> None:
+    """Test YAML cannot normalize a present API key into an empty secret."""
+
+    with pytest.raises(vol.Invalid):
+        CONFIG_SCHEMA({DOMAIN: {CONF_API_KEY: "   "}})
+
+
 async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
     """Test YAML import updates the single existing config entry."""
 
     entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_IMPORT},
-        data={
-            CONF_API_KEY: "yaml-key",
-            CONF_API_BASE: "https://api.example.test/",
-            CONF_POINT_LOOKBACK_DAYS: 90,
-            CONF_SCAN_INTERVAL_SECONDS: 1800,
-        },
-    )
+    async_set_yaml_connection_change_issue(hass, active=True)
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: "https://api.example.test/",
+                CONF_POINT_LOOKBACK_DAYS: 90,
+                CONF_SCAN_INTERVAL_SECONDS: 1800,
+            },
+        )
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+    validate.assert_awaited_once()
     assert dict(entry.data) == {
         CONF_API_KEY: "yaml-key",
         CONF_API_BASE: "https://api.example.test/",
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
     }
     assert dict(entry.options) == {
         CONF_POINT_LOOKBACK_DAYS: 90,
         CONF_SCAN_INTERVAL_SECONDS: 1800,
     }
+    assert (
+        ir.async_get(hass).async_get_issue(
+            DOMAIN,
+            YAML_CONNECTION_CHANGE_ISSUE_ID,
+        )
+        is None
+    )
 
 
 async def test_import_flow_preserves_ui_mapping_options(
@@ -501,8 +525,8 @@ async def test_import_flow_preserves_ui_mapping_options(
         DOMAIN,
         context={"source": SOURCE_IMPORT},
         data={
-            CONF_API_KEY: "yaml-key",
-            CONF_API_BASE: "https://api.example.test/",
+            CONF_API_KEY: "old-key",
+            CONF_API_BASE: API_BASE,
             CONF_POINT_LOOKBACK_DAYS: 90,
             CONF_SCAN_INTERVAL_SECONDS: 1800,
         },
@@ -511,8 +535,9 @@ async def test_import_flow_preserves_ui_mapping_options(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
     assert dict(entry.data) == {
-        CONF_API_KEY: "yaml-key",
-        CONF_API_BASE: "https://api.example.test/",
+        CONF_API_KEY: "old-key",
+        CONF_API_BASE: API_BASE,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
     }
     assert dict(entry.options) == {
         CONF_POINT_LOOKBACK_DAYS: 90,
@@ -542,8 +567,8 @@ async def test_import_flow_preserves_button_boundary_with_yaml_mapping(
         DOMAIN,
         context={"source": SOURCE_IMPORT},
         data={
-            CONF_API_KEY: "yaml-key",
-            CONF_API_BASE: "https://api.example.test/",
+            CONF_API_KEY: "old-key",
+            CONF_API_BASE: API_BASE,
             CONF_POINT_LOOKBACK_DAYS: 90,
             CONF_SCAN_INTERVAL_SECONDS: 1800,
             CONF_THERMOSTATS: [
@@ -566,6 +591,90 @@ async def test_import_flow_preserves_button_boundary_with_yaml_mapping(
             }
         ],
     }
+
+
+async def test_import_flow_blocks_yaml_account_change(hass: HomeAssistant) -> None:
+    """Test YAML cannot silently reinterpret saved mappings for another account."""
+
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"}
+            ],
+        },
+    )
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+
+    with _mock_validate_input(return_value=ACCOUNT_B):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "other-account-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 90,
+                CONF_SCAN_INTERVAL_SECONDS: 1800,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "yaml_connection_change_requires_reconfigure"
+    assert dict(entry.data) == original_data
+    assert dict(entry.options) == original_options
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN,
+        YAML_CONNECTION_CHANGE_ISSUE_ID,
+    )
+
+
+async def test_import_flow_blocks_unvalidated_yaml_connection_change(
+    hass: HomeAssistant,
+) -> None:
+    """Test unavailable YAML credentials do not replace a working connection."""
+
+    entry = _add_mock_entry(hass)
+    original_data = dict(entry.data)
+
+    with _mock_validate_input(side_effect=BeestatApiError("synthetic failure")):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "unvalidated-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 90,
+                CONF_SCAN_INTERVAL_SECONDS: 1800,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "yaml_connection_change_requires_reconfigure"
+    assert dict(entry.data) == original_data
+    assert ir.async_get(hass).async_get_issue(
+        DOMAIN,
+        YAML_CONNECTION_CHANGE_ISSUE_ID,
+    )
+
+
+async def test_setup_clears_stale_yaml_connection_issue_without_yaml(
+    hass: HomeAssistant,
+) -> None:
+    """Test removing YAML clears its no-longer-actionable Repair."""
+
+    async_set_yaml_connection_change_issue(hass, active=True)
+
+    assert await async_setup(hass, {})
+    assert (
+        ir.async_get(hass).async_get_issue(
+            DOMAIN,
+            YAML_CONNECTION_CHANGE_ISSUE_ID,
+        )
+        is None
+    )
 
 
 async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:

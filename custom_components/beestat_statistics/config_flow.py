@@ -82,6 +82,10 @@ from .const import (
     MAX_POINT_LOOKBACK_DAYS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
+from .issues import (
+    YAML_CONNECTION_CHANGE_ISSUE_ID,
+    async_set_yaml_connection_change_issue,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -325,10 +329,30 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entries = self.hass.config_entries.async_entries(DOMAIN)
             entry = entries[0] if entries else None
         if entry is not None:
-            if _same_connection_data(entry.data, data) and (
-                account_fingerprint := entry.data.get(CONF_ACCOUNT_FINGERPRINT)
-            ):
+            if _same_connection_data(entry.data, data):
+                if account_fingerprint := entry.data.get(CONF_ACCOUNT_FINGERPRINT):
+                    data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+            else:
+                try:
+                    account_fingerprint = await _async_validate_input(self.hass, data)
+                except BeestatAuthError, BeestatApiError:
+                    async_set_yaml_connection_change_issue(self.hass, active=True)
+                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
+                except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
+                    _LOGGER.error(
+                        "Unexpected exception validating Beestat YAML import (%s)",
+                        exception_fingerprint(err),
+                    )
+                    async_set_yaml_connection_change_issue(self.hass, active=True)
+                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
+                if not _validated_connection_change_is_safe(
+                    entry.data,
+                    account_fingerprint,
+                ):
+                    async_set_yaml_connection_change_issue(self.hass, active=True)
+                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
                 data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+            async_set_yaml_connection_change_issue(self.hass, active=False)
             options = merge_import_options(entry.options, data, options)
             return self.async_update_reload_and_abort(
                 entry,
@@ -337,6 +361,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 reason="already_configured",
                 reload_even_if_entry_is_unchanged=False,
             )
+        async_set_yaml_connection_change_issue(self.hass, active=False)
         return self.async_create_entry(
             title=CONFIG_TITLE,
             data=data,
@@ -790,6 +815,19 @@ def _wrong_account(
 
     return _fingerprint_signature(current_fingerprint) != _fingerprint_signature(
         account_fingerprint
+    )
+
+
+def _validated_connection_change_is_safe(
+    current_data: Mapping[str, Any],
+    account_fingerprint: Any | None,
+) -> bool:
+    """Return whether a validated replacement is known to be the same account."""
+
+    return bool(
+        current_data.get(CONF_ACCOUNT_FINGERPRINT)
+        and account_fingerprint
+        and not _wrong_account(current_data, account_fingerprint)
     )
 
 

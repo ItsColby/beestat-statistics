@@ -130,6 +130,7 @@ from .entity import (
 )
 from .entry_options import async_mark_filter_changed
 from .import_evidence import SkippedWindowEvidence
+from .issues import async_set_yaml_connection_change_issue
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
     CumulativeStatisticSeed,
@@ -255,7 +256,11 @@ CONFIG_SCHEMA = vol.Schema(
     {
         vol.Optional(DOMAIN): vol.Schema(
             {
-                vol.Required(CONF_API_KEY): vol.All(cv.string, vol.Length(min=1)),
+                vol.Required(CONF_API_KEY): vol.All(
+                    cv.string,
+                    str.strip,
+                    vol.Length(min=1),
+                ),
                 vol.Optional(CONF_API_BASE, default=API_BASE): cv.url,
                 vol.Optional(
                     CONF_POINT_LOOKBACK_DAYS,
@@ -1058,6 +1063,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 **entry_options_from_yaml(conf),
             },
         )
+    else:
+        async_set_yaml_connection_change_issue(hass, active=False)
 
     return True
 

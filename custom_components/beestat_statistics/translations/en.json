@@ -179,7 +179,8 @@
     "abort": {
       "already_configured": "Beestat Statistics is already configured.",
       "reauth_successful": "Beestat Statistics was reauthenticated.",
-      "reconfigure_successful": "Beestat Statistics was reconfigured."
+      "reconfigure_successful": "Beestat Statistics was reconfigured.",
+      "yaml_connection_change_requires_reconfigure": "The YAML connection was not applied because it could not be confirmed as the configured Beestat account. Use Reconfigure to validate and confirm the connection change, then make YAML match the saved connection."
     }
   },
   "exceptions": {
@@ -216,6 +217,10 @@
     "missing_override_entities": {
       "title": "Beestat override entities are missing",
       "description": "Beestat Statistics has advanced entity overrides that no longer point to existing Home Assistant entities: {entities}. Update or remove those overrides, then reload the integration."
+    },
+    "yaml_connection_change_requires_reconfigure": {
+      "title": "Beestat YAML connection change needs confirmation",
+      "description": "The connection in YAML differs from the saved Beestat Statistics connection and was not applied. Use Reconfigure to validate and confirm the intended connection, then update or remove the YAML block so it matches the saved connection. Existing mappings and imported Recorder history were left unchanged."
     }
   },
   "services": {

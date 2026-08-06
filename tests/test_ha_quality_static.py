@@ -317,7 +317,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         button_text = (
             ROOT / "custom_components/beestat_statistics/button.py"
         ).read_text(encoding="utf-8")
-
         self.assertIn("hass.services.async_register(", init_text)
         self.assertIn("supports_response=SupportsResponse.ONLY", init_text)
         self.assertIn("SERVICE_GET_CONFIGURATION", init_text)
@@ -719,7 +718,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         button_text = (
             ROOT / "custom_components/beestat_statistics/button.py"
         ).read_text(encoding="utf-8")
-
         for snippet in (
             "device_class=SensorDeviceClass.DATE",
             "device_class=SensorDeviceClass.DURATION",
@@ -813,6 +811,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         button_text = (
             ROOT / "custom_components/beestat_statistics/button.py"
         ).read_text(encoding="utf-8")
+        issues_text = (
+            ROOT / "custom_components/beestat_statistics/issues.py"
+        ).read_text(encoding="utf-8")
 
         exception_keys = set(
             re.findall(
@@ -887,9 +888,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             {
                 "missing_override_entities",
                 "invalid_override_entity_domains",
+                "yaml_connection_change_requires_reconfigure",
             }
             <= set(strings["issues"])
         )
+        self.assertIn("ir.async_create_issue(", issues_text)
+        self.assertIn("ir.async_delete_issue(", issues_text)
 
     def test_manual_import_failures_update_status_diagnostics(self) -> None:
         init_text = (

@@ -41,7 +41,10 @@
   rebuild the effective option rows from YAML while preserving a native filter
   date and click-time runtime boundary by Beestat source ID. An explicit YAML
   `filter_changed_date` is date-only input, takes precedence, and clears the
-  click boundary.
+  click boundary. A YAML connection replacement must validate as the same saved
+  account before it can update the entry. A different, unavailable, or
+  unprovable account is left unchanged and raises a Repair that directs the user
+  through Reconfigure, where account changes require explicit confirmation.
 - Source selectors combine current raw API discovery, the effective runtime
   model, and saved overrides. This keeps excluded and temporarily missing
   resources recoverable while preserving unknown saved rows across discovery
@@ -100,8 +103,9 @@
 - `coordinator.py`: runtime sync/readback, Beestat metadata derivation, cloud
   profile/alert/filter runtime status, and coordinator diagnostic fields.
 - `config_flow.py`, `config_payload.py`, `entry_options.py`,
-  `config_model.py`: UI setup, reconfigure, reauth, options, YAML import
-  conversion, validation, and runtime config modeling.
+  `config_model.py`, `issues.py`: UI setup, reconfigure, reauth, options, YAML
+  import conversion, validation, actionable configuration Repairs, and runtime
+  config modeling.
 - `sensor.py`, `binary_sensor.py`, `button.py`, `date.py`, `entity.py`: Home
   Assistant entities and device attachment behavior.
 - `statistics_builder.py`: conversion of Beestat rows into Home Assistant
@@ -152,6 +156,9 @@
 - Refresh enabled override mapping Repairs when a referenced entity-registry
   record is removed, renamed, or restored, and remove the listener on unload.
   Do not silently rewrite the explicit YAML/options mapping owner.
+- Clear the YAML connection-change Repair after a validated same-account import
+  or after the YAML block is removed. Never apply a YAML credential replacement
+  when the saved and candidate account fingerprints cannot prove continuity.
 - Persist the physical filter-change event before fallible cloud work. A pending
   five-minute boundary must be visible in diagnostics, retry without blocking the
   normal coordinator, and never revert the saved click timestamp. Re-read the
