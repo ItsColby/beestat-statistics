@@ -479,13 +479,17 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("actionlint -version", workflow)
         self.assertIn("shellcheck --version", workflow)
         self.assertIn("run: actionlint", workflow)
-        workflow_zizmor_command = "zizmor --strict-collection --persona auditor ."
-        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
-        self.assertIn(workflow_zizmor_command, workflow)
-        self.assertLess(
-            workflow.index("GH_TOKEN: ${{ github.token }}"),
-            workflow.index(workflow_zizmor_command),
+        self.assertEqual(1, workflow.count("permissions:"))
+        permissions = workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual("  contents: read", permissions)
+        self.assertEqual(1, workflow.count("GH_TOKEN: ${{ github.token }}"))
+        workflow_zizmor_step = (
+            "      - name: Audit GitHub Actions security\n"
+            "        env:\n"
+            "          GH_TOKEN: ${{ github.token }}\n"
+            "        run: zizmor --strict-collection --persona auditor ."
         )
+        self.assertIn(workflow_zizmor_step, workflow)
         self.assertIn("python -m mypy --version", workflow)
         self.assertIn("python -m pip install --upgrade mypy", workflow)
         self.assertIn(
@@ -502,37 +506,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "ruff mypy shellcheck-py zizmor",
             agents,
         )
-        local_zizmor_command = (
-            ".\\.venv\\Scripts\\zizmor.exe --strict-collection --persona auditor ."
+        local_zizmor_block = (
+            "$env:GH_TOKEN = gh auth token\n"
+            'if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }\n'
+            "try {\n"
+            "  .\\.venv\\Scripts\\zizmor.exe --strict-collection "
+            "--persona auditor .\n"
+            '  if ($LASTEXITCODE -ne 0) { throw "zizmor audit failed" }\n'
+            "} finally {\n"
+            "  Remove-Item Env:GH_TOKEN\n"
+            "}"
         )
         for document in (readme, agents):
             with self.subTest(document="online local zizmor instructions"):
-                self.assertIn("$env:GH_TOKEN = gh auth token", document)
-                auth_guard = (
-                    'if (-not $env:GH_TOKEN) { throw "GitHub CLI '
-                    'authentication required" }'
-                )
-                self.assertIn(auth_guard, document)
-                audit_guard = 'if ($LASTEXITCODE -ne 0) { throw "zizmor audit failed" }'
-                self.assertIn(local_zizmor_command, document)
-                self.assertIn(audit_guard, document)
-                self.assertIn("Remove-Item Env:GH_TOKEN", document)
-                self.assertLess(
-                    document.index("$env:GH_TOKEN = gh auth token"),
-                    document.index(auth_guard),
-                )
-                self.assertLess(
-                    document.index(auth_guard),
-                    document.index(local_zizmor_command),
-                )
-                self.assertLess(
-                    document.index(local_zizmor_command),
-                    document.index(audit_guard),
-                )
-                self.assertLess(
-                    document.index(audit_guard),
-                    document.index("Remove-Item Env:GH_TOKEN"),
-                )
+                self.assertIn(local_zizmor_block, document)
         self.assertIn(
             ".\\.venv\\Scripts\\python.exe -m mypy --strict "
             "custom_components/beestat_statistics",
