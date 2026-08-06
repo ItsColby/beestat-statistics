@@ -34,6 +34,8 @@ class FakeEntry:
     data: dict
     options: dict
     runtime_data: object
+    version: int = 1
+    minor_version: int = 4
 
 
 class DiagnosticsTest(unittest.TestCase):
@@ -112,12 +114,12 @@ class DiagnosticsTest(unittest.TestCase):
             data_end=None,
             data_lag_minutes=None,
             current_climate_ref="home",
-            current_climate_name="Home",
+            current_climate_name="Private Current Profile",
             scheduled_climate_ref="home",
-            scheduled_climate_name="Home",
-            next_scheduled_climate_ref=None,
-            next_scheduled_climate_name=None,
-            next_scheduled_at=None,
+            scheduled_climate_name="Private Scheduled Profile",
+            next_scheduled_climate_ref="sleep",
+            next_scheduled_climate_name="Private Next Profile",
+            next_scheduled_at=datetime(2026, 7, 5, 22, 30, tzinfo=UTC),
             schedule_profiles=(),
             active_sensor_count=1,
             active_sensor_names=("Room Sensor A",),
@@ -194,7 +196,26 @@ class DiagnosticsTest(unittest.TestCase):
                     }
                 ],
             },
-            options={},
+            options={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "slug": "private_zone_slug",
+                        "name": "Private Zone Name",
+                        "filter_changed_date": "2026-06-14",
+                    }
+                ],
+                "sensors": [
+                    {
+                        "id": 2002,
+                        "slug": "private_sensor_slug",
+                        "name": "Private Sensor Name",
+                    }
+                ],
+                "future_private_field": "Private Future Value",
+                "point_lookback_days": 120,
+                "scan_interval_seconds": 21600,
+            },
             runtime_data=runtime,
         )
 
@@ -205,6 +226,26 @@ class DiagnosticsTest(unittest.TestCase):
 
         self.assertIsInstance(result["beestat_data"]["thermostats"], list)
         self.assertIsInstance(result["beestat_data"]["sensors"], list)
+        self.assertEqual(
+            result["entry"],
+            {
+                "version": 1,
+                "minor_version": 4,
+                "connection": {
+                    "api_key_configured": True,
+                    "api_base_configured": True,
+                    "account_fingerprint_configured": True,
+                },
+                "timing": {
+                    "point_lookback_days": 120,
+                    "scan_interval_seconds": 21600,
+                },
+                "saved_overrides": {
+                    "thermostats": {"source": "options", "count": 1},
+                    "sensors": {"source": "options", "count": 1},
+                },
+            },
+        )
         self.assertEqual(
             result["coordinator"]["last_import_skipped_window_examples"],
             [
@@ -222,6 +263,17 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertNotIn("climate.zone_a", text)
         self.assertNotIn("sensor.room_sensor_a_temperature", text)
         self.assertNotIn("binary_sensor.room_sensor_a_occupancy", text)
+        self.assertNotIn("private_zone_slug", text)
+        self.assertNotIn("Private Zone Name", text)
+        self.assertNotIn("private_sensor_slug", text)
+        self.assertNotIn("Private Sensor Name", text)
+        self.assertNotIn("2026-06-14", text)
+        self.assertNotIn("Private Current Profile", text)
+        self.assertNotIn("Private Scheduled Profile", text)
+        self.assertNotIn("Private Next Profile", text)
+        self.assertNotIn("2026-07-05T22:30:00+00:00", text)
+        self.assertNotIn("Private Future Value", text)
+        self.assertNotIn("future_private_field", text)
         self.assertIn("REDACTED", text)
 
     def _install_fake_homeassistant_modules(self) -> None:
