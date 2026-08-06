@@ -46,8 +46,7 @@ def configuration_response(
         },
         "effective_configuration": {
             "thermostats": [
-                _configured_thermostat(thermostat)
-                for thermostat in config.thermostats
+                _configured_thermostat(thermostat) for thermostat in config.thermostats
             ],
             "sensors": [_configured_sensor(sensor) for sensor in config.sensors],
         },

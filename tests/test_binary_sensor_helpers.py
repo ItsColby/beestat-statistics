@@ -18,7 +18,9 @@ PACKAGE = "beestat_statistics_binary_sensor_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -244,7 +246,9 @@ class BinarySensorHelpersTest(unittest.TestCase):
         entity = types.ModuleType("homeassistant.helpers.entity")
         entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
         event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+        update_coordinator = types.ModuleType(
+            "homeassistant.helpers.update_coordinator"
+        )
 
         aiohttp.ClientError = RuntimeError
         aiohttp.ClientSession = object
@@ -262,7 +266,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
         device_registry.async_get = lambda _hass: types.SimpleNamespace(
             async_get=lambda device_id: types.SimpleNamespace(id=device_id),
-            async_get_or_create=lambda **_kwargs: None
+            async_get_or_create=lambda **_kwargs: None,
         )
         entity.DeviceInfo = lambda **kwargs: kwargs
         entity.Entity = object

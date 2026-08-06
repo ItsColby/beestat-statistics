@@ -185,8 +185,12 @@ def build_beestat_config(
     return BeestatConfig(
         thermostats=thermostats,
         sensors=sensors,
-        local_thermostat_count=sum(1 for device in local_devices if device.is_thermostat),
-        local_room_sensor_count=sum(1 for device in local_devices if not device.is_thermostat),
+        local_thermostat_count=sum(
+            1 for device in local_devices if device.is_thermostat
+        ),
+        local_room_sensor_count=sum(
+            1 for device in local_devices if not device.is_thermostat
+        ),
     )
 
 
@@ -310,7 +314,9 @@ def _override_entity_domain_errors(
             entity_id = _string_or_none(item.get(field))
             if entity_id is None or _entity_domain(entity_id) == expected_domain:
                 continue
-            errors.append(f"{item_label} {field}: {entity_id} (expected {expected_domain})")
+            errors.append(
+                f"{item_label} {field}: {entity_id} (expected {expected_domain})"
+            )
     return tuple(errors)
 
 
@@ -323,9 +329,13 @@ def _build_thermostats(
     thermostats: list[ConfiguredThermostat] = []
     seen: set[int] = set()
     used_slugs: set[str] = set()
-    local_thermostats = tuple(device for device in local_devices if device.is_thermostat)
+    local_thermostats = tuple(
+        device for device in local_devices if device.is_thermostat
+    )
 
-    for row in sorted(rows, key=lambda item: str(_row_int(item, "thermostat_id", "id") or "")):
+    for row in sorted(
+        rows, key=lambda item: str(_row_int(item, "thermostat_id", "id") or "")
+    ):
         thermostat_id = _row_int(row, "thermostat_id", "id")
         if thermostat_id is None:
             continue
@@ -395,9 +405,7 @@ def _thermostat_from_row(
         name=name,
         filter_changed_entity_id=_filter_changed_entity_id(hass, slug, override),
         filter_changed_date=_date_or_none(override.get(CONF_FILTER_CHANGED_DATE)),
-        filter_changed_at=_aware_datetime_or_none(
-            override.get(CONF_FILTER_CHANGED_AT)
-        ),
+        filter_changed_at=_aware_datetime_or_none(override.get(CONF_FILTER_CHANGED_AT)),
         filter_change_day_runtime_baseline_seconds=_nonnegative_float_or_none(
             override.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS)
         ),
@@ -440,10 +448,16 @@ def _build_sensors(
     sensors: list[ConfiguredSensor] = []
     seen: set[int] = set()
     used_slugs: set[str] = set()
-    thermostat_by_id = {thermostat.thermostat_id: thermostat for thermostat in thermostats}
-    local_sensors = tuple(device for device in local_devices if not device.is_thermostat)
+    thermostat_by_id = {
+        thermostat.thermostat_id: thermostat for thermostat in thermostats
+    }
+    local_sensors = tuple(
+        device for device in local_devices if not device.is_thermostat
+    )
 
-    for row in sorted(rows, key=lambda item: str(_row_int(item, "sensor_id", "id") or "")):
+    for row in sorted(
+        rows, key=lambda item: str(_row_int(item, "sensor_id", "id") or "")
+    ):
         sensor_id = _row_int(row, "sensor_id", "id")
         if sensor_id is None:
             continue
@@ -545,17 +559,23 @@ def _sensor_from_row(
         include_air_quality=_override_bool(
             override,
             CONF_INCLUDE_AIR_QUALITY,
-            _sensor_supports(row, _AIR_QUALITY_CAPABILITIES, fallback_field="air_quality"),
+            _sensor_supports(
+                row, _AIR_QUALITY_CAPABILITIES, fallback_field="air_quality"
+            ),
         ),
         include_co2=_override_bool(
             override,
             CONF_INCLUDE_CO2,
-            _sensor_supports(row, _CO2_CAPABILITIES, fallback_field="co2_concentration"),
+            _sensor_supports(
+                row, _CO2_CAPABILITIES, fallback_field="co2_concentration"
+            ),
         ),
         include_voc=_override_bool(
             override,
             CONF_INCLUDE_VOC,
-            _sensor_supports(row, _VOC_CAPABILITIES, fallback_field="voc_concentration"),
+            _sensor_supports(
+                row, _VOC_CAPABILITIES, fallback_field="voc_concentration"
+            ),
         ),
         temperature_entity_id=_string_or_none(override.get(CONF_TEMPERATURE_ENTITY_ID))
         or temperature_entity_id,
@@ -582,7 +602,9 @@ def _match_local_thermostat(
         )
         if local is not None:
             return local
-    strong_matches = tuple(local for local in local_thermostats if local.has_ecobee_signal)
+    strong_matches = tuple(
+        local for local in local_thermostats if local.has_ecobee_signal
+    )
     if len(strong_matches) == 1:
         return strong_matches[0]
     return None
@@ -723,7 +745,9 @@ def _has_ecobee_signal(device: Any, entries: list[Any]) -> bool:
     )
     if any("ecobee" in str(value or "").lower() for value in device_values):
         return True
-    return any("ecobee" in str(getattr(entry, "entity_id", "")).lower() for entry in entries)
+    return any(
+        "ecobee" in str(getattr(entry, "entity_id", "")).lower() for entry in entries
+    )
 
 
 def _is_ecobee_shaped_homekit_device(
@@ -798,7 +822,9 @@ def _local_device_name(
     temperature_entity_id: str | None,
 ) -> str:
     if climate_entity_id:
-        return _device_name(device) or _title_from_slug(_entity_object_slug(climate_entity_id))
+        return _device_name(device) or _title_from_slug(
+            _entity_object_slug(climate_entity_id)
+        )
     if temperature_entity_id:
         return _clean_local_sensor_name(
             _state_name(hass, temperature_entity_id)

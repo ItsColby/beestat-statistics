@@ -17,7 +17,9 @@ PACKAGE = "beestat_statistics_coordinator_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -54,7 +56,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             else:
                 sys.modules[key] = module
 
-    def test_runtime_summary_helpers_ignore_bad_dates_and_accumulate_fan_hours(self) -> None:
+    def test_runtime_summary_helpers_ignore_bad_dates_and_accumulate_fan_hours(
+        self,
+    ) -> None:
         rows = [
             {"date": "2026-07-01", "sum_fan": 3600},
             {"date": "bad", "sum_fan": 9999},
@@ -89,7 +93,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             4.0,
         )
 
-    def test_runtime_hours_clamps_corrected_change_day_below_click_baseline(self) -> None:
+    def test_runtime_hours_clamps_corrected_change_day_below_click_baseline(
+        self,
+    ) -> None:
         rows = [
             {"date": "2026-07-05", "sum_fan": 18000},
             {"date": "2026-07-06", "sum_fan": 7200},
@@ -122,9 +128,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )
 
     def test_runtime_seconds_on_date_distinguishes_missing_row_from_zero(self) -> None:
-        rows = (
-            {"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 0},
-        )
+        rows = ({"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 0},)
 
         self.assertEqual(
             self.coordinator._runtime_seconds_on_date(
@@ -163,7 +167,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             datetime.fromisoformat("2026-07-05T21:50:00+00:00"),
         )
 
-    def test_raw_filter_boundary_remains_pending_until_click_bucket_exists(self) -> None:
+    def test_raw_filter_boundary_remains_pending_until_click_bucket_exists(
+        self,
+    ) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
 
         self.assertIsNone(
@@ -175,7 +181,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             )
         )
 
-    def test_filter_boundary_status_distinguishes_pending_and_legacy_records(self) -> None:
+    def test_filter_boundary_status_distinguishes_pending_and_legacy_records(
+        self,
+    ) -> None:
         configured = self.config_model.ConfiguredThermostat
 
         self.assertEqual(
@@ -246,9 +254,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )
 
     def test_filter_boundary_scheduler_skips_expired_pending_click(self) -> None:
-        coordinator = object.__new__(
-            self.coordinator.BeestatRuntimeDataCoordinator
-        )
+        coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
         coordinator.hass = types.SimpleNamespace()
         coordinator._cancel_filter_boundary_retry = None
         coordinator.config_entry = types.SimpleNamespace(
@@ -289,8 +295,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     thermostat_id=1,
                     slug="zone_a",
                     name="Zone A",
-                    filter_changed_at=datetime.now(timezone.utc)
-                    - timedelta(hours=1),
+                    filter_changed_at=datetime.now(timezone.utc) - timedelta(hours=1),
                 ),
             ),
             sensors=(),
@@ -391,7 +396,10 @@ class CoordinatorHelpersTest(unittest.TestCase):
                         {
                             "climateRef": "home",
                             "name": "Home",
-                            "sensors": [{"name": "Room Sensor C"}, {"name": "Room Sensor B"}],
+                            "sensors": [
+                                {"name": "Room Sensor C"},
+                                {"name": "Room Sensor B"},
+                            ],
                         },
                     ],
                 }
@@ -426,11 +434,16 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(snapshot["next_name"], "Home")
         self.assertEqual(snapshot["next_at"].isoformat(), "2026-07-01T14:00:00+00:00")
         self.assertEqual(
-            [(profile.ref, profile.name, profile.is_occupied) for profile in snapshot["profiles"]],
+            [
+                (profile.ref, profile.name, profile.is_occupied)
+                for profile in snapshot["profiles"]
+            ],
             [("sleep", "Sleep", False), ("home", "Home", True)],
         )
 
-    def test_thermostat_metadata_filters_inactive_sensors_and_active_alerts(self) -> None:
+    def test_thermostat_metadata_filters_inactive_sensors_and_active_alerts(
+        self,
+    ) -> None:
         sensor_metadata = {
             10: self.coordinator.SensorMetadata(
                 sensor_id=10,
@@ -536,8 +549,8 @@ class CoordinatorHelpersTest(unittest.TestCase):
             _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
             async_update_listeners=lambda: None,
         )
-        coordinator._async_record_error = (
-            lambda err: self.coordinator.BeestatRuntimeDataCoordinator._async_record_error(
+        coordinator._async_record_error = lambda err: (
+            self.coordinator.BeestatRuntimeDataCoordinator._async_record_error(
                 coordinator,
                 err,
             )
@@ -562,12 +575,16 @@ class CoordinatorHelpersTest(unittest.TestCase):
         exceptions = types.ModuleType("homeassistant.exceptions")
         helpers = types.ModuleType("homeassistant.helpers")
         event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+        update_coordinator = types.ModuleType(
+            "homeassistant.helpers.update_coordinator"
+        )
         aiohttp = types.ModuleType("aiohttp")
 
         core.HomeAssistant = object
         core.callback = lambda func: func
-        exceptions.ConfigEntryAuthFailed = type("ConfigEntryAuthFailed", (Exception,), {})
+        exceptions.ConfigEntryAuthFailed = type(
+            "ConfigEntryAuthFailed", (Exception,), {}
+        )
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         event.async_call_later = lambda *_args, **_kwargs: lambda: None

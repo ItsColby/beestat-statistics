@@ -105,10 +105,7 @@ def _email_addresses(text: str) -> Iterator[tuple[str, str]]:
     search_from = 0
     while (at_index := text.find("@", search_from)) >= 0:
         local_run_start = at_index
-        while (
-            local_run_start > 0
-            and text[local_run_start - 1] in EMAIL_LOCAL_CHARS
-        ):
+        while local_run_start > 0 and text[local_run_start - 1] in EMAIL_LOCAL_CHARS:
             local_run_start -= 1
         local_start = next(
             (
@@ -121,10 +118,7 @@ def _email_addresses(text: str) -> Iterator[tuple[str, str]]:
 
         domain_start = at_index + 1
         domain_run_end = domain_start
-        while (
-            domain_run_end < len(text)
-            and text[domain_run_end] in EMAIL_DOMAIN_CHARS
-        ):
+        while domain_run_end < len(text) and text[domain_run_end] in EMAIL_DOMAIN_CHARS:
             domain_run_end += 1
 
         valid_end: int | None = None

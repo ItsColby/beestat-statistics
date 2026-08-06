@@ -96,9 +96,7 @@ def entry_data_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
         CONF_API_BASE: _clean_string(conf[CONF_API_BASE]) or API_BASE,
     }
     if conf.get(CONF_THERMOSTATS):
-        data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(
-            conf[CONF_THERMOSTATS]
-        )
+        data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(conf[CONF_THERMOSTATS])
     if conf.get(CONF_SENSORS):
         data[CONF_SENSORS] = conf[CONF_SENSORS]
     return data
@@ -219,8 +217,10 @@ def effective_thermostat_override(
 ) -> dict[str, Any] | None:
     """Return the current effective override for one thermostat."""
 
-    source = options.get(CONF_THERMOSTATS) if CONF_THERMOSTATS in options else data.get(
-        CONF_THERMOSTATS
+    source = (
+        options.get(CONF_THERMOSTATS)
+        if CONF_THERMOSTATS in options
+        else data.get(CONF_THERMOSTATS)
     )
     return next(
         (

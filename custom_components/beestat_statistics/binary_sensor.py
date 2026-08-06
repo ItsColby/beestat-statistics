@@ -235,7 +235,9 @@ class BeestatSensorInUseBinarySensor(
         self._sensor = sensor
         self._attr_name = "Sensor in use"
         self._attr_translation_key = "sensor_in_use"
-        self._attr_unique_id = sensor_entity_unique_id(sensor.sensor_id, "sensor_in_use")
+        self._attr_unique_id = sensor_entity_unique_id(
+            sensor.sensor_id, "sensor_in_use"
+        )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
@@ -361,7 +363,9 @@ class BeestatThermostatAlertProblemBinarySensor(
         return data.thermostat_metadata.get(self._thermostat.thermostat_id)
 
 
-class BeestatEquipmentAlertProblemBinarySensor(BeestatThermostatAlertProblemBinarySensor):
+class BeestatEquipmentAlertProblemBinarySensor(
+    BeestatThermostatAlertProblemBinarySensor
+):
     """Expose equipment-looking Beestat/Ecobee alerts as HA problems."""
 
     _attr_name = "Equipment alert"
@@ -467,9 +471,7 @@ class BeestatFilterDueProblemBinarySensor(
             "changed_source": forecast.changed_source,
             "days_remaining": forecast.days_remaining,
             "due_date": (
-                forecast.due_date.isoformat()
-                if forecast.due_date is not None
-                else None
+                forecast.due_date.isoformat() if forecast.due_date is not None else None
             ),
             "notice_days": forecast.notice_days,
             "remaining_runtime_hours": forecast.remaining_runtime_hours,
@@ -673,15 +675,11 @@ def _mapping_summary(data: BeestatRuntimeData) -> dict[str, int]:
 
     thermostat_count = len(data.config.thermostats)
     mapped_thermostat_count = sum(
-        1
-        for thermostat in data.config.thermostats
-        if thermostat.device_id is not None
+        1 for thermostat in data.config.thermostats if thermostat.device_id is not None
     )
     room_sensor_count = len(data.config.sensors)
     mapped_room_sensor_count = sum(
-        1
-        for sensor in data.config.sensors
-        if sensor.device_id is not None
+        1 for sensor in data.config.sensors if sensor.device_id is not None
     )
     return {
         "thermostat_count": thermostat_count,

@@ -16,7 +16,9 @@ PACKAGE = "beestat_statistics_config_model_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -221,7 +223,9 @@ class ConfigModelTest(unittest.TestCase):
             room_sensor.occupancy_entity_id,
             "binary_sensor.room_sensor_a_occupancy",
         )
-        self.assertEqual(room_sensor.motion_entity_id, "binary_sensor.room_sensor_a_motion")
+        self.assertEqual(
+            room_sensor.motion_entity_id, "binary_sensor.room_sensor_a_motion"
+        )
         self.assertEqual(room_sensor.device_id, "sensor_room_sensor_a")
         self.assertTrue(room_sensor.include_temperature)
 
@@ -325,7 +329,9 @@ class ConfigModelTest(unittest.TestCase):
             config.thermostats[0].filter_change_day_runtime_baseline_seconds
         )
 
-    def test_thermostat_override_can_set_filter_change_day_runtime_baseline(self) -> None:
+    def test_thermostat_override_can_set_filter_change_day_runtime_baseline(
+        self,
+    ) -> None:
         config = config_model.build_beestat_config(
             FakeHass({}),
             thermostat_rows=({"id": 1001, "name": "Zone A"},),
@@ -500,10 +506,16 @@ class ConfigModelTest(unittest.TestCase):
             "binary_sensor.zone_a_occupancy",
         )
         room_sensor = _sensor(config.sensors, 2002)
-        self.assertEqual(room_sensor.temperature_entity_id, "sensor.room_sensor_a_temperature")
-        self.assertEqual(room_sensor.motion_entity_id, "binary_sensor.room_sensor_a_motion")
+        self.assertEqual(
+            room_sensor.temperature_entity_id, "sensor.room_sensor_a_temperature"
+        )
+        self.assertEqual(
+            room_sensor.motion_entity_id, "binary_sensor.room_sensor_a_motion"
+        )
 
-    def test_maps_ecobee_shaped_homekit_devices_when_manufacturer_is_missing(self) -> None:
+    def test_maps_ecobee_shaped_homekit_devices_when_manufacturer_is_missing(
+        self,
+    ) -> None:
         self._install_fake_homeassistant_modules(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
@@ -672,7 +684,9 @@ class ConfigModelTest(unittest.TestCase):
             "sensor.ecobee_room_sensor_c_temperature",
         )
 
-    def test_ambiguous_weak_homekit_name_matches_do_not_map_by_registry_order(self) -> None:
+    def test_ambiguous_weak_homekit_name_matches_do_not_map_by_registry_order(
+        self,
+    ) -> None:
         self._install_fake_homeassistant_modules(
             devices={
                 "sensor_first_room_sensor_c": FakeDeviceEntry(
