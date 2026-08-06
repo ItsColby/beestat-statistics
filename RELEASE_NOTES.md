@@ -19,3 +19,8 @@
 - Continue using Home Assistant's integration quality scale as a practical
   review reference while optimizing for correctness, privacy, recovery, and
   maintainability in the integration's real private deployment.
+- Run the latest Ruff, ShellCheck, actionlint, and zizmor releases directly in
+  validation, enable Ruff's stable native correctness rules, and
+  remove the redundant Ruff GitHub Action dependency.
+- Exercise the native filter date entity's exact click-boundary attributes,
+  update path, and unavailable state with Home Assistant runtime models.
