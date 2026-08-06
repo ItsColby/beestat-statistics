@@ -37,10 +37,21 @@ jobs:
             scripts
       - name: Install latest workflow security analyzer
         run: python -m pip install --upgrade zizmor
+      - name: Install latest workflow linter
+        env:
+          GOBIN: ${{ runner.temp }}/actionlint-bin
+        run: |
+          mkdir -p "$GOBIN"
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          echo "$GOBIN" >> "$GITHUB_PATH"
       - name: Report static-analysis tool versions
         run: |
+          actionlint -version
+          shellcheck --version
           ruff --version
           zizmor --version
+      - name: Lint GitHub Actions workflows
+        run: actionlint
       - name: Audit GitHub Actions security
         env:
           GH_TOKEN: ${{ github.token }}
