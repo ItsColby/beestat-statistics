@@ -56,6 +56,14 @@ beestat_statistics:
 
 `api_key` is required. `point_lookback_days` defaults to 45 and is capped at 366. `scan_interval` defaults to 6 hours. On startup, YAML is imported into a Home Assistant config entry so entities can attach to devices and diagnostics.
 
+If YAML later supplies a different API key or API URL, the integration validates
+the candidate before changing the saved connection. It applies the replacement
+only when the non-reversible account fingerprint proves it is the same Beestat
+account. Otherwise the entry, mappings, and imported Recorder history remain
+unchanged and Home Assistant Repairs directs you to **Reconfigure**, where an
+intentional account change requires explicit confirmation. Removing the YAML
+block clears a stale YAML connection Repair.
+
 After the imported entry is loaded, prefer Home Assistant's integration UI as the owner for routine changes. If YAML was only used to bootstrap the integration, remove the `beestat_statistics:` YAML block after verifying the entry works; keep YAML only when you intentionally want it to remain the declarative source.
 
 When YAML continues to own thermostat mappings, a native **Mark filter changed**
@@ -123,6 +131,11 @@ Advanced room-sensor override fields:
 - `enabled`: set to `false` to ignore a Beestat room sensor.
 
 To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation before replacing the connection with a key from a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
+
+Do not rotate credentials for an existing YAML-managed entry by editing YAML
+alone when the replacement may belong to another account. Use **Reconfigure**
+first so Home Assistant can validate and, when necessary, confirm the history
+boundary; then make YAML match the saved connection.
 
 ## Entities
 
