@@ -16,7 +16,9 @@ PACKAGE = "beestat_statistics_configuration_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -65,9 +67,7 @@ class ConfigurationResponseTest(unittest.TestCase):
                 "thermostats": [{"id": 1001, "name": "old value"}],
             },
             entry_options={
-                "thermostats": [
-                    {"id": 1001, "climate_entity_id": "climate.zone_a"}
-                ],
+                "thermostats": [{"id": 1001, "climate_entity_id": "climate.zone_a"}],
             },
             config=self.config_model.BeestatConfig(
                 thermostats=(thermostat,),
@@ -85,9 +85,7 @@ class ConfigurationResponseTest(unittest.TestCase):
             response["saved_overrides"]["thermostats"],
             {
                 "source": "options",
-                "items": [
-                    {"id": 1001, "climate_entity_id": "climate.zone_a"}
-                ],
+                "items": [{"id": 1001, "climate_entity_id": "climate.zone_a"}],
             },
         )
         self.assertEqual(
@@ -107,9 +105,7 @@ class ConfigurationResponseTest(unittest.TestCase):
             28800,
         )
         self.assertEqual(
-            response["effective_configuration"]["sensors"][0][
-                "occupancy_entity_id"
-            ],
+            response["effective_configuration"]["sensors"][0]["occupancy_entity_id"],
             "binary_sensor.room_sensor_a_occupancy",
         )
         serialized = repr(response)

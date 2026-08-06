@@ -462,6 +462,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             r"astral-sh/ruff-action@[0-9a-f]{40} # v4\.1\.0",
         )
         self.assertIn('version: "0.16.1"', workflow)
+        self.assertIn("ruff format --check custom_components tests scripts", workflow)
+        self.assertIn(
+            ".\\.venv\\Scripts\\ruff.exe format --check "
+            "custom_components tests scripts",
+            readme,
+        )
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
 

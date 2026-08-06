@@ -213,9 +213,7 @@ def diff_surface(expected: dict[str, Any], current: dict[str, Any]) -> list[str]
         expected_file = comparable_file(expected_files[path])
         current_file = comparable_file(current_files[path])
         if expected_file != current_file:
-            differences.append(
-                f"{path} changed from {expected_file} to {current_file}"
-            )
+            differences.append(f"{path} changed from {expected_file} to {current_file}")
     return differences
 
 
@@ -238,7 +236,9 @@ def extract_exposed_methods(text: str) -> dict[str, list[str]] | None:
 
     exposed: dict[str, list[str]] = {}
     for scope in ("private", "public"):
-        scope_match = re.search(rf"'{scope}'\s*=>\s*\[(.*?)\]", match.group(1), re.DOTALL)
+        scope_match = re.search(
+            rf"'{scope}'\s*=>\s*\[(.*?)\]", match.group(1), re.DOTALL
+        )
         if scope_match is None:
             exposed[scope] = []
             continue

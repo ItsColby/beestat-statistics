@@ -59,7 +59,9 @@ async def async_get_config_entry_diagnostics(
         },
         "coordinator": {
             "status": runtime.coordinator.status if runtime else "not_loaded",
-            "last_error": _redacted_text(runtime.coordinator.last_error, redaction_values)
+            "last_error": _redacted_text(
+                runtime.coordinator.last_error, redaction_values
+            )
             if runtime
             else None,
             "last_error_at": _isoformat(runtime.coordinator.last_error_at)
@@ -242,7 +244,9 @@ def _thermostat_summary_diagnostics(
         "next_scheduled_profile": (
             metadata.next_scheduled_climate_name if metadata else None
         ),
-        "next_scheduled_at": _isoformat(metadata.next_scheduled_at if metadata else None),
+        "next_scheduled_at": _isoformat(
+            metadata.next_scheduled_at if metadata else None
+        ),
         "current_profile_sensor_count": (
             len(metadata.current_profile_sensor_names) if metadata else None
         ),
@@ -261,7 +265,9 @@ def _thermostat_summary_diagnostics(
     }
 
 
-def _thermostat_mapping(data: BeestatRuntimeData, thermostat_id: int, field: str) -> Any:
+def _thermostat_mapping(
+    data: BeestatRuntimeData, thermostat_id: int, field: str
+) -> Any:
     for thermostat in data.config.thermostats:
         if thermostat.thermostat_id == thermostat_id:
             return getattr(thermostat, field)

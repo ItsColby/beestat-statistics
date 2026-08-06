@@ -84,9 +84,7 @@ def is_beestat_only_device(device_entry: dr.DeviceEntry, entry_id: str) -> bool:
     if config_entry_id is not missing:
         owned_by_entry = config_entry_id == entry_id
     else:
-        owned_by_entry = set(getattr(device_entry, "config_entries", ())) == {
-            entry_id
-        }
+        owned_by_entry = set(getattr(device_entry, "config_entries", ())) == {entry_id}
 
     return (
         owned_by_entry

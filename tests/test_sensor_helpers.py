@@ -17,7 +17,9 @@ PACKAGE = "beestat_statistics_sensor_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -274,7 +276,9 @@ class SensorHelpersTest(unittest.TestCase):
         entity = types.ModuleType("homeassistant.helpers.entity")
         entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
         event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+        update_coordinator = types.ModuleType(
+            "homeassistant.helpers.update_coordinator"
+        )
 
         aiohttp.ClientError = RuntimeError
         aiohttp.ClientSession = object

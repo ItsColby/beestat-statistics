@@ -115,7 +115,9 @@ class BeestatFilterChangedDate(
         if thermostat is None:
             return None
         data = self.coordinator.data
-        summary = data.thermostats.get(self._thermostat_id) if data is not None else None
+        summary = (
+            data.thermostats.get(self._thermostat_id) if data is not None else None
+        )
         if summary is not None:
             return summary.filter_changed_date
         return thermostat.filter_changed_date
@@ -166,7 +168,9 @@ class BeestatFilterChangedDate(
     async def async_set_value(self, value: date) -> None:
         """Set the native filter-changed date."""
 
-        await async_set_filter_changed_date(self.coordinator, self._thermostat_id, value)
+        await async_set_filter_changed_date(
+            self.coordinator, self._thermostat_id, value
+        )
 
     @property
     def _thermostat(self) -> ConfiguredThermostat | None:

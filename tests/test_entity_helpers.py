@@ -16,7 +16,9 @@ PACKAGE = "beestat_statistics_entity_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -210,9 +212,7 @@ class EntityHelpersTest(unittest.TestCase):
         )
 
         self.assertTrue(self.entity.is_beestat_only_device(current, "entry-1"))
-        self.assertFalse(
-            self.entity.is_beestat_only_device(current_foreign, "entry-1")
-        )
+        self.assertFalse(self.entity.is_beestat_only_device(current_foreign, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(current_unowned, "entry-1"))
         self.assertTrue(self.entity.is_beestat_only_device(fallback, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(shared, "entry-1"))
@@ -310,7 +310,7 @@ class EntityHelpersTest(unittest.TestCase):
                 async_get=lambda device_id: types.SimpleNamespace(id=device_id),
                 async_get_or_create=lambda **kwargs: (
                     self.fake_device_registry.calls.append(kwargs)
-                )
+                ),
             )
 
         device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")

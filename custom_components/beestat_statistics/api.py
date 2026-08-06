@@ -43,8 +43,7 @@ def _fingerprint_component(value: str, fallback: str) -> str:
 
     sanitized = "".join(
         character
-        if character.isascii()
-        and (character.isalnum() or character in "._-")
+        if character.isascii() and (character.isalnum() or character in "._-")
         else "_"
         for character in value
     )

@@ -18,7 +18,9 @@ PACKAGE = "beestat_statistics_diagnostics_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -146,9 +148,7 @@ class DiagnosticsTest(unittest.TestCase):
             coordinator=types.SimpleNamespace(
                 data=data,
                 status="ok",
-                last_error=(
-                    "GET https://api.example.test/?api_key=secret-key failed"
-                ),
+                last_error=("GET https://api.example.test/?api_key=secret-key failed"),
                 last_error_at=None,
                 last_import_success_at=None,
                 last_imported_series=None,

@@ -406,10 +406,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "current_comfort_profile",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "current_climate_name",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "current_climate_name",
+                )
             ),
             extra_attributes_fn=(
                 lambda coordinator, thermostat_id=thermostat_id: (
@@ -431,10 +433,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "scheduled_comfort_profile",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "scheduled_climate_name",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "scheduled_climate_name",
+                )
             ),
             extra_attributes_fn=(
                 lambda coordinator, thermostat_id=thermostat_id: (
@@ -457,10 +461,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "next_scheduled_comfort_profile_time",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "next_scheduled_at",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "next_scheduled_at",
+                )
             ),
             extra_attributes_fn=(
                 lambda coordinator, thermostat_id=thermostat_id: (
@@ -484,10 +490,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "active_sensor_count",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "active_sensor_count",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "active_sensor_count",
+                )
             ),
         ),
         BeestatSensorEntityDescription(
@@ -506,10 +514,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "cloud_data_end",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "data_end",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "data_end",
+                )
             ),
             extra_attributes_fn=(
                 lambda coordinator, thermostat_id=thermostat_id: (
@@ -535,10 +545,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "cloud_data_lag_minutes",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "data_lag_minutes",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "data_lag_minutes",
+                )
             ),
         ),
         BeestatSensorEntityDescription(
@@ -557,10 +569,12 @@ def _thermostat_sensor_descriptions(
                 thermostat,
                 "active_alert_count",
             ),
-            value_fn=lambda coordinator, thermostat_id=thermostat_id: _thermostat_metadata_value(
-                coordinator,
-                thermostat_id,
-                "active_alert_count",
+            value_fn=lambda coordinator, thermostat_id=thermostat_id: (
+                _thermostat_metadata_value(
+                    coordinator,
+                    thermostat_id,
+                    "active_alert_count",
+                )
             ),
             extra_attributes_fn=(
                 lambda coordinator, thermostat_id=thermostat_id: (
@@ -648,7 +662,9 @@ def _thermostat_sensor_descriptions(
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
             available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "remaining_runtime_hours")
+                _filter_forecast_value(
+                    coordinator, thermostat_id, "remaining_runtime_hours"
+                )
                 is not None
             ),
             suggested_object_id=thermostat_suggested_object_id(
@@ -727,7 +743,8 @@ def _thermostat_sensor_descriptions(
             translation_key="filter_due_date",
             device_class=SensorDeviceClass.DATE,
             available_fn=lambda coordinator, thermostat_id=thermostat_id: (
-                _filter_forecast_value(coordinator, thermostat_id, "due_date") is not None
+                _filter_forecast_value(coordinator, thermostat_id, "due_date")
+                is not None
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -1018,15 +1035,11 @@ def _mapping_summary_attributes(
 
     thermostat_count = len(data.config.thermostats)
     mapped_thermostat_count = sum(
-        1
-        for thermostat in data.config.thermostats
-        if thermostat.device_id is not None
+        1 for thermostat in data.config.thermostats if thermostat.device_id is not None
     )
     room_sensor_count = len(data.config.sensors)
     mapped_room_sensor_count = sum(
-        1
-        for sensor in data.config.sensors
-        if sensor.device_id is not None
+        1 for sensor in data.config.sensors if sensor.device_id is not None
     )
     return {
         "thermostat_count": thermostat_count,

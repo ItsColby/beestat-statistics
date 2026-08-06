@@ -17,7 +17,9 @@ PACKAGE = "beestat_statistics_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -110,9 +112,21 @@ class StatisticsBuilderTest(unittest.TestCase):
     def test_sensor_statistics_group_points_by_local_day(self) -> None:
         rows_by_id = {
             10: [
-                {"sensor_id": 10, "timestamp": "2026-07-01T04:30:00Z", "temperature": 70},
-                {"sensor_id": 10, "timestamp": "2026-07-01T05:30:00Z", "temperature": 74},
-                {"sensor_id": 10, "timestamp": "2026-07-02T04:30:00Z", "temperature": 68},
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-01T04:30:00Z",
+                    "temperature": 70,
+                },
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-01T05:30:00Z",
+                    "temperature": 74,
+                },
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-02T04:30:00Z",
+                    "temperature": 68,
+                },
                 {"sensor_id": 10, "timestamp": "not-a-timestamp", "temperature": 120},
             ]
         }
@@ -124,11 +138,15 @@ class StatisticsBuilderTest(unittest.TestCase):
         )
 
         temperature = _series(series, "beestat:room_sensor_a_temperature")
-        self.assertEqual(temperature.metadata["name"], "Beestat Room Sensor A Temperature")
+        self.assertEqual(
+            temperature.metadata["name"], "Beestat Room Sensor A Temperature"
+        )
         self.assertNotIn("has_mean", temperature.metadata)
         self.assertEqual(temperature.metadata["mean_type"], 1)
         self.assertEqual(temperature.metadata["unit_class"], "temperature")
-        self.assertEqual(temperature.metadata["unit_of_measurement"], "\N{DEGREE SIGN}F")
+        self.assertEqual(
+            temperature.metadata["unit_of_measurement"], "\N{DEGREE SIGN}F"
+        )
         self.assertEqual(
             temperature.statistics,
             [
@@ -147,7 +165,9 @@ class StatisticsBuilderTest(unittest.TestCase):
             ],
         )
 
-    def test_summary_and_setpoint_statistics_use_current_recorder_metadata(self) -> None:
+    def test_summary_and_setpoint_statistics_use_current_recorder_metadata(
+        self,
+    ) -> None:
         summary_series = statistics_builder.build_summary_mean_statistics(
             [
                 {

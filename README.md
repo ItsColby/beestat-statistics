@@ -294,6 +294,7 @@ Local pure-module checks:
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
+.\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 ```
 
 Upstream Beestat API drift check:

@@ -177,9 +177,10 @@ async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert {
-        key.schema for key in result["data_schema"].schema
-    } == {CONF_API_KEY, CONF_API_BASE}
+    assert {key.schema for key in result["data_schema"].schema} == {
+        CONF_API_KEY,
+        CONF_API_BASE,
+    }
 
     with _mock_validate_input():
         result = await hass.config_entries.flow.async_configure(
@@ -439,9 +440,7 @@ async def test_import_flow_preserves_ui_mapping_options(
         options={
             CONF_POINT_LOOKBACK_DAYS: 30,
             CONF_SCAN_INTERVAL_SECONDS: 900,
-            CONF_THERMOSTATS: [
-                {CONF_ID: 1001, CONF_FILTER_CHANGED_DATE: "2026-07-05"}
-            ],
+            CONF_THERMOSTATS: [{CONF_ID: 1001, CONF_FILTER_CHANGED_DATE: "2026-07-05"}],
         },
     )
     result = await hass.config_entries.flow.async_init(
@@ -464,9 +463,7 @@ async def test_import_flow_preserves_ui_mapping_options(
     assert dict(entry.options) == {
         CONF_POINT_LOOKBACK_DAYS: 90,
         CONF_SCAN_INTERVAL_SECONDS: 1800,
-        CONF_THERMOSTATS: [
-            {CONF_ID: 1001, CONF_FILTER_CHANGED_DATE: "2026-07-05"}
-        ],
+        CONF_THERMOSTATS: [{CONF_ID: 1001, CONF_FILTER_CHANGED_DATE: "2026-07-05"}],
     }
 
 
@@ -714,9 +711,7 @@ async def test_reconfigure_flow_confirms_different_account(
             CONF_SENSORS: [
                 {
                     CONF_ID: 2001,
-                    CONF_TEMPERATURE_ENTITY_ID: (
-                        "sensor.room_sensor_a_temperature"
-                    ),
+                    CONF_TEMPERATURE_ENTITY_ID: ("sensor.room_sensor_a_temperature"),
                 }
             ],
         },
@@ -975,12 +970,16 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
         "source": "options",
         "items": [{CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"}],
     }
-    assert response["effective_configuration"]["thermostats"][0][
-        CONF_CLIMATE_ENTITY_ID
-    ] == "climate.zone_a"
-    assert response["effective_configuration"]["thermostats"][0][
-        "filter_change_day_runtime_baseline_seconds"
-    ] is None
+    assert (
+        response["effective_configuration"]["thermostats"][0][CONF_CLIMATE_ENTITY_ID]
+        == "climate.zone_a"
+    )
+    assert (
+        response["effective_configuration"]["thermostats"][0][
+            "filter_change_day_runtime_baseline_seconds"
+        ]
+        is None
+    )
     assert "api_key" not in repr(response)
 
 
@@ -1041,7 +1040,7 @@ async def test_native_filter_button_forwards_exact_aware_click_time(
         hass=hass,
         data=types.SimpleNamespace(
             config=types.SimpleNamespace(thermostats=(thermostat,))
-        )
+        ),
     )
     entity = BeestatFilterChangedButton(coordinator, thermostat)
     changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")

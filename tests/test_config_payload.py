@@ -16,7 +16,9 @@ PACKAGE = "beestat_statistics_config_payload_test"
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.{name}", ROOT / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
     module = importlib.util.module_from_spec(spec)
@@ -173,9 +175,7 @@ class ConfigPayloadTest(unittest.TestCase):
                 {
                     "point_lookback_days": 30,
                     "scan_interval_seconds": 900,
-                    "thermostats": [
-                        {"id": 1, "filter_changed_date": "2026-07-05"}
-                    ],
+                    "thermostats": [{"id": 1, "filter_changed_date": "2026-07-05"}],
                     "sensors": [{"id": 2, "temperature_entity_id": "sensor.room"}],
                 },
                 {"api_key": "key", "api_base": "https://api.beestat.io/"},
@@ -289,20 +289,15 @@ class ConfigPayloadTest(unittest.TestCase):
         self.assertEqual(
             config_payload.merge_import_options(
                 {
-                    "thermostats": [
-                        {"id": 1, "climate_entity_id": "climate.old"}
-                    ],
+                    "thermostats": [{"id": 1, "climate_entity_id": "climate.old"}],
                 },
                 {
-                    "thermostats": [
-                        {"id": 1, "climate_entity_id": "climate.main"}
-                    ],
+                    "thermostats": [{"id": 1, "climate_entity_id": "climate.main"}],
                 },
                 {},
             ),
             {},
         )
-
 
     def test_migrate_entry_payload_moves_legacy_options_from_data(self) -> None:
         data, options = config_payload.migrate_entry_payload(

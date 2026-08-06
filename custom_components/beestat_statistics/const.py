@@ -25,12 +25,8 @@ CONF_API_BASE = "api_base"
 CONF_ACCOUNT_FINGERPRINT = "account_fingerprint"
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"
 CONF_ENABLED = "enabled"
-CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT = (
-    "filter_change_boundary_reconciled_at"
-)
-CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END = (
-    "filter_change_boundary_source_data_end"
-)
+CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT = "filter_change_boundary_reconciled_at"
+CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END = "filter_change_boundary_source_data_end"
 CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS = (
     "filter_change_day_runtime_baseline_seconds"
 )

@@ -235,13 +235,15 @@ def build_summary_mean_statistics(
                     "start": _local_midnight(local_day, local_tz),
                     "mean": round(value, 2),
                 }
-                if spec.min_field is not None and (
-                    min_value := _as_float(row.get(spec.min_field))
-                ) is not None:
+                if (
+                    spec.min_field is not None
+                    and (min_value := _as_float(row.get(spec.min_field))) is not None
+                ):
                     item["min"] = round(min_value, 2)
-                if spec.max_field is not None and (
-                    max_value := _as_float(row.get(spec.max_field))
-                ) is not None:
+                if (
+                    spec.max_field is not None
+                    and (max_value := _as_float(row.get(spec.max_field))) is not None
+                ):
                     item["max"] = round(max_value, 2)
                 stats.append(item)
             if not stats:
