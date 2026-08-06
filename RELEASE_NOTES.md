@@ -5,8 +5,9 @@
 - Preserve private Home Assistant and Beestat details at every error boundary
   while retaining a bounded exception fingerprint that identifies the
   integration-owned module, function, and line for local diagnosis.
-- Validate the integration against current stable Home Assistant Core
-  `2026.8.0` in addition to the minimum supported `2026.7.1` release.
+- Require and validate the integration against the maintained Home Assistant
+  Core `2026.8.0` baseline, removing the redundant legacy `2026.7.1` lane and
+  its duplicate requirements machinery.
 - Preserve complete partial-import counts while retaining at most three
   identifier-free skipped-window examples in current state and diagnostics.
 - Refresh enabled mapping Repairs immediately when a referenced entity-registry
@@ -42,7 +43,7 @@
   exception names from entering the integration.
 - Add zero-baseline Ruff Bugbear, timezone-awareness, and logging checks while
   retaining the existing debugger-statement rule.
-- Validate current stable Core `2026.8.0` with test harness `0.13.354`, whose
+- Validate supported stable Core `2026.8.0` with test harness `0.13.354`, whose
   dependency metadata now targets that final release directly.
 - Exercise the native filter date entity's exact click-boundary attributes,
   update path, and unavailable state with Home Assistant runtime models.

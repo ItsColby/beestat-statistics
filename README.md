@@ -300,7 +300,7 @@ Removing the integration stops future imports and removes the integration's nati
 
 ## Development Validation
 
-Home Assistant `2026.7.x` requires Python `3.14.2` or newer. The GitHub validation workflow uses Python `3.14`; use the same major version for any local Home Assistant test harness work.
+Home Assistant `2026.8.0` requires Python `3.14.2` or newer. The GitHub validation workflow uses Python `3.14`; use the same major version for any local Home Assistant test harness work.
 
 This repository is a HACS custom integration. The Beestat API client is intentionally in-tree and uses Home Assistant's shared aiohttp websession. If this integration is ever prepared for Home Assistant Core inclusion, split the Beestat client into an async, tagged, open-source PyPI package before submission.
 
@@ -333,22 +333,18 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. CI runs the harness against both the minimum supported stable Core version pinned in `requirements-ha-test.txt` and David's current deployed Core line pinned in `requirements-ha-test-current.txt`. Advance the current lane only after the matching stable Home Assistant release and test harness are available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. CI runs one exact lane for the supported stable Core release pinned in `requirements-ha-test.txt`, aligned with the maintained Home Assistant 2026.8 runtime. Advance the Core and harness pins together only after the matching stable Home Assistant release and test harness are available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.345
-python -m pip install --upgrade -r requirements-ha-test.txt
-pytest tests/test_config_flow_ha.py -q
 python -m pip install pytest-homeassistant-custom-component==0.13.354
-python -m pip install --upgrade -r requirements-ha-test-current.txt
+python -m pip install --upgrade -r requirements-ha-test.txt
 pytest tests/test_config_flow_ha.py -q
 ```
 
 On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.345 && python -m pip install --upgrade -r requirements-ha-test.txt && pytest tests/test_config_flow_ha.py -q"
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test-current.txt && pytest tests/test_config_flow_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && pytest tests/test_config_flow_ha.py -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest
@@ -356,8 +352,8 @@ actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
 Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
-unit, both Home Assistant harness lanes, Hassfest, and HACS validation all
-succeed.
+unit, the supported Home Assistant harness lane, Hassfest, and HACS validation
+all succeed.
 
 ## Release Publishing
 

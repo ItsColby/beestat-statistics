@@ -81,30 +81,27 @@ Validate JSON metadata after edits to JSON files:
 .\.venv\Scripts\python.exe -c "import json, pathlib; [json.loads(pathlib.Path(path).read_text(encoding='utf-8')) for path in ['custom_components/beestat_statistics/manifest.json','custom_components/beestat_statistics/translations/en.json','custom_components/beestat_statistics/icons.json','hacs.json','docs/beestat-api-surface.json']]"
 ```
 
-Home Assistant config-flow test requirements are owned by two explicit lanes:
-`requirements-ha-test.txt` proves the minimum supported Core release, while
-`requirements-ha-test-current.txt` proves the current released Core used by the
-maintainer. Keep both exact and update the current lane after a stable Core
-upgrade rather than testing a beta as a release gate.
+Home Assistant config-flow test requirements are owned by one explicit lane:
+`requirements-ha-test.txt` proves the supported stable Core release used by the
+maintainer. Keep the Core and harness pins exact and advance them together only
+after the maintained runtime moves to a stable Core release; do not test a beta
+as a release gate.
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.345
-python -m pip install --upgrade -r requirements-ha-test.txt
-python -m pytest tests/test_config_flow_ha.py -q
 python -m pip install pytest-homeassistant-custom-component==0.13.354
-python -m pip install --upgrade -r requirements-ha-test-current.txt
+python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pytest tests/test_config_flow_ha.py -q
 ```
 
-Keep the harness and exact Core installation as separate steps. The current
+Keep the harness and exact Core installation as separate steps. The pinned
 harness matches stable Core directly, but the daily upstream harness can
 temporarily declare a beta while the matching final Core is already released;
 do not encode that transient pair in one requirements transaction.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
-Windows, run these lanes in Docker or defer them to the GitHub workflow. If
-local Python does not satisfy a pinned lane, state that the HA-specific pytest
-gate is deferred to a compatible environment. Do not weaken either
-requirements file just to make an incompatible local venv pass.
+Windows, run this lane in Docker or defer it to the GitHub workflow. If local
+Python does not satisfy the pin, state that the HA-specific pytest gate is
+deferred to a compatible environment. Do not weaken the requirements file just
+to make an incompatible local venv pass.
 
 Before reporting complete, read back `git status --short --branch` and list any validation that could not run.

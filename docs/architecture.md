@@ -11,6 +11,10 @@
 - Keep GitHub/HACS support at the repository root: `README.md`, `hacs.json`,
   `.github/`, `requirements-ha-test.txt`, `pytest.ini`, `docs/`, `scripts/`,
   `tests/`, and `blueprints/`.
+- `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
+  Assistant baseline, currently Core `2026.8.0`. Keep one exact harness lane
+  aligned with the maintained runtime and advance all three pins together only
+  after a stable runtime upgrade.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, `.ruff_cache/`, `.agents/`, and
   `.codex/` as local working state unless a future task explicitly turns one
   into a tracked repo feature. Do not commit Home Assistant config backups, API
