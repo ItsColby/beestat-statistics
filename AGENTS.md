@@ -30,8 +30,8 @@ expansion unless it closes a concrete risk or materially improves future work.
 ## Validation
 
 After changing `.github/workflows`, run `actionlint` from the repository root.
-Keep `shellcheck` available on `PATH`; actionlint uses it automatically for
-Bash and `sh` `run:` steps.
+Keep the latest `shellcheck` available on `PATH`; the `shellcheck-py` package
+provides it and actionlint uses it automatically for Bash and `sh` `run:` steps.
 
 For focused iteration, run the directly affected unittest module, compile the
 changed package/test surface, and always run the public-safety guard when the
@@ -47,7 +47,7 @@ Before integration or release, use the repo venv when available and run the
 full local tier:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy zizmor
+.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy shellcheck-py zizmor
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts

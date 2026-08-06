@@ -28,15 +28,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - name: Ruff
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
-        with:
-          src: >-
-            custom_components
-            tests
-            scripts
-      - name: Install latest workflow security analyzer
-        run: python -m pip install --upgrade zizmor
+      - name: Install latest Python static-analysis tools
+        run: python -m pip install --upgrade ruff shellcheck-py zizmor
       - name: Install latest workflow linter
         env:
           GOBIN: ${{ runner.temp }}/actionlint-bin
@@ -48,7 +41,7 @@ jobs:
         run: |
           actionlint -version
           shellcheck --version
-          ruff --version
+          python -m ruff --version
           zizmor --version
       - name: Lint GitHub Actions workflows
         run: actionlint
@@ -56,7 +49,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: zizmor --persona auditor .
-      - run: ruff format --check custom_components tests scripts
+      - run: python -m ruff format --check custom_components tests scripts
+      - run: python -m ruff check custom_components tests scripts
       - run: python -m unittest discover -s tests
       - run: python -m compileall -q custom_components/beestat_statistics tests scripts
       - run: python scripts/check_public_safety.py
