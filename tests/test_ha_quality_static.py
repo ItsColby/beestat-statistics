@@ -536,6 +536,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "BLE",
                 "C4",
                 "C901",
+                "N818",
                 "PERF",
                 "PLC",
                 "PLE",
