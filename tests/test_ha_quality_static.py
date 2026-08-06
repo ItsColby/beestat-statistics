@@ -465,6 +465,31 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
 
+    def test_readme_home_assistant_commands_install_harness_before_core(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        lanes = (
+            ("0.13.345", "requirements-ha-test.txt"),
+            ("0.13.353", "requirements-ha-test-current.txt"),
+        )
+
+        for harness, requirements in lanes:
+            local_commands = (
+                "python -m pip install "
+                f"pytest-homeassistant-custom-component=={harness}\n"
+                f"python -m pip install --upgrade -r {requirements}\n"
+                "pytest tests/test_config_flow_ha.py -q"
+            )
+            docker_commands = (
+                "python -m pip install --upgrade pip && "
+                "python -m pip install "
+                f"pytest-homeassistant-custom-component=={harness} && "
+                f"python -m pip install --upgrade -r {requirements} && "
+                "pytest tests/test_config_flow_ha.py -q"
+            )
+            with self.subTest(requirements=requirements):
+                self.assertIn(local_commands, readme)
+                self.assertIn(docker_commands, readme)
+
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
         text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
 
