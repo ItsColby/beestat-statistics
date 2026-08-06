@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import device_registry as dr
 
+helper_integration: Any
 try:
     from homeassistant.helpers import helper_integration
 except ImportError:  # pragma: no cover - lightweight unit-test stubs
     helper_integration = None
 
 from homeassistant.helpers.device_registry import DeviceEntryType
-from homeassistant.helpers.entity import DeviceInfo, Entity
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .config_model import ConfiguredSensor, ConfiguredThermostat
@@ -22,8 +23,14 @@ from .const import DOMAIN
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.device_registry import DeviceInfo
 
     from .coordinator import BeestatRuntimeDataCoordinator
+else:
+    try:
+        from homeassistant.helpers.device_registry import DeviceInfo
+    except ImportError:  # pragma: no cover - lightweight unit-test stubs
+        from homeassistant.helpers.entity import DeviceInfo
 
 SERVICE_IDENTIFIER = (DOMAIN, "service")
 SERVICE_NAME = "Beestat Statistics"

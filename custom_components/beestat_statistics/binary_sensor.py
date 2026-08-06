@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -21,6 +20,7 @@ from .coordinator import (
     BeestatRuntimeDataCoordinator,
     SensorMetadata,
     ThermostatMetadata,
+    ThermostatRuntimeSummary,
 )
 from .entity import (
     async_add_new_entities,
@@ -32,6 +32,16 @@ from .entity import (
 )
 from .filter_forecast import FilterForecast, build_filter_forecast
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+
+if TYPE_CHECKING:
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers.device_registry import DeviceInfo
+else:
+    try:
+        from homeassistant.const import EntityCategory
+        from homeassistant.helpers.device_registry import DeviceInfo
+    except ImportError:  # pragma: no cover - lightweight unit-test stubs
+        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 PARALLEL_UPDATES = 0
 
@@ -106,7 +116,7 @@ class BeestatImportPartialProblemBinarySensor(
     _attr_name = "Import partial"
     _attr_translation_key = "statistics_import_partial"
     _attr_unique_id = "statistics_import_partial"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _unrecorded_attributes = frozenset(
         {
@@ -202,7 +212,7 @@ class BeestatHomeKitMappingIncompleteProblemBinarySensor(
         )
 
     @property
-    def extra_state_attributes(self) -> dict[str, int | None] | None:
+    def extra_state_attributes(self) -> dict[str, int] | None:
         """Return compact HomeKit mapping counts."""
 
         data = self.coordinator.data
@@ -370,7 +380,7 @@ class BeestatEquipmentAlertProblemBinarySensor(
 
     _attr_name = "Equipment alert"
     _attr_translation_key = "equipment_alert"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
 
     def __init__(
         self,
@@ -411,7 +421,7 @@ class BeestatFilterDueProblemBinarySensor(
     _attr_has_entity_name = True
     _attr_name = "Filter due"
     _attr_translation_key = "filter_due"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _unrecorded_attributes = frozenset(
         {
@@ -595,7 +605,7 @@ class BeestatRuntimeStaleProblemBinarySensor(
         return {"lag_days": summary.lag_days, "threshold_days": 1}
 
     @property
-    def _summary(self):
+    def _summary(self) -> ThermostatRuntimeSummary | None:
         data: BeestatRuntimeData | None = self.coordinator.data
         if data is None:
             return None

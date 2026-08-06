@@ -6,14 +6,17 @@ import asyncio
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
-from datetime import datetime, time, timedelta, timezone
 from functools import partial
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
-from homeassistant.components.recorder import get_instance as get_recorder_instance
+from homeassistant.components.recorder.models.statistics import (
+    StatisticData,
+    StatisticMetaData,
+)
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
@@ -42,6 +45,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.recorder import get_instance as get_recorder_instance
 
 from .api import (
     BeestatApiError,
@@ -437,8 +441,8 @@ class BeestatStatisticsImporter:
             for item in series:
                 async_add_external_statistics(
                     self._hass,
-                    item.metadata,
-                    item.statistics,
+                    cast(StatisticMetaData, item.metadata),
+                    cast(Iterable[StatisticData], item.statistics),
                 )
                 imported_rows += len(item.statistics)
                 latest_start_by_id[item.statistic_id] = _format_start(item)
@@ -546,7 +550,7 @@ class BeestatStatisticsImporter:
         window_start = latest_day - timedelta(days=DEFAULT_SUMMARY_OVERLAP_DAYS)
         window_end = (
             _latest_summary_day(cached_rows)
-            or datetime.now(timezone.utc).astimezone(self._local_tz).date()
+            or datetime.now(UTC).astimezone(self._local_tz).date()
         )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -637,8 +641,8 @@ class BeestatStatisticsImporter:
                 _cumulative_seeds_during_period,
                 self._hass,
                 tuple(statistic_ids),
-                _local_midnight(seed_day, self._local_tz).astimezone(timezone.utc),
-                _local_midnight(window_start, self._local_tz).astimezone(timezone.utc),
+                _local_midnight(seed_day, self._local_tz).astimezone(UTC),
+                _local_midnight(window_start, self._local_tz).astimezone(UTC),
             )
         )
 
@@ -766,9 +770,12 @@ class BeestatStatisticsImporter:
         )
         for sensor_id in sensor_ids:
             rows: list[dict[str, Any]] = []
+            mapped_thermostat_id = sensor_to_thermostat.get(sensor_id)
             cap_end = min(
                 end,
-                thermostat_data_end.get(sensor_to_thermostat.get(sensor_id), end),
+                thermostat_data_end.get(mapped_thermostat_id, end)
+                if mapped_thermostat_id is not None
+                else end,
             )
             if start > cap_end:
                 rows_by_id[sensor_id] = []
@@ -839,188 +846,198 @@ class BeestatStatisticsImporter:
             return []
 
 
+async def _async_handle_import_service(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Import Beestat statistics on demand."""
+
+    runtime = _first_runtime(hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    try:
+        await runtime.importer.async_import_statistics(
+            point_lookback_days=call.data.get(CONF_POINT_LOOKBACK_DAYS),
+            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+        )
+    except BeestatAuthError as err:
+        runtime.coordinator.async_record_import_error(err)
+        runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_auth_failed",
+        ) from None
+    except BeestatApiError as err:
+        runtime.coordinator.async_record_import_error(err)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_request_failed",
+        ) from None
+    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
+        runtime.coordinator.async_record_import_error(err)
+        _LOGGER.error(
+            "Unexpected Beestat statistics import service failure (%s)",
+            exception_fingerprint(err),
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="statistics_import_failed",
+        ) from None
+
+
+async def _async_handle_get_configuration(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    """Return the effective configuration for one loaded entry."""
+
+    entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
+    if (
+        entry is None
+        or entry.domain != DOMAIN
+        or entry.state is not ConfigEntryState.LOADED
+        or (runtime := getattr(entry, "runtime_data", None)) is None
+        or runtime.coordinator.data is None
+    ):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    return configuration_response(
+        entry_id=entry.entry_id,
+        entry_data=entry.data,
+        entry_options=entry.options,
+        config=runtime.coordinator.data.config,
+        point_lookback_days=_entry_point_lookback_days(entry),
+        scan_interval_seconds=_entry_scan_interval_seconds(entry),
+    )
+
+
+async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Rebuild Beestat statistics on demand."""
+
+    runtime = _first_runtime(hass)
+    if runtime is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    start_date = call.data.get(ATTR_START_DATE)
+    end_date = call.data.get(ATTR_END_DATE)
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_rebuild_date_range",
+        )
+    try:
+        await runtime.importer.async_import_statistics(
+            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+            force_full_summary=True,
+            rebuild_start=start_date,
+            rebuild_end=end_date,
+            thermostat_id=call.data.get(CONF_THERMOSTAT_ID),
+        )
+    except UnknownThermostatError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_thermostat_id",
+            translation_placeholders={"thermostat_id": str(err.thermostat_id)},
+        ) from err
+    except BeestatAuthError as err:
+        runtime.coordinator.async_record_import_error(err)
+        runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_auth_failed",
+        ) from None
+    except BeestatApiError as err:
+        runtime.coordinator.async_record_import_error(err)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_request_failed",
+        ) from None
+    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
+        runtime.coordinator.async_record_import_error(err)
+        _LOGGER.error(
+            "Unexpected Beestat statistics rebuild service failure (%s)",
+            exception_fingerprint(err),
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="statistics_import_failed",
+        ) from None
+
+
+async def _async_handle_repair_filter_change_boundary(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    """Repair the filter change timestamp for an existing calendar date."""
+
+    entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
+    if (
+        entry is None
+        or entry.domain != DOMAIN
+        or entry.state is not ConfigEntryState.LOADED
+        or (runtime := getattr(entry, "runtime_data", None)) is None
+        or runtime.coordinator.data is None
+    ):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    thermostat_id = call.data[CONF_THERMOSTAT_ID]
+    thermostat = next(
+        (
+            item
+            for item in runtime.coordinator.data.config.thermostats
+            if item.thermostat_id == thermostat_id
+        ),
+        None,
+    )
+    if thermostat is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_thermostat_id",
+            translation_placeholders={"thermostat_id": str(thermostat_id)},
+        )
+    changed_at = call.data[ATTR_CHANGED_AT]
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=runtime.coordinator.local_tz)
+    changed_at = changed_at.astimezone(UTC)
+    now = datetime.now(UTC)
+    if changed_at > now or changed_at < now - timedelta(days=31):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="filter_change_boundary_out_of_range",
+        )
+    saved_date = thermostat.filter_changed_date
+    repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
+    if saved_date is None or saved_date != repair_date:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="filter_change_boundary_date_mismatch",
+        )
+    await async_mark_filter_changed(
+        runtime.coordinator,
+        thermostat_id,
+        changed_at,
+        dismiss_alerts=False,
+    )
+
+
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up Beestat Statistics and import YAML configuration if present."""
-
-    async def async_handle_import_service(call: ServiceCall) -> None:
-        runtime = _first_runtime(hass)
-        if runtime is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="no_loaded_entry",
-            )
-        try:
-            await runtime.importer.async_import_statistics(
-                point_lookback_days=call.data.get(CONF_POINT_LOOKBACK_DAYS),
-                skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
-            )
-        except BeestatAuthError as err:
-            runtime.coordinator.async_record_import_error(err)
-            runtime.coordinator.config_entry.async_start_reauth_if_available(hass)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_auth_failed",
-            ) from None
-        except BeestatApiError as err:
-            runtime.coordinator.async_record_import_error(err)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
-            runtime.coordinator.async_record_import_error(err)
-            _LOGGER.error(
-                "Unexpected Beestat statistics import service failure (%s)",
-                exception_fingerprint(err),
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="statistics_import_failed",
-            ) from None
-
-    async def async_handle_get_configuration(
-        call: ServiceCall,
-    ) -> ServiceResponse:
-        entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
-        if (
-            entry is None
-            or entry.domain != DOMAIN
-            or entry.state is not ConfigEntryState.LOADED
-            or (runtime := getattr(entry, "runtime_data", None)) is None
-            or runtime.coordinator.data is None
-        ):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="no_loaded_entry",
-            )
-        return configuration_response(
-            entry_id=entry.entry_id,
-            entry_data=entry.data,
-            entry_options=entry.options,
-            config=runtime.coordinator.data.config,
-            point_lookback_days=_entry_point_lookback_days(entry),
-            scan_interval_seconds=_entry_scan_interval_seconds(entry),
-        )
-
-    async def async_handle_rebuild_service(call: ServiceCall) -> None:
-        runtime = _first_runtime(hass)
-        if runtime is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="no_loaded_entry",
-            )
-        start_date = call.data.get(ATTR_START_DATE)
-        end_date = call.data.get(ATTR_END_DATE)
-        if start_date is not None and end_date is not None and start_date > end_date:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_rebuild_date_range",
-            )
-        try:
-            await runtime.importer.async_import_statistics(
-                skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
-                force_full_summary=True,
-                rebuild_start=start_date,
-                rebuild_end=end_date,
-                thermostat_id=call.data.get(CONF_THERMOSTAT_ID),
-            )
-        except UnknownThermostatError as err:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="unknown_thermostat_id",
-                translation_placeholders={
-                    "thermostat_id": str(err.thermostat_id),
-                },
-            ) from err
-        except BeestatAuthError as err:
-            runtime.coordinator.async_record_import_error(err)
-            runtime.coordinator.config_entry.async_start_reauth_if_available(hass)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_auth_failed",
-            ) from None
-        except BeestatApiError as err:
-            runtime.coordinator.async_record_import_error(err)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
-            runtime.coordinator.async_record_import_error(err)
-            _LOGGER.error(
-                "Unexpected Beestat statistics rebuild service failure (%s)",
-                exception_fingerprint(err),
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="statistics_import_failed",
-            ) from None
-
-    async def async_handle_repair_filter_change_boundary(
-        call: ServiceCall,
-    ) -> None:
-        entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
-        if (
-            entry is None
-            or entry.domain != DOMAIN
-            or entry.state is not ConfigEntryState.LOADED
-            or (runtime := getattr(entry, "runtime_data", None)) is None
-            or runtime.coordinator.data is None
-        ):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="no_loaded_entry",
-            )
-        thermostat_id = call.data[CONF_THERMOSTAT_ID]
-        thermostat = next(
-            (
-                item
-                for item in runtime.coordinator.data.config.thermostats
-                if item.thermostat_id == thermostat_id
-            ),
-            None,
-        )
-        if thermostat is None:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="unknown_thermostat_id",
-                translation_placeholders={"thermostat_id": str(thermostat_id)},
-            )
-        changed_at = call.data[ATTR_CHANGED_AT]
-        if changed_at.tzinfo is None:
-            changed_at = changed_at.replace(tzinfo=runtime.coordinator.local_tz)
-        changed_at = changed_at.astimezone(timezone.utc)
-        now = datetime.now(timezone.utc)
-        if changed_at > now or changed_at < now - timedelta(days=31):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="filter_change_boundary_out_of_range",
-            )
-        saved_date = thermostat.filter_changed_date
-        repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
-        if saved_date is None or saved_date != repair_date:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="filter_change_boundary_date_mismatch",
-            )
-        await async_mark_filter_changed(
-            runtime.coordinator,
-            thermostat_id,
-            changed_at,
-            dismiss_alerts=False,
-        )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_IMPORT_STATISTICS,
-        async_handle_import_service,
+        partial(_async_handle_import_service, hass),
         schema=IMPORT_SERVICE_SCHEMA,
     )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_GET_CONFIGURATION,
-        async_handle_get_configuration,
+        partial(_async_handle_get_configuration, hass),
         schema=GET_CONFIGURATION_SERVICE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
@@ -1028,14 +1045,14 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     hass.services.async_register(
         DOMAIN,
         SERVICE_REBUILD_STATISTICS,
-        async_handle_rebuild_service,
+        partial(_async_handle_rebuild_service, hass),
         schema=REBUILD_SERVICE_SCHEMA,
     )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
-        async_handle_repair_filter_change_boundary,
+        partial(_async_handle_repair_filter_change_boundary, hass),
         schema=REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA,
     )
 
@@ -1095,11 +1112,8 @@ async def async_setup_entry(
             hass,
             entry.entry_id,
             (
-                configured.device_id
-                for configured in (
-                    *coordinator.data.config.thermostats,
-                    *coordinator.data.config.sensors,
-                )
+                *(item.device_id for item in coordinator.data.config.thermostats),
+                *(item.device_id for item in coordinator.data.config.sensors),
             ),
         )
     _async_update_override_issues(hass, entry)
@@ -1111,7 +1125,7 @@ async def async_setup_entry(
         try:
             await importer.async_import_statistics(skip_sync=skip_sync)
         except BeestatAuthError as err:
-            coordinator.config_entry.async_start_reauth_if_available(hass)
+            coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
             coordinator.async_record_import_error(err)
             if not scheduled_import_unavailable_logged:
                 _LOGGER.info(
@@ -1686,18 +1700,16 @@ def _point_window(
     start_day: dt_date | None,
     end_day: dt_date | None,
 ) -> tuple[datetime, datetime]:
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     if end_day is not None:
-        end = _local_midnight(end_day + timedelta(days=1), local_tz).astimezone(
-            timezone.utc
-        )
+        end = _local_midnight(end_day + timedelta(days=1), local_tz).astimezone(UTC)
     if start_day is None:
         local_start_day = end.astimezone(local_tz).date() - timedelta(
             days=lookback_days,
         )
     else:
         local_start_day = start_day
-    start = _local_midnight(local_start_day, local_tz).astimezone(timezone.utc)
+    start = _local_midnight(local_start_day, local_tz).astimezone(UTC)
     return start, end
 
 
@@ -1720,26 +1732,28 @@ def _row_date(value: Any) -> dt_date | None:
         return None
 
 
-def _row_start_datetime(row: dict[str, Any]) -> datetime | None:
+def _row_start_datetime(row: Mapping[str, Any]) -> datetime | None:
     value = row.get("start")
     if isinstance(value, datetime):
         parsed = value
+    elif value is None:
+        return None
     else:
         try:
-            parsed = datetime.fromtimestamp(float(value), timezone.utc)
-        except (TypeError, ValueError, OSError):
+            parsed = datetime.fromtimestamp(float(value), UTC)
+        except TypeError, ValueError, OSError:
             return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _row_float(value: Any) -> float | None:
-    if value in (None, "", "unknown", "unavailable"):
+    if value is None or value in ("", "unknown", "unavailable"):
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -1781,7 +1795,7 @@ def _iter_windows(start: datetime, end: datetime) -> list[tuple[datetime, dateti
 
 
 def _format_beestat_time(value: datetime) -> str:
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
@@ -1811,7 +1825,7 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return None
 
@@ -1821,22 +1835,21 @@ def _parse_beestat_time(value: Any) -> datetime | None:
         return None
     text = str(value)
     try:
-        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc
-        )
+        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
     except ValueError:
         try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(text)
         except ValueError:
             return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str, Any]]:
     deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
+        key: tuple[Any, ...]
         if row.get("runtime_sensor_id") is not None:
             key = ("runtime_sensor_id", row["runtime_sensor_id"])
         elif row.get("runtime_thermostat_id") is not None:

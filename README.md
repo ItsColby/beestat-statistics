@@ -291,10 +291,12 @@ This repository is a HACS custom integration. The Beestat API client is intentio
 Local pure-module checks:
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
+.\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
 ```
 
 Upstream Beestat API drift check:

@@ -7,7 +7,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -189,7 +189,7 @@ def fetch_surface() -> dict[str, Any]:
             "commit_sha": commit["sha"],
             "commit_date": commit["commit"]["committer"]["date"],
             "commit_message": commit["commit"]["message"],
-            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "captured_at": datetime.now(UTC).isoformat(),
         },
         "watch_paths": list(WATCH_PATHS),
         "watched_files": watched_files,

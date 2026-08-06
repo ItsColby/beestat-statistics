@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -274,7 +275,7 @@ def _thermostat_mapping(
     return None
 
 
-def _redaction_values(data: dict[str, Any]) -> tuple[str, ...]:
+def _redaction_values(data: Mapping[str, Any]) -> tuple[str, ...]:
     values: list[str] = []
     for key in (CONF_API_KEY, CONF_API_BASE):
         value = data.get(key)

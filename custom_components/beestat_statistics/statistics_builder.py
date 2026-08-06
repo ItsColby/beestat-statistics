@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
-from typing import Any
+from datetime import UTC, date, datetime, time
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from .config_model import BeestatConfig
@@ -41,7 +41,7 @@ class StatisticsSeries:
 
         if not self.statistics:
             return None
-        return self.statistics[-1]["start"]
+        return cast(datetime, self.statistics[-1]["start"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,14 +58,14 @@ def cumulative_statistic_ids(config: BeestatConfig) -> tuple[str, ...]:
 
     statistic_ids: list[str] = []
     for thermostat in config.thermostats:
-        for runtime_slug, _runtime_label, _fields in RUNTIME_FIELD_GROUPS:
-            statistic_ids.append(
-                f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
-            )
-        for spec in SUMMARY_SUM_STATISTICS:
-            statistic_ids.append(
-                f"{STATISTIC_SOURCE}:{thermostat.slug}_{spec.statistic_suffix}"
-            )
+        statistic_ids.extend(
+            f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
+            for runtime_slug, _runtime_label, _fields in RUNTIME_FIELD_GROUPS
+        )
+        statistic_ids.extend(
+            f"{STATISTIC_SOURCE}:{thermostat.slug}_{spec.statistic_suffix}"
+            for spec in SUMMARY_SUM_STATISTICS
+        )
     return tuple(statistic_ids)
 
 
@@ -402,9 +402,9 @@ def _parse_summary_day_or_none(row: dict[str, Any]) -> date | None:
 
 
 def _parse_timestamp(value: str, local_tz: ZoneInfo) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(local_tz)
 
 
@@ -430,7 +430,7 @@ def _as_float(value: Any) -> float | None:
         return None
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -439,5 +439,5 @@ def _as_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, date, datetime, time, timedelta
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
@@ -140,6 +140,15 @@ class RawFilterBoundary:
     source_data_end: datetime
 
 
+def _typed_config_entry(coordinator: Any) -> BeestatStatisticsConfigEntry:
+    """Return the coordinator entry for both runtime and lightweight test doubles."""
+
+    entry = getattr(coordinator, "_beestat_config_entry", None)
+    if entry is None:
+        entry = coordinator.config_entry
+    return cast("BeestatStatisticsConfigEntry", entry)
+
+
 class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     """Coordinate Beestat runtime sync/read calls for sensors and imports."""
 
@@ -158,6 +167,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             config_entry=config_entry,
         )
         self._client = client
+        self._beestat_config_entry = config_entry
         self._local_tz = local_tz
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
@@ -202,6 +212,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Return the Home Assistant local time zone used for Beestat dates."""
 
         return self._local_tz
+
+    @property
+    def beestat_config_entry(self) -> BeestatStatisticsConfigEntry:
+        """Return the non-optional config entry supplied at construction."""
+
+        return self._beestat_config_entry
 
     def filter_runtime_seconds_on_date(
         self,
@@ -248,11 +264,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             if data is None:
                 return False
             config = data.config
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for thermostat in config.thermostats:
             current_override = effective_thermostat_override(
-                self.config_entry.data,
-                self.config_entry.options,
+                _typed_config_entry(self).data,
+                _typed_config_entry(self).options,
                 thermostat.thermostat_id,
             )
             changed_at = thermostat.filter_changed_at
@@ -336,7 +352,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 safe_error = UpdateFailed(self._client.redact_error(err))
             self.async_set_update_error(safe_error)
             if isinstance(err, BeestatAuthError):
-                self.config_entry.async_start_reauth_if_available(self.hass)
+                _typed_config_entry(self).async_start_reauth_if_available(self.hass)
             if safe_error is err:
                 raise
             raise safe_error from None
@@ -346,7 +362,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     async def async_dismiss_filter_alerts(self, thermostat_id: int) -> int:
         """Dismiss active Beestat filter alerts for one thermostat."""
 
-        self.last_filter_alert_dismiss_attempt_at = datetime.now(timezone.utc)
+        self.last_filter_alert_dismiss_attempt_at = datetime.now(UTC)
         self.last_filter_alert_dismiss_thermostat_id = thermostat_id
         self.last_filter_alert_dismiss_matched = 0
         self.last_filter_alert_dismissed = 0
@@ -398,7 +414,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         self.last_error = None
         self.last_error_at = None
-        self.last_import_success_at = datetime.now(timezone.utc)
+        self.last_import_success_at = datetime.now(UTC)
         self.last_imported_series = imported_series
         self.last_imported_rows = imported_rows
         self.last_import_source_rows = source_rows
@@ -443,7 +459,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 await self._client.async_sync_runtime()
                 await self._client.async_sync_resource("thermostat")
                 await self._client.async_sync_resource("sensor")
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 sync_success_at = now
                 metadata_sync_success_at = now
             thermostat_rows = await self._client.async_read_id("thermostat")
@@ -458,16 +474,16 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 self.hass,
                 thermostat_rows_tuple,
                 sensor_rows_tuple,
-                entry_runtime_config_data(self.config_entry),
+                entry_runtime_config_data(_typed_config_entry(self)),
             )
             await self._async_reconcile_pending_filter_boundaries(config)
             if summary_window:
-                today = datetime.now(timezone.utc).astimezone(self._local_tz).date()
+                today = datetime.now(UTC).astimezone(self._local_tz).date()
                 config = build_beestat_config(
                     self.hass,
                     thermostat_rows_tuple,
                     sensor_rows_tuple,
-                    entry_runtime_config_data(self.config_entry),
+                    entry_runtime_config_data(_typed_config_entry(self)),
                 )
                 summary_start = self._summary_window_start(
                     config,
@@ -524,7 +540,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Record an error message safe for Home Assistant state."""
 
         self.last_error = self._client.redact_error(err)
-        self.last_error_at = datetime.now(timezone.utc)
+        self.last_error_at = datetime.now(UTC)
         self.async_update_listeners()
 
     async def _async_reconcile_pending_filter_boundaries(
@@ -546,7 +562,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             self._async_cancel_filter_boundary_retry()
             return
 
-        self.last_filter_boundary_reconcile_attempt_at = datetime.now(timezone.utc)
+        self.last_filter_boundary_reconcile_attempt_at = datetime.now(UTC)
         pending_count = 0
         for thermostat in pending:
             changed_at = thermostat.filter_changed_at
@@ -556,10 +572,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             window_start = (
                 datetime.combine(local_date, time.min)
                 .replace(tzinfo=self._local_tz)
-                .astimezone(timezone.utc)
+                .astimezone(UTC)
             )
             window_end = min(
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
                 changed_at + timedelta(minutes=5),
             )
             try:
@@ -584,8 +600,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 pending_count += 1
                 continue
             current_override = effective_thermostat_override(
-                self.config_entry.data,
-                self.config_entry.options,
+                _typed_config_entry(self).data,
+                _typed_config_entry(self).options,
                 thermostat.thermostat_id,
             )
             current_changed_at = _parse_datetime(
@@ -602,10 +618,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 if current_changed_at is not None and current_reconciled_at is None:
                     pending_count += 1
                 continue
-            reconciled_at = datetime.now(timezone.utc)
+            reconciled_at = datetime.now(UTC)
             options = update_thermostat_override_options(
-                self.config_entry.data,
-                self.config_entry.options,
+                _typed_config_entry(self).data,
+                _typed_config_entry(self).options,
                 thermostat.thermostat_id,
                 {
                     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: (
@@ -620,7 +636,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 },
             )
             self.hass.config_entries.async_update_entry(
-                self.config_entry,
+                _typed_config_entry(self),
                 options=options,
             )
             self.last_filter_boundary_reconciled_count += 1
@@ -642,7 +658,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_window_start: date | None,
         summary_window_end: date | None,
     ) -> BeestatRuntimeData:
-        fetched_at = datetime.now(timezone.utc)
+        fetched_at = datetime.now(UTC)
         today = fetched_at.astimezone(self._local_tz).date()
         rows_tuple = tuple(row for row in rows if not row.get("deleted"))
         thermostat_rows_tuple = tuple(
@@ -653,7 +669,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             self.hass,
             thermostat_rows_tuple,
             sensor_rows_tuple,
-            entry_runtime_config_data(self.config_entry),
+            entry_runtime_config_data(_typed_config_entry(self)),
         )
         summaries: dict[int, ThermostatRuntimeSummary] = {}
         sensor_metadata = _build_sensor_metadata(sensor_rows_tuple)
@@ -851,7 +867,7 @@ def _raw_filter_boundary(
 
     if changed_at.tzinfo is None:
         raise ValueError("changed_at must be timezone-aware")
-    changed_at = changed_at.astimezone(timezone.utc)
+    changed_at = changed_at.astimezone(UTC)
     parsed_rows = [
         (timestamp, row)
         for row in rows
@@ -884,18 +900,18 @@ def _filter_boundary_fast_retry_due(
 
     if changed_at is None or changed_at.tzinfo is None or now.tzinfo is None:
         return False
-    age = now.astimezone(timezone.utc) - changed_at.astimezone(timezone.utc)
+    age = now.astimezone(UTC) - changed_at.astimezone(UTC)
     return timedelta(0) <= age <= _FILTER_BOUNDARY_FAST_RETRY_WINDOW
 
 
 def _floor_five_minutes(value: datetime) -> datetime:
-    epoch = int(value.astimezone(timezone.utc).timestamp())
-    return datetime.fromtimestamp((epoch // 300) * 300, tz=timezone.utc)
+    epoch = int(value.astimezone(UTC).timestamp())
+    return datetime.fromtimestamp((epoch // 300) * 300, tz=UTC)
 
 
 def _nearest_five_minutes(value: datetime) -> datetime:
-    epoch = int(value.astimezone(timezone.utc).timestamp())
-    return datetime.fromtimestamp(((epoch + 150) // 300) * 300, tz=timezone.utc)
+    epoch = int(value.astimezone(UTC).timestamp())
+    return datetime.fromtimestamp(((epoch + 150) // 300) * 300, tz=UTC)
 
 
 def _recent_runtime_hours_per_day(
@@ -1090,7 +1106,7 @@ def _schedule_snapshot(
         "scheduled_name": _profile_name(scheduled_profile, scheduled_ref),
         "next_ref": next_ref,
         "next_name": _profile_name(next_profile, next_ref),
-        "next_at": next_at.astimezone(timezone.utc) if next_at else None,
+        "next_at": next_at.astimezone(UTC) if next_at else None,
         "profiles": profiles,
     }
 
@@ -1283,17 +1299,15 @@ def _parse_datetime(value: Any) -> datetime | None:
     if not text:
         return None
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(
-                tzinfo=timezone.utc
-            )
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
         except ValueError:
             return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _row_int(row: dict[str, Any], *fields: str) -> int | None:
@@ -1303,7 +1317,7 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
     return None
 
@@ -1331,5 +1345,5 @@ def _optional_bool(value: Any) -> bool | None:
 def _float_or_zero(value: Any) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0

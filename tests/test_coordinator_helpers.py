@@ -6,7 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -264,7 +264,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     {
                         "id": 1,
                         "filter_changed_at": (
-                            datetime.now(timezone.utc) - timedelta(hours=7)
+                            datetime.now(UTC) - timedelta(hours=7)
                         ).isoformat(),
                     }
                 ]
@@ -277,8 +277,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                         thermostat_id=1,
                         slug="zone_a",
                         name="Zone A",
-                        filter_changed_at=datetime.now(timezone.utc)
-                        - timedelta(hours=7),
+                        filter_changed_at=datetime.now(UTC) - timedelta(hours=7),
                     ),
                 ),
                 sensors=(),
@@ -295,13 +294,13 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     thermostat_id=1,
                     slug="zone_a",
                     name="Zone A",
-                    filter_changed_at=datetime.now(timezone.utc) - timedelta(hours=1),
+                    filter_changed_at=datetime.now(UTC) - timedelta(hours=1),
                 ),
             ),
             sensors=(),
         )
         coordinator.config_entry.options["thermostats"][0]["filter_changed_at"] = (
-            datetime.now(timezone.utc) - timedelta(hours=1)
+            datetime.now(UTC) - timedelta(hours=1)
         ).isoformat()
         coordinator.async_schedule_filter_boundary_reconcile(recent_config)
 
@@ -424,7 +423,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     "schedule": schedule,
                 },
             },
-            datetime(2026, 7, 1, 13, 15, tzinfo=timezone.utc),
+            datetime(2026, 7, 1, 13, 15, tzinfo=UTC),
             ZoneInfo("America/New_York"),
         )
 
@@ -490,7 +489,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 },
             ),
             sensor_metadata,
-            datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 1, 13, 0, tzinfo=UTC),
             ZoneInfo("America/New_York"),
             (thermostat,),
         )[1]

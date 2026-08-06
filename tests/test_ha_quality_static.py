@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -134,7 +135,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn(
-            "from homeassistant.components.recorder import "
+            "from homeassistant.helpers.recorder import "
             "get_instance as get_recorder_instance",
             init_text,
         )
@@ -296,8 +297,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("TypeAlias", runtime_text)
-        self.assertIn("BeestatStatisticsConfigEntry: TypeAlias", runtime_text)
+        self.assertIn(
+            "type BeestatStatisticsConfigEntry = ConfigEntry[BeestatStatisticsRuntime]",
+            runtime_text,
+        )
         self.assertIn("entry.runtime_data = runtime", init_text)
         self.assertIn("ConfigEntryState.LOADED", init_text)
         self.assertIn("entry.async_create_background_task", init_text)
@@ -462,8 +465,22 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             workflow,
             r"astral-sh/ruff-action@[0-9a-f]{40} # v4\.1\.0",
         )
-        self.assertIn('version: "0.16.1"', workflow)
+        self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn("ruff format --check custom_components tests scripts", workflow)
+        self.assertIn("python -m pip install --upgrade mypy", workflow)
+        self.assertIn(
+            "python -m mypy --strict custom_components/beestat_statistics",
+            workflow,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade ruff mypy",
+            readme,
+        )
+        self.assertIn(
+            ".\\.venv\\Scripts\\python.exe -m mypy --strict "
+            "custom_components/beestat_statistics",
+            agents,
+        )
         self.assertIn(
             ".\\.venv\\Scripts\\ruff.exe format --check "
             "custom_components tests scripts",
@@ -480,6 +497,37 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn("pytest tests/test_config_flow_ha.py -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
+
+    def test_ruff_policy_is_repository_owned_and_high_signal(self) -> None:
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        ruff = config["tool"]["ruff"]
+        lint = ruff["lint"]
+
+        self.assertEqual("py314", ruff["target-version"])
+        self.assertNotIn("required-version", ruff)
+        self.assertEqual(20, lint["mccabe"]["max-complexity"])
+        self.assertTrue(
+            {
+                "ASYNC",
+                "C901",
+                "PERF",
+                "PLE",
+                "PLW",
+                "S314",
+                "TID",
+            }
+            <= set(lint["extend-select"])
+        )
+        self.assertEqual(["T20"], lint["per-file-ignores"]["scripts/**"])
+        self.assertEqual(
+            [
+                {
+                    "module": "beestat_statistics.sensor",
+                    "disable_error_code": ["misc"],
+                }
+            ],
+            config["tool"]["mypy"]["overrides"],
+        )
 
     def test_readme_home_assistant_commands_install_harness_before_core(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

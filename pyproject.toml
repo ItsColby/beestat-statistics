@@ -1,0 +1,65 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+extend-select = [
+  "A001",
+  "ASYNC",
+  "C901",
+  "G",
+  "ICN001",
+  "N804",
+  "N805",
+  "N806",
+  "N815",
+  "PERF",
+  "PGH",
+  "PIE",
+  "PLE",
+  "PLW",
+  "RET",
+  "RSE",
+  "S102",
+  "S103",
+  "S107",
+  "S108",
+  "S301",
+  "S306",
+  "S307",
+  "S313",
+  "S314",
+  "S315",
+  "S316",
+  "S317",
+  "S318",
+  "S319",
+  "S601",
+  "S602",
+  "S604",
+  "S608",
+  "S609",
+  "T100",
+  "T20",
+  "TID",
+]
+ignore = ["ASYNC109", "ASYNC110", "ASYNC240", "PLW0108"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["T20"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unused_configs = true
+show_error_codes = true
+
+# Entity-description lambdas bind a thermostat ID through a default argument.
+# Mypy cannot infer that extra, caller-invisible parameter, but all surrounding
+# functions and the description Callable contracts remain under strict checks.
+[[tool.mypy.overrides]]
+module = "beestat_statistics.sensor"
+disable_error_code = ["misc"]
