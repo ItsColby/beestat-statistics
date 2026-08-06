@@ -56,10 +56,3 @@ python_version = "3.14"
 strict = true
 warn_unused_configs = true
 show_error_codes = true
-
-# Entity-description lambdas bind a thermostat ID through a default argument.
-# Mypy cannot infer that extra, caller-invisible parameter, but all surrounding
-# functions and the description Callable contracts remain under strict checks.
-[[tool.mypy.overrides]]
-module = "beestat_statistics.sensor"
-disable_error_code = ["misc"]

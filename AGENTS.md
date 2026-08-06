@@ -47,15 +47,22 @@ Before integration or release, use the repo venv when available and run the
 full local tier:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy
+.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy zizmor
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
+.\.venv\Scripts\zizmor.exe --persona auditor .
 .\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
 .\.venv\Scripts\python.exe scripts\check_public_safety.py
 ```
+
+Before creating an immutable release, wait for CodeQL analysis of the exact
+candidate/default-branch commit and inspect the repository's open code-scanning
+alerts. A successful CodeQL workflow proves analysis completed, not that the
+result has no findings. Resolve or explicitly disposition candidate-introduced
+alerts before tagging.
 
 Run maintainer-specific exact-value scans only from a maintainer-controlled
 local publication gate. Never add private values to a tracked test, checker,
