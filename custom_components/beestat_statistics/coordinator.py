@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -42,6 +42,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
 _FILTER_BOUNDARY_FAST_RETRY_WINDOW = timedelta(hours=6)
+_CLOUD_DATA_STALE_AFTER = timedelta(minutes=120, seconds=30, microseconds=1)
 
 if TYPE_CHECKING:
     from .runtime import BeestatStatisticsConfigEntry
@@ -117,6 +118,7 @@ class BeestatRuntimeData:
 
     config: BeestatConfig
     fetched_at: datetime
+    projected_at: datetime
     sync_success_at: datetime | None
     metadata_sync_success_at: datetime | None
     summary_rows: tuple[dict[str, Any], ...]
@@ -196,7 +198,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_filter_boundary_pending_count: int = 0
         self.last_filter_boundary_reconcile_error: str | None = None
         self._cancel_filter_boundary_retry: Callable[[], None] | None = None
+        self._cancel_projection_boundary: Callable[[], None] | None = None
         config_entry.async_on_unload(self._async_cancel_filter_boundary_retry)
+        config_entry.async_on_unload(self._async_cancel_projection_boundary)
 
     @property
     def status(self) -> str:
@@ -323,8 +327,79 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 data.summary_rows_full,
                 data.summary_window_start,
                 data.summary_window_end,
+                fetched_at=data.fetched_at,
             )
         )
+
+    @callback
+    def async_set_updated_data(self, data: BeestatRuntimeData) -> None:
+        """Publish source data and replace its local projection deadline."""
+
+        super().async_set_updated_data(data)
+        self._async_schedule_projection_boundary(data)
+
+    @callback
+    def _async_schedule_projection_boundary(
+        self,
+        data: BeestatRuntimeData | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Schedule the earliest I/O-free cached projection boundary."""
+
+        self._async_cancel_projection_boundary()
+        if data is None:
+            data = self.data
+        if data is None:
+            return
+        evaluation_at = now or datetime.now(UTC)
+        deadline = _next_projection_deadline(data, evaluation_at, self._local_tz)
+        self._cancel_projection_boundary = async_track_point_in_utc_time(
+            self.hass,
+            self._async_handle_projection_boundary,
+            deadline,
+        )
+
+    @callback
+    def _async_cancel_projection_boundary(self) -> None:
+        """Cancel the config-entry-owned cached projection callback."""
+
+        if self._cancel_projection_boundary is None:
+            return
+        cancel = self._cancel_projection_boundary
+        self._cancel_projection_boundary = None
+        cancel()
+
+    @callback
+    def _async_handle_projection_boundary(self, _scheduled_at: datetime) -> None:
+        """Rebuild a due projection using the actual callback evaluation time."""
+
+        self._async_rebuild_projection_from_cached(datetime.now(UTC))
+
+    @callback
+    def _async_rebuild_projection_from_cached(self, now: datetime) -> None:
+        """Rebuild elapsed projections from cached rows without external I/O."""
+
+        self._cancel_projection_boundary = None
+        data = self.data
+        if data is None:
+            return
+        projected = self._build_runtime_data(
+            list(data.summary_rows),
+            list(data.thermostat_rows),
+            list(data.sensor_rows),
+            data.sync_success_at,
+            data.metadata_sync_success_at,
+            data.summary_rows_full,
+            data.summary_window_start,
+            data.summary_window_end,
+            evaluated_at=now,
+            fetched_at=data.fetched_at,
+        )
+        if _projection_changed(data, projected, self._local_tz):
+            self.data = projected
+            self.async_update_listeners()
+        self._async_schedule_projection_boundary(projected, now=now)
 
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
@@ -660,9 +735,13 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_rows_full: bool,
         summary_window_start: date | None,
         summary_window_end: date | None,
+        *,
+        evaluated_at: datetime | None = None,
+        fetched_at: datetime | None = None,
     ) -> BeestatRuntimeData:
-        fetched_at = datetime.now(UTC)
-        today = fetched_at.astimezone(self._local_tz).date()
+        projected_at = evaluated_at or datetime.now(UTC)
+        source_fetched_at = fetched_at or projected_at
+        today = projected_at.astimezone(self._local_tz).date()
         rows_tuple = tuple(row for row in rows if not row.get("deleted"))
         thermostat_rows_tuple = tuple(
             row for row in thermostat_rows if not row.get("deleted")
@@ -716,7 +795,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         return BeestatRuntimeData(
             config=config,
-            fetched_at=fetched_at,
+            fetched_at=source_fetched_at,
+            projected_at=projected_at,
             sync_success_at=sync_success_at,
             metadata_sync_success_at=metadata_sync_success_at,
             summary_rows=rows_tuple,
@@ -730,7 +810,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             thermostat_metadata=_build_thermostat_metadata(
                 thermostat_rows_tuple,
                 sensor_metadata,
-                fetched_at,
+                projected_at,
                 self._local_tz,
                 config.thermostats,
             ),
@@ -774,6 +854,48 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if changed_date := _beestat_filter_changed_date(thermostat_row):
             return changed_date, "beestat"
         return None, None
+
+
+def _projection_changed(
+    current: BeestatRuntimeData,
+    projected: BeestatRuntimeData,
+    local_tz: ZoneInfo,
+) -> bool:
+    """Return whether a cached time projection changes entity-visible state."""
+
+    return (
+        current.config != projected.config
+        or current.thermostats != projected.thermostats
+        or current.thermostat_metadata != projected.thermostat_metadata
+        or current.projected_at.astimezone(local_tz).date()
+        != projected.projected_at.astimezone(local_tz).date()
+    )
+
+
+def _next_projection_deadline(
+    data: BeestatRuntimeData,
+    now: datetime,
+    local_tz: ZoneInfo,
+) -> datetime:
+    """Return the earliest cached schedule, freshness, or local-date boundary."""
+
+    deadlines = [_next_local_midnight(now, local_tz)]
+    for metadata in data.thermostat_metadata.values():
+        if metadata.next_scheduled_at is not None and metadata.next_scheduled_at > now:
+            deadlines.append(metadata.next_scheduled_at)
+        if metadata.data_end is None:
+            continue
+        stale_at = metadata.data_end + _CLOUD_DATA_STALE_AFTER
+        if stale_at > now:
+            deadlines.append(stale_at)
+    return min(deadlines)
+
+
+def _next_local_midnight(now: datetime, local_tz: ZoneInfo) -> datetime:
+    """Return the next local calendar boundary as an absolute UTC instant."""
+
+    local_day = now.astimezone(local_tz).date() + timedelta(days=1)
+    return datetime.combine(local_day, time.min, tzinfo=local_tz).astimezone(UTC)
 
 
 def _latest_row_date(rows: list[dict[str, Any]]) -> date | None:
@@ -1099,8 +1221,6 @@ def _schedule_snapshot(
     next_ref, next_at = _next_schedule_transition(
         schedule,
         local_now,
-        day_index,
-        slot_index,
         scheduled_ref,
     )
     next_profile = profile_by_ref.get(next_ref or "")
@@ -1188,24 +1308,21 @@ def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
 def _next_schedule_transition(
     schedule: Any,
     local_now: datetime,
-    day_index: int,
-    slot_index: int,
     current_ref: str | None,
 ) -> tuple[str | None, datetime | None]:
-    slot_hour = local_now.hour
-    slot_minute = 30 if local_now.minute >= 30 else 0
-    slot_start = datetime.combine(
-        local_now.date(),
-        time(hour=slot_hour, minute=slot_minute),
-        tzinfo=local_now.tzinfo,
-    )
-    for offset in range(1, 7 * 48 + 1):
-        absolute_slot = day_index * 48 + slot_index + offset
-        candidate_day = (absolute_slot // 48) % 7
-        candidate_slot = absolute_slot % 48
-        candidate_ref = _schedule_ref(schedule, candidate_day, candidate_slot)
-        if candidate_ref is not None and candidate_ref != current_ref:
-            return candidate_ref, slot_start + timedelta(minutes=30 * offset)
+    candidate_utc = local_now.astimezone(UTC).replace(second=0, microsecond=0)
+    candidate_utc += timedelta(minutes=1)
+    for _offset in range(8 * 24 * 60):
+        candidate_local = candidate_utc.astimezone(local_now.tzinfo)
+        if candidate_local.minute in (0, 30):
+            candidate_ref = _schedule_ref(
+                schedule,
+                _ecobee_day_index(candidate_local),
+                candidate_local.hour * 2 + (candidate_local.minute // 30),
+            )
+            if candidate_ref is not None and candidate_ref != current_ref:
+                return candidate_ref, candidate_local
+        candidate_utc += timedelta(minutes=1)
     return None, None
 
 

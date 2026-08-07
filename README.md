@@ -183,11 +183,14 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - runtime summary stale problem binary sensor
 - cloud data stale problem binary sensor
 
-Current/scheduled/next comfort profiles, filter due date and days remaining,
-alerts, and filter-maintenance controls form the primary thermostat surface.
-Freshness dates/lags, active-sensor count, raw filter-runtime detail, and
-intermediate runtime/max-age forecast dates are categorized as diagnostic.
-Advanced account-wide import counters remain disabled by default.
+Scheduled/next comfort profiles, filter due date and days remaining, alerts,
+and filter-maintenance controls form the primary thermostat surface. Beestat's
+current comfort profile is delayed cloud diagnostic context: it mirrors the
+cached `program.currentClimateRef` and is not a replacement for Home
+Assistant's local thermostat mode or active hold. Freshness dates/lags,
+active-sensor count, raw filter-runtime detail, and intermediate
+runtime/max-age forecast dates are also categorized as diagnostic. Advanced
+account-wide import counters remain disabled by default.
 
 Room-level binary sensors expose whether Beestat reports each mapped Ecobee sensor as active in the current comfort profile. When a local HomeKit/Ecobee room sensor match exists, these entities attach to that local room-sensor device.
 
@@ -215,6 +218,16 @@ When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat e
 ## Data Updates
 
 On setup and each import interval, the integration asks Beestat to sync runtime, thermostat, and sensor metadata before reading summary data. The default import interval is 6 hours. Native Beestat entities are coordinator-backed and update from that shared runtime readback rather than polling each entity independently. Routine imports refresh native status with a bounded summary window covering recent runtime and the effective filter-change date; full summary baselines are reserved for first import, missing Recorder seeds, rebuilds, and fallback repair paths.
+
+The six-hour interval owns cloud acquisition only. Between cloud reads, one
+config-entry-owned local scheduler reevaluates the cached comfort schedule,
+cloud-stale threshold, runtime-summary local date, and filter due-date/day
+projections at the earliest relevant boundary. Those callbacks perform no
+Beestat I/O, reschedule after refresh and after each boundary, and notify
+entities only when projected state changes. Schedule boundaries and local
+midnight follow the configured/thermostat timezone across daylight-saving time.
+The separate 15-minute filter-boundary retry can read Beestat and persist a
+result, so it is not part of this local projection scheduler.
 
 The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
 
@@ -291,6 +304,11 @@ This integration is designed for Ecobee thermostats and Ecobee room sensors that
 Beestat's public API is useful but not versioned as a stable Home Assistant integration contract. This integration keeps calls narrow and exposes failures through diagnostic state instead of silently masking them.
 
 Beestat is a cloud/history source. HomeKit/Ecobee entities should remain the primary source for live local temperature, occupancy, HVAC mode, setpoints, and control. Beestat alert entities mirror Beestat/Ecobee alert metadata and may include maintenance reminders rather than active equipment faults.
+
+The scheduled comfort profile and next transition are reevaluated locally from
+the last cached Beestat schedule. The current comfort profile remains delayed
+cloud diagnostic context because an active hold cannot be reconstructed safely
+from the schedule alone.
 
 Removing the integration stops future imports and removes the integration's native entities, but Recorder external statistics already imported under source `beestat` may remain in Home Assistant's statistics database.
 

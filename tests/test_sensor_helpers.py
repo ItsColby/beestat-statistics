@@ -276,7 +276,6 @@ class SensorHelpersTest(unittest.TestCase):
         }
 
         for key in (
-            "current_comfort_profile",
             "scheduled_comfort_profile",
             "next_scheduled_comfort_profile_time",
             "filter_due_date",
@@ -284,6 +283,7 @@ class SensorHelpersTest(unittest.TestCase):
         ):
             self.assertIsNone(descriptions[key].entity_category, key)
         for key in (
+            "current_comfort_profile",
             "runtime_summary_latest_date",
             "runtime_summary_lag_days",
             "active_sensor_count",
@@ -381,6 +381,7 @@ class SensorHelpersTest(unittest.TestCase):
         entity.EntityCategory = types.SimpleNamespace(DIAGNOSTIC="diagnostic")
         entity_platform.AddConfigEntryEntitiesCallback = object
         event.async_call_later = lambda *_args, **_kwargs: lambda: None
+        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
         update_coordinator.CoordinatorEntity = _FakeCoordinatorEntity

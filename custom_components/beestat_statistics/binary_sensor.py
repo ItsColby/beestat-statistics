@@ -506,7 +506,7 @@ class BeestatFilterDueProblemBinarySensor(
         )
         if thermostat is None:
             return None
-        today = data.fetched_at.astimezone(self.coordinator.local_tz).date()
+        today = data.projected_at.astimezone(self.coordinator.local_tz).date()
         return build_filter_forecast(
             thermostat,
             data.thermostats.get(self._thermostat.thermostat_id),

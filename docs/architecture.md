@@ -84,6 +84,15 @@
   need `docs/beestat-api-surface.json`,
   `scripts/check_beestat_api_surface.py`, README, diagnostics, and test
   coverage updates.
+- Keep acquisition, observation, local projection, and effect deadlines as
+  separate time domains. The configured import interval owns Beestat cloud I/O
+  and remains six hours by default. One config-entry-owned local scheduler
+  reevaluates cached comfort schedules, the cloud-stale threshold, and local
+  date-dependent runtime/filter projections at their earliest boundary without
+  I/O. It reschedules after source refresh and every boundary, publishes only
+  actual projection changes, and cancels on unload. The filter-boundary retry
+  remains a separate effect timer because its callback reads raw Beestat
+  runtime and can persist reconciliation state.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button first persists the local date and exact UTC click timestamp, because
@@ -155,8 +164,11 @@
   current state but excluded from Recorder history.
 - Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
   as the primary thermostat surface. Categorize freshness dates/lags, active
-  sensor count, filter runtime details, and intermediate forecast dates as
-  diagnostic; keep advanced global import counters disabled by default.
+  sensor count, filter runtime details, intermediate forecast dates, and
+  Beestat's delayed `program.currentClimateRef` current-comfort-profile context
+  as diagnostic; keep advanced global import counters disabled by default.
+  Scheduled profile and next transition are local projections of the cached
+  Beestat schedule and do not claim the thermostat's live hold/mode state.
 - Keep partial-import and active-alert evidence bounded in ordinary entity
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in
