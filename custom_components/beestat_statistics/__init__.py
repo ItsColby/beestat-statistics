@@ -140,6 +140,7 @@ from .statistics_builder import (
     build_statistics,
     cumulative_statistic_ids,
 )
+from .task_coalescer import CoalescingTaskScheduler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1148,15 +1149,20 @@ async def async_setup_entry(
                 _LOGGER.info("Beestat statistics import is available again")
                 scheduled_import_unavailable_logged = False
 
+    import_scheduler = CoalescingTaskScheduler(
+        async_run_scheduled_import,
+        lambda coroutine: entry.async_create_background_task(
+            hass,
+            coroutine,
+            f"{DOMAIN}_scheduled_import",
+        ),
+    )
+
     @callback
     def async_schedule_import(_event_or_time: Any) -> None:
-        """Schedule an import from a Home Assistant event-loop callback."""
+        """Schedule one bounded import pass from an event-loop callback."""
 
-        entry.async_create_background_task(
-            hass,
-            async_run_scheduled_import(),
-            f"{DOMAIN}_scheduled_import",
-        )
+        import_scheduler.schedule()
 
     filter_changed_entity_ids = _filter_changed_entity_ids(coordinator.data)
     if filter_changed_entity_ids:

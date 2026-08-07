@@ -211,6 +211,29 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         ):
             await client.async_read_id("thermostat")
 
+    async def test_response_size_limit_is_not_retried(self) -> None:
+        session = _FakeSession([{"data": [{"value": "x" * 64}]}])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=3,
+            max_response_bytes=32,
+        )
+        sleep = AsyncMock()
+
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaisesRegex(
+                self.api.BeestatApiError,
+                "response exceeded the size limit",
+            ),
+        ):
+            await client.async_read_id("thermostat")
+
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
     async def test_streamed_body_limit_does_not_require_content_length(self) -> None:
         session = _FakeSession(
             [

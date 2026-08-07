@@ -24,6 +24,10 @@ class BeestatAuthError(BeestatApiError):
     """Raised when Beestat rejects the configured API key."""
 
 
+class _BeestatResponseTooLargeError(BeestatApiError):
+    """Raised when retrying cannot make the current response safe to retain."""
+
+
 def exception_fingerprint(err: BaseException) -> str:
     """Return a bounded private-safe location for an unexpected exception."""
 
@@ -247,6 +251,10 @@ class BeestatClient:
                 return data
             except BeestatAuthError:
                 raise
+            except _BeestatResponseTooLargeError as err:
+                raise BeestatApiError(
+                    f"Failed Beestat call {resource}.{method}: {self.redact_error(err)}"
+                ) from None
             except (
                 TimeoutError,
                 aiohttp.ClientError,
@@ -272,14 +280,18 @@ class BeestatClient:
 
         content_length = response.content_length
         if content_length is not None and content_length > self._max_response_bytes:
-            raise BeestatApiError("Beestat response exceeded the size limit")
+            raise _BeestatResponseTooLargeError(
+                "Beestat response exceeded the size limit"
+            )
 
         chunks: list[bytes] = []
         size = 0
         async for chunk in response.content.iter_chunked(_RESPONSE_CHUNK_BYTES):
             size += len(chunk)
             if size > self._max_response_bytes:
-                raise BeestatApiError("Beestat response exceeded the size limit")
+                raise _BeestatResponseTooLargeError(
+                    "Beestat response exceeded the size limit"
+                )
             chunks.append(chunk)
         return json.loads(b"".join(chunks))
 
