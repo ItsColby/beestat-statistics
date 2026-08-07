@@ -600,6 +600,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self,
     ) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
         local_commands = (
             "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
             "python -m pip install --upgrade -r requirements-ha-test.txt\n"
@@ -620,7 +622,21 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn(
             "formal dependency-coherent lane remains at Core `2026.8.0`", readme
         )
-        self.assertIn("maintained instance runs Core `2026.8.1`", readme)
+        self.assertIn(
+            "When a maintained runtime advances beyond the harness-supported Core",
+            readme,
+        )
+        self.assertIn("private release owner", readme)
+        for owner_name, owner_text in (
+            ("README", readme),
+            ("AGENTS", agents),
+            ("architecture", architecture),
+        ):
+            with self.subTest(owner=owner_name):
+                self.assertNotRegex(
+                    owner_text,
+                    r"maintained (?:instance|installation) runs Core",
+                )
         self.assertIn("installed-Core audit and release gate remain blocked", readme)
         self.assertIn("partial evidence", readme)
         self.assertIn("Advance the HACS and blueprint minima", readme)

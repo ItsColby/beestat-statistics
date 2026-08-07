@@ -13,12 +13,13 @@
   `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
   Assistant baseline, currently Core `2026.8.0`, which matches published test
-  harness `0.13.354`. The maintained installation runs Core `2026.8.1`, but the
-  formal lane remains dependency-coherent at `2026.8.0` until a compatible
-  harness is published. Direct exact-installed-Core validation is partial
-  evidence only and cannot substitute for the formal lane or clear the
-  installed-Core/public-release gate. Advance the HACS and blueprint minima,
-  Core requirement, harness, CI label, documentation, and assertions together.
+  harness `0.13.354`. If a maintained runtime advances beyond that pair, keep
+  the formal lane dependency-coherent until a compatible harness is published.
+  Direct newer-Core validation is partial evidence only and cannot substitute
+  for the formal lane or clear the installed-Core/public-release gate. Keep the
+  exact runtime target and partial evidence in the private release owner.
+  Advance the HACS and blueprint minima, Core requirement, harness, CI label,
+  documentation, and assertions together.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, `.ruff_cache/`, `.agents/`, and
   `.codex/` as local working state unless a future task explicitly turns one
   into a tracked repo feature. Do not commit Home Assistant config backups, API

@@ -102,13 +102,14 @@ python -m pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 Keep the harness and exact Core installation as separate steps. The harness
 owns its compatible pytest dependency and `requirements-ha-test.txt` pins Core
 only. After the final dependency installation, run a literal `python -m pip
-check` and treat every conflict as a failure. The maintained instance runs Core
-`2026.8.1`, but harness `0.13.354` still pins Core `2026.8.0`. Keep the formal
-lane dependency-coherent at `2026.8.0`; bounded direct `2026.8.1` validation is
-partial evidence only and does not clear the installed-Core or public-release
-gate. Advance the HACS minimum, blueprint minimum, Core requirement, harness,
-CI label, documentation, and assertions together only after a compatible
-harness is published.
+check` and treat every conflict as a failure. If a maintained runtime advances
+beyond the harness-supported Core, keep the formal lane dependency-coherent at
+the published Core/harness pair. Bounded direct validation against the newer
+Core is partial evidence only and does not clear the installed-Core or
+public-release gate. Keep the exact runtime target and partial evidence in the
+private release owner. Advance the HACS minimum, blueprint minimum, Core
+requirement, harness, CI label, documentation, and assertions together only
+after a compatible harness is published.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run this lane in Docker or defer it to the GitHub workflow. If local
