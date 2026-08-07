@@ -128,7 +128,7 @@ async def _async_apply_filter_change(
         try:
             await coordinator.async_refresh_runtime(skip_sync=True)
         except Exception:
-            if rollback_on_refresh_error:
+            if rollback_on_refresh_error and entry.options == new_options:
                 coordinator.hass.config_entries.async_update_entry(
                     entry,
                     options=old_options,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import traceback
 import types
@@ -194,6 +195,45 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(secret, str(raised.exception))
 
+    async def test_response_body_is_rejected_at_configured_size_limit(self) -> None:
+        session = _FakeSession([{"data": [{"value": "x" * 64}]}])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+            max_response_bytes=32,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            "response exceeded the size limit",
+        ):
+            await client.async_read_id("thermostat")
+
+    async def test_streamed_body_limit_does_not_require_content_length(self) -> None:
+        session = _FakeSession(
+            [
+                _FakeResponse(
+                    {"data": [{"value": "x" * 64}]},
+                    include_content_length=False,
+                )
+            ]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+            max_response_bytes=32,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            "response exceeded the size limit",
+        ):
+            await client.async_read_id("thermostat")
+
     def test_read_boolean_response_is_not_silently_empty(self) -> None:
         with self.assertRaisesRegex(
             self.api.BeestatApiError,
@@ -231,11 +271,15 @@ class _FakeResponse:
         status: int = 200,
         text: str | None = None,
         json_error: Exception | None = None,
+        include_content_length: bool = True,
     ) -> None:
         self.status = status
         self._payload = payload
         self._text = text
         self._json_error = json_error
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        self.content = _FakeContent(body, json_error)
+        self.content_length = len(body) if include_content_length else None
 
     async def __aenter__(self):
         return self
@@ -250,6 +294,18 @@ class _FakeResponse:
 
     async def text(self) -> str:
         return self._text if self._text is not None else str(self._payload)
+
+
+class _FakeContent:
+    def __init__(self, body: bytes, read_error: Exception | None = None) -> None:
+        self._body = body
+        self._read_error = read_error
+
+    async def iter_chunked(self, size: int):
+        if self._read_error is not None:
+            raise self._read_error
+        for offset in range(0, len(self._body), size):
+            yield self._body[offset : offset + size]
 
 
 class _FakeSession:

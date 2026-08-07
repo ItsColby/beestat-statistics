@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -256,6 +257,34 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.config_entry.options, {})
         self.assertEqual(coordinator.dismissed_thermostat_ids, [])
 
+    async def test_failed_refresh_does_not_overwrite_newer_options(self) -> None:
+        def update_options(coordinator: _FakeCoordinator) -> None:
+            coordinator.config_entry.options = {
+                **coordinator.config_entry.options,
+                "concurrent_option": "preserved",
+            }
+
+        coordinator = _FakeCoordinator(
+            refresh_error=RuntimeError("refresh failed"),
+            during_refresh=update_options,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "refresh failed"):
+            await self.entry_options.async_set_filter_changed_date(
+                coordinator,
+                1001,
+                date(2026, 7, 5),
+            )
+
+        self.assertEqual(
+            "preserved",
+            coordinator.config_entry.options["concurrent_option"],
+        )
+        self.assertEqual(
+            "2026-07-05",
+            coordinator.config_entry.options["thermostats"][0]["filter_changed_date"],
+        )
+
 
 class _FakeCoordinator:
     def __init__(
@@ -265,6 +294,7 @@ class _FakeCoordinator:
         dismiss_error: Exception | None = None,
         refresh_error: Exception | None = None,
         rebuild_error: Exception | None = None,
+        during_refresh: Callable[[_FakeCoordinator], None] | None = None,
     ) -> None:
         self.config_entry = types.SimpleNamespace(data={}, options={})
         self.hass = types.SimpleNamespace(
@@ -276,6 +306,7 @@ class _FakeCoordinator:
         self.refresh_skip_sync_values: list[bool] = []
         self.refresh_error = refresh_error
         self.rebuild_error = rebuild_error
+        self.during_refresh = during_refresh
         self.rebuild_count = 0
         self.scheduled_reconcile_count = 0
         self.local_tz = ZoneInfo("America/New_York")
@@ -296,6 +327,8 @@ class _FakeCoordinator:
         summary_window: bool = False,
     ) -> None:
         self.refresh_skip_sync_values.append(skip_sync)
+        if self.during_refresh is not None:
+            self.during_refresh(self)
         if self.refresh_error is not None:
             raise self.refresh_error
 
