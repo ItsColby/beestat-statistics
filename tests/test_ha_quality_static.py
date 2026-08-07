@@ -434,11 +434,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
         )
-        required_pins = {"homeassistant==2026.8.1"}
+        required_pins = {"homeassistant==2026.8.0"}
 
-        self.assertEqual(hacs["homeassistant"], "2026.8.1")
+        self.assertEqual(hacs["homeassistant"], "2026.8.0")
         self.assertIn("asyncio_mode = auto", pytest_ini)
         self.assertIn('python-version: "3.14"', workflow)
+        self.assertIn(
+            "name: Home Assistant integration tests (Core 2026.8.0)", workflow
+        )
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
         self.assertNotIn("pytest==", requirements)
@@ -614,8 +617,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertIn(local_commands, readme)
         self.assertIn(docker_commands, readme)
-        self.assertIn("release gate remains blocked", readme)
+        self.assertIn(
+            "formal dependency-coherent lane remains at Core `2026.8.0`", readme
+        )
+        self.assertIn("maintained instance runs Core `2026.8.1`", readme)
+        self.assertIn("installed-Core audit and release gate remain blocked", readme)
         self.assertIn("partial evidence", readme)
+        self.assertIn("Advance the HACS and blueprint minima", readme)
         self.assertNotIn("check_ha_test_dependencies.py", readme)
         self.assertNotIn("requirements-ha-test-current.txt", readme)
 
@@ -965,7 +973,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("domain: automation", blueprint)
-        self.assertIn("min_version: 2026.8.1", blueprint)
+        self.assertIn("min_version: 2026.8.0", blueprint)
         self.assertIn("trigger: numeric_state", blueprint)
         self.assertIn("selector:\n        action: {}", blueprint)
         self.assertNotIn("trigger: template", blueprint)
@@ -1133,7 +1141,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         expected_requirements = {
             "requirements-ha-test.txt": [
-                "homeassistant==2026.8.1",
+                "homeassistant==2026.8.0",
             ],
         }
         for relative_path, expected_lines in expected_requirements.items():

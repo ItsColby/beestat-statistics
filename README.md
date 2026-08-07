@@ -324,7 +324,7 @@ Removing the integration stops future imports and removes the integration's nati
 
 ## Development Validation
 
-Home Assistant `2026.8.1` requires Python `3.14.2` or newer. The GitHub validation workflow uses Python `3.14`; use the same major version for any local Home Assistant test harness work.
+Home Assistant `2026.8.0` requires Python `3.14.2` or newer. The GitHub validation workflow uses Python `3.14`; use the same major version for any local Home Assistant test harness work.
 
 This repository is a HACS custom integration. The Beestat API client is intentionally in-tree and uses Home Assistant's shared aiohttp websession. If this integration is ever prepared for Home Assistant Core inclusion, split the Beestat client into an async, tagged, open-source PyPI package before submission.
 
@@ -357,7 +357,7 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. CI targets the supported stable Core release pinned in `requirements-ha-test.txt`, aligned with the maintained Home Assistant 2026.8 runtime. The harness owns its compatible pytest dependency and the requirements file pins Core only. After the final dependency installation, the lane runs a literal `python -m pip check` and treats every conflict as a failure. Published harness `0.13.354` currently pins Core `2026.8.0`, so the exact Core `2026.8.1` lane is blocked and the release gate remains blocked until a compatible harness is published. A bounded direct exact-Core run is partial evidence only; it does not prove dependency closure or clear the installed-Core or public-release gate. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. The formal dependency-coherent lane remains at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. The maintained instance runs Core `2026.8.1`; bounded direct validation against that exact Core is partial evidence only and does not prove hosted dependency closure. The installed-Core audit and release gate remain blocked until a compatible harness is published. Advance the HACS and blueprint minima, Core requirement, harness, CI label, documentation, and assertions together at that point. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354

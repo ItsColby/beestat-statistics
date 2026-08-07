@@ -87,10 +87,10 @@ Validate JSON metadata after edits to JSON files:
 .\.venv\Scripts\python.exe -c "import json, pathlib; [json.loads(pathlib.Path(path).read_text(encoding='utf-8')) for path in ['custom_components/beestat_statistics/manifest.json','custom_components/beestat_statistics/translations/en.json','custom_components/beestat_statistics/icons.json','hacs.json','docs/beestat-api-surface.json']]"
 ```
 
-Home Assistant runtime test requirements are owned by one explicit lane:
-`requirements-ha-test.txt` proves the supported stable Core release used by the
-maintainer. Keep the Core and harness pins exact; do not test a beta as a
-release gate.
+Home Assistant runtime test requirements are owned by one formal,
+dependency-coherent lane. `requirements-ha-test.txt` pins the supported stable
+Core release matched by the published harness, currently Core `2026.8.0` with
+harness `0.13.354`. Do not test a beta as a release gate.
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
@@ -102,11 +102,13 @@ python -m pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 Keep the harness and exact Core installation as separate steps. The harness
 owns its compatible pytest dependency and `requirements-ha-test.txt` pins Core
 only. After the final dependency installation, run a literal `python -m pip
-check` and treat every conflict as a failure. Harness `0.13.354` currently pins
-Core `2026.8.0`, so the exact Core `2026.8.1` lane and release gate remain
-blocked until a compatible harness is published. A bounded direct exact-Core
-test run is partial evidence only; it does not replace the dependency-closed
-lane or clear the installed-Core or public-release gate.
+check` and treat every conflict as a failure. The maintained instance runs Core
+`2026.8.1`, but harness `0.13.354` still pins Core `2026.8.0`. Keep the formal
+lane dependency-coherent at `2026.8.0`; bounded direct `2026.8.1` validation is
+partial evidence only and does not clear the installed-Core or public-release
+gate. Advance the HACS minimum, blueprint minimum, Core requirement, harness,
+CI label, documentation, and assertions together only after a compatible
+harness is published.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run this lane in Docker or defer it to the GitHub workflow. If local
