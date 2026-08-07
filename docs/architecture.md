@@ -68,6 +68,11 @@
   preserves entity assignments. Fallback devices remain Beestat-owned and do
   not use the deprecated `via_device` identifier contract. This is required for
   Home Assistant Core 2026.8's one-config-entry-per-device model.
+- Entity- and device-registry lifecycle listeners rebuild only the cached runtime
+  mapping and rebind existing Beestat enrichment entities when a foreign source
+  moves, detaches, is removed, or is restored. Reconciliation must not recreate
+  the config entry or contact Beestat, may update only entities owned by the
+  current Beestat config entry, and removes both listeners on unload.
 - Automated stale-fallback removal is limited to devices owned only by the
   current Beestat config entry, carrying only Beestat identifiers and no foreign
   connections. A mixed or shared registry record must fail closed.
@@ -148,6 +153,10 @@
   public fixtures, or public documentation examples.
 - Keep filter-date source, helper, and click-boundary attributes available in
   current state but excluded from Recorder history.
+- Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
+  as the primary thermostat surface. Categorize freshness dates/lags, active
+  sensor count, filter runtime details, and intermediate forecast dates as
+  diagnostic; keep advanced global import counters disabled by default.
 - Keep partial-import and active-alert evidence bounded in ordinary entity
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in
@@ -160,6 +169,10 @@
 - Refresh enabled override mapping Repairs when a referenced entity-registry
   record is removed, renamed, or restored, and remove the listener on unload.
   Do not silently rewrite the explicit YAML/options mapping owner.
+- Preserve the supported helper-device association across foreign source move,
+  detach, removal, and restoration without config-entry recreation. Registry
+  reconciliation must prove config-entry ownership before each helper update
+  and remove its listeners on unload.
 - Clear the YAML connection-change Repair after a validated same-account import
   or after the YAML block is removed. Never apply a YAML credential replacement
   when the saved and candidate account fingerprints cannot prove continuity.

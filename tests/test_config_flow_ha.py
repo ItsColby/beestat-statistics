@@ -44,6 +44,7 @@ except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
 from custom_components.beestat_statistics import (
     CONFIG_SCHEMA,
     _async_track_override_issue_updates,
+    _async_track_source_device_relinks,
     _async_update_override_issues,
     async_migrate_entry,
     async_setup,
@@ -54,6 +55,7 @@ from custom_components.beestat_statistics.api import (
 )
 from custom_components.beestat_statistics.button import BeestatFilterChangedButton
 from custom_components.beestat_statistics.config_model import (
+    BeestatConfig,
     ConfiguredSensor,
     ConfiguredThermostat,
 )
@@ -81,6 +83,7 @@ from custom_components.beestat_statistics.const import (
     DOMAIN,
     SERVICE_GET_CONFIGURATION,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+    thermostat_entity_unique_id,
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entity import (
@@ -158,6 +161,119 @@ async def test_mapped_entities_link_without_shared_device_ownership(
         assert set(current_device.config_entries) == {source_entry.entry_id}
     assert current_entity is not None
     assert current_entity.device_id == source_device.id
+
+
+async def test_mapped_entities_relink_across_source_registry_lifecycle(
+    hass: HomeAssistant,
+) -> None:
+    """Test existing helpers follow source moves without config-entry recreation."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    helper_entry = _add_mock_entry(hass)
+    helper_entry_id = helper_entry.entry_id
+    device_registry = dr.async_get(hass)
+    source_device_a = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-a")},
+    )
+    source_device_b = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-b")},
+    )
+    entity_registry = er.async_get(hass)
+    source_entity = entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate",
+        config_entry=source_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="zone_a",
+    )
+    helper_entity = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        thermostat_entity_unique_id(1001, "current_comfort_profile"),
+        config_entry=helper_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="zone_a_current_comfort_profile",
+    )
+
+    class CachedMappingCoordinator:
+        def __init__(self) -> None:
+            self.data: Any = None
+            self.async_rebuild_runtime_from_cached_rows()
+
+        def async_rebuild_runtime_from_cached_rows(self) -> None:
+            current_source = entity_registry.async_get(source_entity.entity_id)
+            self.data = types.SimpleNamespace(
+                config=BeestatConfig(
+                    thermostats=(
+                        ConfiguredThermostat(
+                            thermostat_id=1001,
+                            slug="zone_a",
+                            name="Zone A",
+                            climate_entity_id=source_entity.entity_id,
+                            device_id=(
+                                current_source.device_id
+                                if current_source is not None
+                                else None
+                            ),
+                        ),
+                    ),
+                    sensors=(),
+                )
+            )
+
+    coordinator = CachedMappingCoordinator()
+    helper_entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    removers = _async_track_source_device_relinks(hass, helper_entry)
+
+    entity_registry.async_update_entity(
+        source_entity.entity_id,
+        device_id=source_device_b.id,
+    )
+    await hass.async_block_till_done()
+    assert (
+        entity_registry.async_get(helper_entity.entity_id).device_id
+        == source_device_b.id
+    )
+
+    entity_registry.async_update_entity(source_entity.entity_id, device_id=None)
+    await hass.async_block_till_done()
+    assert entity_registry.async_get(helper_entity.entity_id).device_id is None
+
+    entity_registry.async_remove(source_entity.entity_id)
+    await hass.async_block_till_done()
+    assert entity_registry.async_get(helper_entity.entity_id).device_id is None
+
+    restored_source = entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate-restored",
+        config_entry=source_entry,
+        device_id=source_device_b.id,
+        suggested_object_id="zone_a",
+    )
+    await hass.async_block_till_done()
+    assert restored_source.entity_id == source_entity.entity_id
+    assert (
+        entity_registry.async_get(helper_entity.entity_id).device_id
+        == source_device_b.id
+    )
+    assert helper_entry.entry_id == helper_entry_id
+
+    for remove_listener in removers:
+        remove_listener()
+    entity_registry.async_update_entity(
+        restored_source.entity_id,
+        device_id=source_device_a.id,
+    )
+    await hass.async_block_till_done()
+    assert (
+        entity_registry.async_get(helper_entity.entity_id).device_id
+        == source_device_b.id
+    )
 
 
 async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(

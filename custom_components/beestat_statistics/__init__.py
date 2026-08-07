@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
@@ -55,6 +55,7 @@ from .api import (
     exception_fingerprint,
 )
 from .config_model import (
+    ConfiguredSensor,
     ConfiguredThermostat,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
@@ -1107,6 +1108,7 @@ async def async_setup_entry(
     _migrate_legacy_unique_ids(hass, entry, coordinator.data)
     _async_enable_default_problem_entities(hass, entry, coordinator.data)
     _async_migrate_homekit_device_assignments(hass, entry, coordinator.data)
+    _async_track_source_device_relinks(hass, entry)
     if coordinator.data is not None:
         async_remove_cross_integration_device_ownership(
             hass,
@@ -1383,8 +1385,12 @@ def _async_migrate_homekit_device_assignments(
         entity_registry,
         entry.entry_id,
     ):
-        target_device_id = target_device_ids.get(entity_entry.unique_id)
-        if target_device_id is None or entity_entry.device_id == target_device_id:
+        if entity_entry.config_entry_id != entry.entry_id:
+            continue
+        if entity_entry.unique_id not in target_device_ids:
+            continue
+        target_device_id = target_device_ids[entity_entry.unique_id]
+        if entity_entry.device_id == target_device_id:
             continue
         entity_registry.async_update_entity(
             entity_entry.entity_id,
@@ -1416,14 +1422,12 @@ def _async_migrate_homekit_device_assignments(
 
 def _mapped_unique_id_device_ids(
     data: BeestatRuntimeData,
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     """Return Beestat unique IDs that should attach to HomeKit devices."""
 
-    mappings: dict[str, str] = {}
+    mappings: dict[str, str | None] = {}
     for thermostat in data.config.thermostats:
         device_id = thermostat.device_id
-        if device_id is None:
-            continue
         for suffix in _THERMOSTAT_ENTITY_SUFFIXES:
             mappings[thermostat_entity_unique_id(thermostat.thermostat_id, suffix)] = (
                 device_id
@@ -1443,10 +1447,105 @@ def _mapped_unique_id_device_ids(
 
     for sensor in data.config.sensors:
         device_id = sensor.device_id
-        if device_id is None:
-            continue
         mappings[sensor_entity_unique_id(sensor.sensor_id, "sensor_in_use")] = device_id
     return mappings
+
+
+def _mapped_source_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
+    """Return source registry entities whose association drives helper linking."""
+
+    if data is None:
+        return set()
+    entity_ids: set[str] = set()
+    for thermostat in data.config.thermostats:
+        entity_ids.update(_configured_source_entity_ids(thermostat))
+    for sensor in data.config.sensors:
+        entity_ids.update(_configured_source_entity_ids(sensor))
+    return entity_ids
+
+
+def _configured_source_entity_ids(
+    item: ConfiguredThermostat | ConfiguredSensor,
+) -> set[str]:
+    """Return explicitly or automatically selected source entities."""
+
+    references = [
+        item.temperature_entity_id,
+        item.occupancy_entity_id,
+        item.motion_entity_id,
+    ]
+    if isinstance(item, ConfiguredThermostat):
+        references.append(item.climate_entity_id)
+    return {reference for reference in references if reference is not None}
+
+
+def _mapped_source_device_ids(data: BeestatRuntimeData | None) -> set[str]:
+    """Return current source device IDs that drive helper linking."""
+
+    if data is None:
+        return set()
+    return {
+        device_id
+        for device_id in (
+            *(item.device_id for item in data.config.thermostats),
+            *(item.device_id for item in data.config.sensors),
+        )
+        if device_id is not None
+    }
+
+
+@callback
+def _async_track_source_device_relinks(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> tuple[Callable[[], None], ...]:
+    """Rebind existing helpers when a mapped foreign source association changes."""
+
+    coordinator = entry.runtime_data.coordinator
+    watched_entity_ids = _mapped_source_entity_ids(coordinator.data)
+    watched_device_ids = _mapped_source_device_ids(coordinator.data)
+    if not watched_entity_ids and not watched_device_ids:
+        return ()
+
+    @callback
+    def reconcile_assignments() -> None:
+        coordinator.async_rebuild_runtime_from_cached_rows()
+        data = coordinator.data
+        watched_entity_ids.update(_mapped_source_entity_ids(data))
+        watched_device_ids.update(_mapped_source_device_ids(data))
+        _async_migrate_homekit_device_assignments(hass, entry, data)
+
+    @callback
+    def handle_entity_registry_update(event: Event[Any]) -> None:
+        changed_entity_ids = {
+            str(value)
+            for key in ("entity_id", "old_entity_id")
+            if (value := event.data.get(key)) is not None
+        }
+        if watched_entity_ids.isdisjoint(changed_entity_ids):
+            return
+        reconcile_assignments()
+
+    @callback
+    def handle_device_registry_update(event: Event[Any]) -> None:
+        device_id = event.data.get("device_id")
+        if device_id is None or str(device_id) not in watched_device_ids:
+            return
+        reconcile_assignments()
+
+    removers = (
+        hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            handle_entity_registry_update,
+        ),
+        hass.bus.async_listen(
+            dr.EVENT_DEVICE_REGISTRY_UPDATED,
+            handle_device_registry_update,
+        ),
+    )
+    for remove_listener in removers:
+        entry.async_on_unload(remove_listener)
+    return removers
 
 
 def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:

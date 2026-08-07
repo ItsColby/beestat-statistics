@@ -183,11 +183,17 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - runtime summary stale problem binary sensor
 - cloud data stale problem binary sensor
 
+Current/scheduled/next comfort profiles, filter due date and days remaining,
+alerts, and filter-maintenance controls form the primary thermostat surface.
+Freshness dates/lags, active-sensor count, raw filter-runtime detail, and
+intermediate runtime/max-age forecast dates are categorized as diagnostic.
+Advanced account-wide import counters remain disabled by default.
+
 Room-level binary sensors expose whether Beestat reports each mapped Ecobee sensor as active in the current comfort profile. When a local HomeKit/Ecobee room sensor match exists, these entities attach to that local room-sensor device.
 
 Per-thermostat alert binary sensors expose whether Beestat/Ecobee reports any active thermostat alert. Equipment-looking or unknown alerts are also surfaced through a separate problem binary sensor, so routine maintenance reminders do not make the thermostat device look failed.
 
-The integration creates a Home Assistant service device for Beestat. Thermostat and room-sensor enrichment entities link to existing HomeKit/Ecobee devices when possible without adding Beestat as an owner of those devices or rewriting their name, manufacturer, model, or configuration link; otherwise, Beestat fallback devices are created. Setup also removes legacy cross-integration device ownership while preserving each enrichment entity's device assignment. This follows Home Assistant's helper-integration device model for Core 2026.8 and later. Keep local Ecobee/HomeKit devices and entities as the primary source for current state and control.
+The integration creates a Home Assistant service device for Beestat. Thermostat and room-sensor enrichment entities link to existing HomeKit/Ecobee devices when possible without adding Beestat as an owner of those devices or rewriting their name, manufacturer, model, or configuration link; otherwise, Beestat fallback devices are created. Setup also removes legacy cross-integration device ownership while preserving each enrichment entity's device assignment. Supported registry listeners follow a mapped source entity when it moves, detaches, is removed, or is restored, rebinding existing enrichment entities without recreating the Beestat config entry or contacting Beestat; the listeners are removed on unload. This follows Home Assistant's helper-integration device model for Core 2026.8 and later. Keep local Ecobee/HomeKit devices and entities as the primary source for current state and control.
 
 New active Beestat thermostats or sensors discovered after setup are added on the next successful runtime refresh or statistics import unless they were explicitly excluded. Sources reported inactive by Beestat can be deliberately selected in **Choose Beestat sources**; that selection is stored explicitly so it survives refreshes.
 
@@ -204,7 +210,7 @@ If a Beestat-only fallback device disappears from current Beestat metadata, Home
 
 If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. The warning follows referenced entity-registry removal, rename, and recovery without waiting for an integration reload. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override when the mapping intentionally changed.
 
-When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list.
+When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list. Subsequent source-device association changes are reconciled from Home Assistant's registries, and only entity records owned by the loaded Beestat config entry can be changed.
 
 ## Data Updates
 

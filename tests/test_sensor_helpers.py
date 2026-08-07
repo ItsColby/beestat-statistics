@@ -262,6 +262,39 @@ class SensorHelpersTest(unittest.TestCase):
         )
         self.assertEqual(self.sensor._classify_active_alerts(()), "none")
 
+    def test_entity_surface_keeps_primary_entities_and_classifies_details(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+        )
+        descriptions = {
+            description.translation_key: description
+            for description in self.sensor._thermostat_sensor_descriptions(
+                thermostat=thermostat
+            )
+        }
+
+        for key in (
+            "current_comfort_profile",
+            "scheduled_comfort_profile",
+            "next_scheduled_comfort_profile_time",
+            "filter_due_date",
+            "filter_days_remaining",
+        ):
+            self.assertIsNone(descriptions[key].entity_category, key)
+        for key in (
+            "runtime_summary_latest_date",
+            "runtime_summary_lag_days",
+            "active_sensor_count",
+            "filter_runtime_hours",
+            "filter_recent_runtime_hours_per_day",
+            "filter_remaining_runtime_hours",
+            "filter_runtime_due_date",
+            "filter_max_age_due_date",
+        ):
+            self.assertEqual("diagnostic", descriptions[key].entity_category, key)
+
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(
             {
