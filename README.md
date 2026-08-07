@@ -357,19 +357,19 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. CI runs one exact lane for the supported stable Core release pinned in `requirements-ha-test.txt`, aligned with the maintained Home Assistant 2026.8 runtime. The harness owns its compatible pytest dependency and the requirements file pins Core only. The dependency checker runs `pip check` after the final install and accepts only the verified patch-version metadata skew between harness `0.13.354` and Core `2026.8.1`; every other conflict fails. Remove that exception when a matching published harness is available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. CI targets the supported stable Core release pinned in `requirements-ha-test.txt`, aligned with the maintained Home Assistant 2026.8 runtime. The harness owns its compatible pytest dependency and the requirements file pins Core only. After the final dependency installation, the lane runs a literal `python -m pip check` and treats every conflict as a failure. Published harness `0.13.354` currently pins Core `2026.8.0`, so the exact Core `2026.8.1` lane is blocked and the release gate remains blocked until a compatible harness is published. A bounded direct exact-Core run is partial evidence only; it does not prove dependency closure or clear the installed-Core or public-release gate. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
-python scripts/check_ha_test_dependencies.py
+python -m pip check
 pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
 On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python scripts/check_ha_test_dependencies.py && pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest

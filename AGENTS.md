@@ -95,16 +95,18 @@ release gate.
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
-python scripts/check_ha_test_dependencies.py
+python -m pip check
 python -m pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
 Keep the harness and exact Core installation as separate steps. The harness
 owns its compatible pytest dependency and `requirements-ha-test.txt` pins Core
-only. `scripts/check_ha_test_dependencies.py` runs `pip check` after the final
-install and accepts only the explicitly verified patch-version metadata skew
-between harness `0.13.354` and Core `2026.8.1`; every other conflict fails.
-Remove that exception when a matching published harness is available.
+only. After the final dependency installation, run a literal `python -m pip
+check` and treat every conflict as a failure. Harness `0.13.354` currently pins
+Core `2026.8.0`, so the exact Core `2026.8.1` lane and release gate remain
+blocked until a compatible harness is published. A bounded direct exact-Core
+test run is partial evidence only; it does not replace the dependency-closed
+lane or clear the installed-Core or public-release gate.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run this lane in Docker or defer it to the GitHub workflow. If local

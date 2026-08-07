@@ -456,13 +456,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             workflow.index(harness_install), workflow.index(requirements_install)
         )
         mypy_install = "python -m pip install --upgrade mypy"
-        pip_check = "python scripts/check_ha_test_dependencies.py"
+        pip_check = "python -m pip check"
         ha_pytest = "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
         self.assertLess(
             workflow.index(requirements_install), workflow.index(mypy_install)
         )
         self.assertLess(workflow.index(mypy_install), workflow.index(pip_check))
         self.assertLess(workflow.index(pip_check), workflow.index(ha_pytest))
+        self.assertNotIn("check_ha_test_dependencies.py", workflow)
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn(
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q",
@@ -592,12 +593,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(config["tool"]["mypy"]["strict"])
         self.assertNotIn("overrides", config["tool"]["mypy"])
 
-    def test_readme_home_assistant_commands_install_harness_before_core(self) -> None:
+    def test_readme_home_assistant_commands_require_clean_dependency_closure(
+        self,
+    ) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         local_commands = (
             "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
             "python -m pip install --upgrade -r requirements-ha-test.txt\n"
-            "python scripts/check_ha_test_dependencies.py\n"
+            "python -m pip check\n"
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
         )
         docker_commands = (
@@ -605,12 +608,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install "
             "pytest-homeassistant-custom-component==0.13.354 && "
             "python -m pip install --upgrade -r requirements-ha-test.txt && "
-            "python scripts/check_ha_test_dependencies.py && "
+            "python -m pip check && "
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
         )
 
         self.assertIn(local_commands, readme)
         self.assertIn(docker_commands, readme)
+        self.assertIn("release gate remains blocked", readme)
+        self.assertIn("partial evidence", readme)
+        self.assertNotIn("check_ha_test_dependencies.py", readme)
         self.assertNotIn("requirements-ha-test-current.txt", readme)
 
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
@@ -1149,13 +1155,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             validate.index(harness_install), validate.index(requirements_install)
         )
         mypy_install = "python -m pip install --upgrade mypy"
-        pip_check = "python scripts/check_ha_test_dependencies.py"
+        pip_check = "python -m pip check"
         ha_pytest = "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
         self.assertLess(
             validate.index(requirements_install), validate.index(mypy_install)
         )
         self.assertLess(validate.index(mypy_install), validate.index(pip_check))
         self.assertLess(validate.index(pip_check), validate.index(ha_pytest))
+        self.assertFalse((ROOT / "scripts/check_ha_test_dependencies.py").exists())
+        self.assertFalse((ROOT / "tests/test_ha_test_dependencies.py").exists())
         for relative_path in expected_requirements:
             self.assertNotIn(
                 "pytest-homeassistant-custom-component",
