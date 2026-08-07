@@ -434,16 +434,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
         )
-        required_pins = {
-            "homeassistant==2026.8.0",
-            "pytest==9.0.3",
-        }
+        required_pins = {"homeassistant==2026.8.0"}
 
         self.assertEqual(hacs["homeassistant"], "2026.8.0")
         self.assertIn("asyncio_mode = auto", pytest_ini)
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
+        self.assertNotIn("pytest==", requirements)
         harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
         )
@@ -457,6 +455,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertLess(
             workflow.index(harness_install), workflow.index(requirements_install)
         )
+        mypy_install = "python -m pip install --upgrade mypy"
+        pip_check = "python -m pip check"
+        ha_pytest = "pytest tests/test_config_flow_ha.py -q"
+        self.assertLess(
+            workflow.index(requirements_install), workflow.index(mypy_install)
+        )
+        self.assertLess(workflow.index(mypy_install), workflow.index(pip_check))
+        self.assertLess(workflow.index(pip_check), workflow.index(ha_pytest))
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("pytest tests/test_config_flow_ha.py -q", workflow)
         self.assertNotIn("astral-sh/ruff-action@", workflow)
@@ -585,6 +591,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         local_commands = (
             "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
             "python -m pip install --upgrade -r requirements-ha-test.txt\n"
+            "python -m pip check\n"
             "pytest tests/test_config_flow_ha.py -q"
         )
         docker_commands = (
@@ -592,6 +599,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install "
             "pytest-homeassistant-custom-component==0.13.354 && "
             "python -m pip install --upgrade -r requirements-ha-test.txt && "
+            "python -m pip check && "
             "pytest tests/test_config_flow_ha.py -q"
         )
 
@@ -1114,7 +1122,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         expected_requirements = {
             "requirements-ha-test.txt": [
                 "homeassistant==2026.8.0",
-                "pytest==9.0.3",
             ],
         }
         for relative_path, expected_lines in expected_requirements.items():
@@ -1135,6 +1142,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertLess(
             validate.index(harness_install), validate.index(requirements_install)
         )
+        mypy_install = "python -m pip install --upgrade mypy"
+        pip_check = "python -m pip check"
+        ha_pytest = "pytest tests/test_config_flow_ha.py -q"
+        self.assertLess(
+            validate.index(requirements_install), validate.index(mypy_install)
+        )
+        self.assertLess(validate.index(mypy_install), validate.index(pip_check))
+        self.assertLess(validate.index(pip_check), validate.index(ha_pytest))
         for relative_path in expected_requirements:
             self.assertNotIn(
                 "pytest-homeassistant-custom-component",

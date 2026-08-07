@@ -7,6 +7,12 @@ Apply global Codex preferences first. This file owns repo-local guidance for the
 Read `docs/architecture.md` before structural, API-boundary, entity,
 config-flow, Recorder/statistics, or release-layout changes.
 
+For David-maintained cross-portfolio engineering practice, use the external
+`maintain-ha-custom-integrations` skill when available. This repository's
+architecture, tests, privacy boundary, and CI remain authoritative for Beestat
+Statistics. Release, HACS, installation, restart, live validation, and rollback
+belong to `release-ha-custom-integrations`.
+
 ## Optimization And Quality Target
 
 Optimize for David's private Home Assistant runtime: correctness, privacy,
@@ -90,13 +96,16 @@ as a release gate.
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
+python -m pip check
 python -m pytest tests/test_config_flow_ha.py -q
 ```
 
 Keep the harness and exact Core installation as separate steps. The pinned
 harness matches stable Core directly, but the daily upstream harness can
 temporarily declare a beta while the matching final Core is already released;
-do not encode that transient pair in one requirements transaction.
+do not encode that transient pair in one requirements transaction. The harness
+owns its compatible pytest dependency; `requirements-ha-test.txt` pins Core
+only, and `pip check` runs after the final dependency install.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run this lane in Docker or defer it to the GitHub workflow. If local
