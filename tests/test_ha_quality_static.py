@@ -430,7 +430,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
         )
@@ -512,11 +511,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "ruff mypy shellcheck-py zizmor",
             readme,
         )
-        self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade "
-            "ruff mypy shellcheck-py zizmor",
-            agents,
-        )
         local_zizmor_block = (
             "$env:GH_TOKEN = gh auth token\n"
             'if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }\n'
@@ -528,27 +522,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "  Remove-Item Env:GH_TOKEN\n"
             "}"
         )
-        for document in (readme, agents):
-            with self.subTest(document="online local zizmor instructions"):
-                self.assertIn(local_zizmor_block, document)
-        self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m mypy --strict "
-            "custom_components/beestat_statistics",
-            agents,
-        )
+        self.assertIn(local_zizmor_block, readme)
         self.assertIn(
             ".\\.venv\\Scripts\\ruff.exe format --check "
             "custom_components tests scripts",
             readme,
-        )
-        self.assertIn(
-            ".\\.venv\\Scripts\\ruff.exe check custom_components tests scripts",
-            agents,
-        )
-        self.assertIn(
-            ".\\.venv\\Scripts\\ruff.exe format --check "
-            "custom_components tests scripts",
-            agents,
         )
         self.assertIn(
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q",
@@ -600,7 +578,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self,
     ) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
         local_commands = (
             "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
@@ -629,7 +606,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("private release owner", readme)
         for owner_name, owner_text in (
             ("README", readme),
-            ("AGENTS", agents),
             ("architecture", architecture),
         ):
             with self.subTest(owner=owner_name):

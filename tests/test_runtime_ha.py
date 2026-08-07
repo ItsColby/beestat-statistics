@@ -116,7 +116,7 @@ async def test_real_point_timer_projects_schedule_without_io(
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
 
-    coordinator._async_schedule_projection_boundary(coordinator.data, now=before)
+    coordinator._async_schedule_projection_boundary(coordinator.data)
     freezer.move_to(boundary)
     async_fire_time_changed_exact(hass, boundary)
     await hass.async_block_till_done()
@@ -142,7 +142,7 @@ async def test_source_refresh_replaces_real_stale_timer(
         evaluated_at=before,
         data_end=datetime(2026, 7, 1, 11, 30, tzinfo=UTC),
     )
-    coordinator._async_schedule_projection_boundary(coordinator.data, now=before)
+    coordinator._async_schedule_projection_boundary(coordinator.data)
     refreshed = coordinator._build_runtime_data(
         [],
         [
@@ -195,7 +195,7 @@ async def test_entry_unload_cancels_projection_timer(
     )
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
-    coordinator._async_schedule_projection_boundary(coordinator.data, now=before)
+    coordinator._async_schedule_projection_boundary(coordinator.data)
 
     await entry._async_process_on_unload(hass)
     freezer.move_to(midnight)
@@ -224,4 +224,32 @@ async def test_unchanged_projection_does_not_dispatch_entity_updates(
     assert coordinator.data.projected_at == before
     assert client.calls == []
     assert updates == []
+    await entry._async_process_on_unload(hass)
+
+
+async def test_boundary_crossed_during_timer_registration_runs_immediately(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    before = datetime(2026, 7, 1, 13, 59, 59, 900000, tzinfo=UTC)
+    after = datetime(2026, 7, 1, 14, 0, 0, 100000, tzinfo=UTC)
+    schedule = [["sleep"] * 48 for _ in range(7)]
+    schedule[2][20] = "home"
+    entry, coordinator, client = _coordinator_data(
+        hass,
+        evaluated_at=before,
+        schedule=schedule,
+    )
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    freezer.move_to(after)
+    coordinator._async_schedule_projection_boundary(coordinator.data)
+    await hass.async_block_till_done()
+
+    assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
+    assert coordinator.data.thermostat_metadata[1].current_climate_name == "Hold"
+    assert coordinator.data.projected_at == after
+    assert client.calls == []
+    assert updates == ["updated"]
     await entry._async_process_on_unload(hass)

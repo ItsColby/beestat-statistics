@@ -342,8 +342,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     def _async_schedule_projection_boundary(
         self,
         data: BeestatRuntimeData | None = None,
-        *,
-        now: datetime | None = None,
     ) -> None:
         """Schedule the earliest I/O-free cached projection boundary."""
 
@@ -352,8 +350,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             data = self.data
         if data is None:
             return
-        evaluation_at = now or datetime.now(UTC)
-        deadline = _next_projection_deadline(data, evaluation_at, self._local_tz)
+        deadline = _next_projection_deadline(data, self._local_tz)
         self._cancel_projection_boundary = async_track_point_in_utc_time(
             self.hass,
             self._async_handle_projection_boundary,
@@ -399,7 +396,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if _projection_changed(data, projected, self._local_tz):
             self.data = projected
             self.async_update_listeners()
-        self._async_schedule_projection_boundary(projected, now=now)
+        self._async_schedule_projection_boundary(projected)
 
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
@@ -874,19 +871,22 @@ def _projection_changed(
 
 def _next_projection_deadline(
     data: BeestatRuntimeData,
-    now: datetime,
     local_tz: ZoneInfo,
 ) -> datetime:
     """Return the earliest cached schedule, freshness, or local-date boundary."""
 
-    deadlines = [_next_local_midnight(now, local_tz)]
+    projection_at = data.projected_at
+    deadlines = [_next_local_midnight(projection_at, local_tz)]
     for metadata in data.thermostat_metadata.values():
-        if metadata.next_scheduled_at is not None and metadata.next_scheduled_at > now:
+        if (
+            metadata.next_scheduled_at is not None
+            and metadata.next_scheduled_at > projection_at
+        ):
             deadlines.append(metadata.next_scheduled_at)
         if metadata.data_end is None:
             continue
         stale_at = _cloud_data_stale_deadline(metadata.data_end)
-        if stale_at > now:
+        if stale_at > projection_at:
             deadlines.append(stale_at)
     return min(deadlines)
 

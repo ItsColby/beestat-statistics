@@ -868,11 +868,28 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
         deadline = self.coordinator._next_projection_deadline(
             coordinator.data,
-            before,
             coordinator._local_tz,
         )
 
         self.assertEqual(deadline, datetime(2026, 7, 1, 13, 30, 30, tzinfo=UTC))
+
+    async def test_scheduler_retains_boundary_crossed_during_registration(
+        self,
+    ) -> None:
+        before = datetime(2026, 7, 1, 13, 59, 59, 900000, tzinfo=UTC)
+        schedule = [["sleep"] * 48 for _ in range(7)]
+        schedule[2][20] = "home"
+        coordinator = self._cached_coordinator(
+            evaluated_at=before,
+            schedule=schedule,
+        )
+
+        deadline = self.coordinator._next_projection_deadline(
+            coordinator.data,
+            coordinator._local_tz,
+        )
+
+        self.assertEqual(deadline, datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
 
     async def test_cached_projection_crosses_local_date_boundary(self) -> None:
         before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
