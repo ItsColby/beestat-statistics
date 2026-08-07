@@ -1504,16 +1504,17 @@ def _async_track_source_device_relinks(
     coordinator = entry.runtime_data.coordinator
     watched_entity_ids = _mapped_source_entity_ids(coordinator.data)
     watched_device_ids = _mapped_source_device_ids(coordinator.data)
-    if not watched_entity_ids and not watched_device_ids:
-        return ()
 
     @callback
-    def reconcile_assignments() -> None:
-        coordinator.async_rebuild_runtime_from_cached_rows()
+    def handle_coordinator_update() -> None:
         data = coordinator.data
         watched_entity_ids.update(_mapped_source_entity_ids(data))
         watched_device_ids.update(_mapped_source_device_ids(data))
         _async_migrate_homekit_device_assignments(hass, entry, data)
+
+    @callback
+    def reconcile_assignments() -> None:
+        coordinator.async_rebuild_runtime_from_cached_rows()
 
     @callback
     def handle_entity_registry_update(event: Event[Any]) -> None:
@@ -1534,6 +1535,7 @@ def _async_track_source_device_relinks(
         reconcile_assignments()
 
     removers = (
+        coordinator.async_add_listener(handle_coordinator_update),
         hass.bus.async_listen(
             er.EVENT_ENTITY_REGISTRY_UPDATED,
             handle_entity_registry_update,

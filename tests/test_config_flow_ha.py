@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -195,14 +196,27 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
         DOMAIN,
         thermostat_entity_unique_id(1001, "current_comfort_profile"),
         config_entry=helper_entry,
-        device_id=source_device_a.id,
+        device_id=None,
         suggested_object_id="zone_a_current_comfort_profile",
     )
 
     class CachedMappingCoordinator:
         def __init__(self) -> None:
-            self.data: Any = None
-            self.async_rebuild_runtime_from_cached_rows()
+            self.data: Any = types.SimpleNamespace(
+                config=BeestatConfig(thermostats=(), sensors=())
+            )
+            self.source_enabled = False
+            self.listeners: list[Callable[[], None]] = []
+
+        def async_add_listener(
+            self, listener: Callable[[], None]
+        ) -> Callable[[], None]:
+            self.listeners.append(listener)
+
+            def remove_listener() -> None:
+                self.listeners.remove(listener)
+
+            return remove_listener
 
         def async_rebuild_runtime_from_cached_rows(self) -> None:
             current_source = entity_registry.async_get(source_entity.entity_id)
@@ -220,14 +234,25 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
                                 else None
                             ),
                         ),
-                    ),
+                    )
+                    if self.source_enabled
+                    else (),
                     sensors=(),
                 )
             )
+            for listener in tuple(self.listeners):
+                listener()
 
     coordinator = CachedMappingCoordinator()
     helper_entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
     removers = _async_track_source_device_relinks(hass, helper_entry)
+
+    coordinator.source_enabled = True
+    coordinator.async_rebuild_runtime_from_cached_rows()
+    assert (
+        entity_registry.async_get(helper_entity.entity_id).device_id
+        == source_device_a.id
+    )
 
     entity_registry.async_update_entity(
         source_entity.entity_id,
