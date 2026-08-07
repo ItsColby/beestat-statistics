@@ -20,9 +20,8 @@
   exact runtime target and partial evidence in the private release owner.
   Advance the HACS and blueprint minima, Core requirement, harness, CI label,
   documentation, and assertions together.
-- Treat `.venv/`, `.local/`, `.pytest_cache/`, `.ruff_cache/`, `.agents/`, and
-  `.codex/` as local working state unless a future task explicitly turns one
-  into a tracked repo feature. Do not commit Home Assistant config backups, API
+- Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
+  working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
   household evidence.
 
