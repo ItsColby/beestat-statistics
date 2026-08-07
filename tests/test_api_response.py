@@ -176,6 +176,50 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(secret, str(raised.exception))
 
+    async def test_deterministic_http_error_is_not_retried(self) -> None:
+        session = _FakeSession([_FakeResponse({}, status=400)])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=3,
+        )
+        sleep = AsyncMock()
+
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaisesRegex(
+                self.api.BeestatApiError,
+                r"thermostat\.read_id returned HTTP 400",
+            ),
+        ):
+            await client.async_read_id("thermostat")
+
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
+    async def test_transient_http_error_is_retried(self) -> None:
+        session = _FakeSession(
+            [
+                _FakeResponse({}, status=429),
+                {"data": [{"id": 1001}]},
+            ]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=2,
+        )
+        sleep = AsyncMock()
+
+        with patch.object(self.api.asyncio, "sleep", new=sleep):
+            result = await client.async_read_id("thermostat")
+
+        self.assertEqual(result, [{"id": 1001}])
+        self.assertEqual(session.call_count, 2)
+        sleep.assert_awaited_once_with(2)
+
     async def test_invalid_json_error_does_not_expose_parser_detail(self) -> None:
         secret = "parser-response-secret"
         session = _FakeSession([_FakeResponse({}, json_error=ValueError(secret))])

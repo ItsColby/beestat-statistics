@@ -14,6 +14,7 @@ _FINGERPRINT_COMPONENT_MAX = 48
 _FINGERPRINT_MAX = 160
 _DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 _RESPONSE_CHUNK_BYTES = 64 * 1024
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429})
 
 
 class BeestatApiError(RuntimeError):
@@ -24,8 +25,8 @@ class BeestatAuthError(BeestatApiError):
     """Raised when Beestat rejects the configured API key."""
 
 
-class _BeestatResponseTooLargeError(BeestatApiError):
-    """Raised when retrying cannot make the current response safe to retain."""
+class _BeestatNonRetryableError(BeestatApiError):
+    """Raised when another identical request cannot plausibly correct the error."""
 
 
 def exception_fingerprint(err: BaseException) -> str:
@@ -238,6 +239,13 @@ class BeestatClient:
                                 f"{resource}.{method} authentication failed "
                                 f"with HTTP {response.status}"
                             )
+                        if (
+                            400 <= response.status < 500
+                            and response.status not in _RETRYABLE_HTTP_STATUSES
+                        ):
+                            raise _BeestatNonRetryableError(
+                                f"{resource}.{method} returned HTTP {response.status}"
+                            )
                         if response.status >= 400:
                             raise BeestatApiError(
                                 f"{resource}.{method} returned HTTP {response.status}"
@@ -251,7 +259,7 @@ class BeestatClient:
                 return data
             except BeestatAuthError:
                 raise
-            except _BeestatResponseTooLargeError as err:
+            except _BeestatNonRetryableError as err:
                 raise BeestatApiError(
                     f"Failed Beestat call {resource}.{method}: {self.redact_error(err)}"
                 ) from None
@@ -280,16 +288,14 @@ class BeestatClient:
 
         content_length = response.content_length
         if content_length is not None and content_length > self._max_response_bytes:
-            raise _BeestatResponseTooLargeError(
-                "Beestat response exceeded the size limit"
-            )
+            raise _BeestatNonRetryableError("Beestat response exceeded the size limit")
 
         chunks: list[bytes] = []
         size = 0
         async for chunk in response.content.iter_chunked(_RESPONSE_CHUNK_BYTES):
             size += len(chunk)
             if size > self._max_response_bytes:
-                raise _BeestatResponseTooLargeError(
+                raise _BeestatNonRetryableError(
                     "Beestat response exceeded the size limit"
                 )
             chunks.append(chunk)
