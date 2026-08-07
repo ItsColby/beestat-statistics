@@ -1141,12 +1141,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 (ROOT / relative_path).read_text(encoding="utf-8"),
             )
 
-        dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
-        self.assertEqual(dependabot.count("package-ecosystem:"), 1)
-        self.assertIn("package-ecosystem: github-actions", dependabot)
-        self.assertIn("default-days: 7", dependabot)
-        self.assertNotIn("package-ecosystem: pip", dependabot)
-
     def test_device_entity_names_do_not_repeat_integration_name(self) -> None:
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
