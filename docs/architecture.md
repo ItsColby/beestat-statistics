@@ -12,9 +12,10 @@
   `.github/`, `requirements-ha-test.txt`, `pytest.ini`, `docs/`, `scripts/`,
   `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
-  Assistant baseline, currently Core `2026.8.0`. Keep one exact harness lane
-  aligned with the maintained runtime and advance all three pins together only
-  after a stable runtime upgrade.
+  Assistant baseline, currently Core `2026.8.1`. Keep one exact runtime lane
+  aligned with the maintained installation. The dependency checker owns the
+  single known patch-version metadata skew until the upstream harness publishes
+  a matching Core pin; it rejects every other dependency conflict.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, `.ruff_cache/`, `.agents/`, and
   `.codex/` as local working state unless a future task explicitly turns one
   into a tracked repo feature. Do not commit Home Assistant config backups, API
@@ -92,7 +93,9 @@
   I/O. It reschedules after source refresh and every boundary, publishes only
   actual projection changes, and cancels on unload. The filter-boundary retry
   remains a separate effect timer because its callback reads raw Beestat
-  runtime and can persist reconciliation state.
+  runtime and can persist reconciliation state. Health-projection evidence is
+  owned by `coordinator.py`, `tests/test_coordinator_helpers.py`, and the exact
+  Core scheduler/lifecycle coverage in `tests/test_runtime_ha.py`.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button first persists the local date and exact UTC click timestamp, because

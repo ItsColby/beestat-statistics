@@ -31,6 +31,7 @@ from .config_payload import (
     update_thermostat_override_options,
 )
 from .const import (
+    CLOUD_DATA_STALE_THRESHOLD_MINUTES,
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
@@ -42,7 +43,6 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
 _FILTER_BOUNDARY_FAST_RETRY_WINDOW = timedelta(hours=6)
-_CLOUD_DATA_STALE_AFTER = timedelta(minutes=120, seconds=30, microseconds=1)
 
 if TYPE_CHECKING:
     from .runtime import BeestatStatisticsConfigEntry
@@ -885,7 +885,7 @@ def _next_projection_deadline(
             deadlines.append(metadata.next_scheduled_at)
         if metadata.data_end is None:
             continue
-        stale_at = metadata.data_end + _CLOUD_DATA_STALE_AFTER
+        stale_at = _cloud_data_stale_deadline(metadata.data_end)
         if stale_at > now:
             deadlines.append(stale_at)
     return min(deadlines)
@@ -1295,7 +1295,9 @@ def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
 
 
 def _ecobee_day_index(value: datetime) -> int:
-    return (value.weekday() + 1) % 7
+    """Return Ecobee's Monday-first schedule index for a local datetime."""
+
+    return value.weekday()
 
 
 def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
@@ -1401,6 +1403,16 @@ def _lag_minutes(now: datetime, then: datetime | None) -> int | None:
     if then is None:
         return None
     return max(round((now - then).total_seconds() / 60), 0)
+
+
+def _cloud_data_stale_deadline(data_end: datetime) -> datetime:
+    """Return when rounded cloud lag first exceeds the shared threshold."""
+
+    return data_end + timedelta(
+        minutes=CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+        seconds=30,
+        microseconds=1,
+    )
 
 
 def _parse_date(value: Any) -> date | None:

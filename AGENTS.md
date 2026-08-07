@@ -87,25 +87,24 @@ Validate JSON metadata after edits to JSON files:
 .\.venv\Scripts\python.exe -c "import json, pathlib; [json.loads(pathlib.Path(path).read_text(encoding='utf-8')) for path in ['custom_components/beestat_statistics/manifest.json','custom_components/beestat_statistics/translations/en.json','custom_components/beestat_statistics/icons.json','hacs.json','docs/beestat-api-surface.json']]"
 ```
 
-Home Assistant config-flow test requirements are owned by one explicit lane:
+Home Assistant runtime test requirements are owned by one explicit lane:
 `requirements-ha-test.txt` proves the supported stable Core release used by the
-maintainer. Keep the Core and harness pins exact and advance them together only
-after the maintained runtime moves to a stable Core release; do not test a beta
-as a release gate.
+maintainer. Keep the Core and harness pins exact; do not test a beta as a
+release gate.
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
-python -m pip check
-python -m pytest tests/test_config_flow_ha.py -q
+python scripts/check_ha_test_dependencies.py
+python -m pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
-Keep the harness and exact Core installation as separate steps. The pinned
-harness matches stable Core directly, but the daily upstream harness can
-temporarily declare a beta while the matching final Core is already released;
-do not encode that transient pair in one requirements transaction. The harness
-owns its compatible pytest dependency; `requirements-ha-test.txt` pins Core
-only, and `pip check` runs after the final dependency install.
+Keep the harness and exact Core installation as separate steps. The harness
+owns its compatible pytest dependency and `requirements-ha-test.txt` pins Core
+only. `scripts/check_ha_test_dependencies.py` runs `pip check` after the final
+install and accepts only the explicitly verified patch-version metadata skew
+between harness `0.13.354` and Core `2026.8.1`; every other conflict fails.
+Remove that exception when a matching published harness is available.
 
 The Home Assistant harness is Linux-only because Core imports `fcntl`; on
 Windows, run this lane in Docker or defer it to the GitHub workflow. If local

@@ -184,7 +184,23 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertFalse(by_key["filter_due"].is_on)
         self.assertTrue(by_key["filter_due_soon"].is_on)
         self.assertTrue(by_key["runtime_summary_stale"].is_on)
-        self.assertTrue(by_key["cloud_data_stale"].is_on)
+        cloud_stale = by_key["cloud_data_stale"]
+        self.assertTrue(cloud_stale.is_on)
+        self.assertEqual(
+            cloud_stale.extra_state_attributes,
+            {"lag_minutes": 180, "threshold_minutes": 120},
+        )
+        metadata = data.thermostat_metadata[1]
+        fake_coordinator.data = replace(
+            data,
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=120)},
+        )
+        self.assertFalse(cloud_stale.is_on)
+        fake_coordinator.data = replace(
+            data,
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=121)},
+        )
+        self.assertTrue(cloud_stale.is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
         self.assertEqual(
             by_key["statistics_import_partial"].extra_state_attributes[

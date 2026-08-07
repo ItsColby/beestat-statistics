@@ -413,7 +413,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
     def test_schedule_snapshot_finds_current_and_next_profile(self) -> None:
         schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[3][20] = "home"
+        schedule[2][20] = "home"
         snapshot = self.coordinator._schedule_snapshot(
             {
                 "timezone": "America/New_York",
@@ -442,11 +442,27 @@ class CoordinatorHelpersTest(unittest.TestCase):
             [("sleep", "Sleep", False), ("home", "Home", True)],
         )
 
+    def test_ecobee_schedule_days_are_monday_first(self) -> None:
+        local_tz = ZoneInfo("America/New_York")
+
+        self.assertEqual(
+            self.coordinator._ecobee_day_index(
+                datetime(2026, 7, 6, 12, tzinfo=local_tz)
+            ),
+            0,
+        )
+        self.assertEqual(
+            self.coordinator._ecobee_day_index(
+                datetime(2026, 7, 12, 12, tzinfo=local_tz)
+            ),
+            6,
+        )
+
     def test_schedule_snapshot_skips_nonexistent_spring_forward_slots(self) -> None:
         schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[0][4] = "home"
-        schedule[0][5] = "home"
-        schedule[0][8] = "away"
+        schedule[6][4] = "home"
+        schedule[6][5] = "home"
+        schedule[6][8] = "away"
 
         snapshot = self.coordinator._schedule_snapshot(
             {
@@ -467,6 +483,51 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(snapshot["scheduled_ref"], "sleep")
         self.assertEqual(snapshot["next_ref"], "away")
         self.assertEqual(snapshot["next_at"], datetime(2026, 3, 8, 8, tzinfo=UTC))
+
+    def test_schedule_snapshot_does_not_invent_fall_back_transition(self) -> None:
+        schedule = [["sleep"] * 48 for _ in range(7)]
+        schedule[6][2] = "home"
+        schedule[6][3] = "home"
+        schedule[6][4] = "away"
+
+        snapshot = self.coordinator._schedule_snapshot(
+            {
+                "timezone": "America/New_York",
+                "program": {
+                    "climates": [
+                        {"climateRef": "sleep", "name": "Sleep"},
+                        {"climateRef": "home", "name": "Home"},
+                        {"climateRef": "away", "name": "Away"},
+                    ],
+                    "schedule": schedule,
+                },
+            },
+            datetime(2026, 11, 1, 5, 15, tzinfo=UTC),
+            ZoneInfo("America/New_York"),
+        )
+
+        self.assertEqual(snapshot["scheduled_ref"], "home")
+        self.assertEqual(snapshot["next_ref"], "away")
+        self.assertEqual(snapshot["next_at"], datetime(2026, 11, 1, 7, tzinfo=UTC))
+
+    def test_cloud_stale_rounding_boundary_is_exact(self) -> None:
+        data_end = datetime(2026, 7, 1, 12, tzinfo=UTC)
+        threshold = timedelta(minutes=120, seconds=30)
+
+        self.assertEqual(
+            self.coordinator._lag_minutes(data_end + threshold, data_end),
+            120,
+        )
+        self.assertEqual(
+            self.coordinator._lag_minutes(
+                data_end + threshold + timedelta(microseconds=1), data_end
+            ),
+            121,
+        )
+        self.assertEqual(
+            self.coordinator._cloud_data_stale_deadline(data_end),
+            data_end + threshold + timedelta(microseconds=1),
+        )
 
     def test_next_local_midnight_tracks_dst_day_lengths(self) -> None:
         local_tz = ZoneInfo("America/New_York")
@@ -742,7 +803,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         before = datetime(2026, 7, 1, 13, 55, tzinfo=UTC)
         boundary = datetime(2026, 7, 1, 14, 0, tzinfo=UTC)
         schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[3][20] = "home"
+        schedule[2][20] = "home"
         coordinator = self._cached_coordinator(
             evaluated_at=before,
             schedule=schedule,
@@ -798,7 +859,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_selects_earliest_cached_projection_boundary(self) -> None:
         before = datetime(2026, 7, 1, 13, 0, tzinfo=UTC)
         schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[3][20] = "home"
+        schedule[2][20] = "home"
         coordinator = self._cached_coordinator(
             evaluated_at=before,
             data_end=datetime(2026, 7, 1, 11, 29, 59, 999999, tzinfo=UTC),
