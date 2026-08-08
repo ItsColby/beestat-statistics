@@ -8,6 +8,7 @@ import unittest
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,10 @@ try:
 except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
     raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
 
+from custom_components.beestat_statistics import (
+    BeestatStatisticsImporter,
+    _async_track_time_zone_updates,
+)
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
@@ -224,6 +229,94 @@ async def test_unchanged_projection_does_not_dispatch_entity_updates(
     assert coordinator.data.projected_at == before
     assert client.calls == []
     assert updates == []
+    await entry._async_process_on_unload(hass)
+
+
+async def test_core_time_zone_update_reprojects_without_io_and_unloads(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    now = datetime(2026, 7, 1, 1, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    importer = BeestatStatisticsImporter(
+        hass,
+        client,
+        coordinator,
+        point_lookback_days=31,
+    )
+    scheduled: list[tuple[datetime, Mock]] = []
+
+    def track_projection(_hass, _action, deadline):
+        cancel = Mock()
+        scheduled.append((deadline, cancel))
+        return cancel
+
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    with patch(
+        "custom_components.beestat_statistics.coordinator."
+        "async_track_point_in_utc_time",
+        side_effect=track_projection,
+    ):
+        _async_track_time_zone_updates(hass, entry, coordinator)
+        coordinator._async_schedule_projection_boundary(coordinator.data)
+        assert importer._local_tz == ZoneInfo("America/New_York")
+
+        await hass.config.async_update(time_zone="Europe/London")
+        await hass.async_block_till_done()
+
+        assert coordinator.local_tz == ZoneInfo("Europe/London")
+        assert importer._local_tz == ZoneInfo("Europe/London")
+        assert client.calls == []
+        assert updates == ["updated"]
+        assert len(scheduled) == 2
+        scheduled[0][1].assert_called_once_with()
+
+        await entry._async_process_on_unload(hass)
+        scheduled[1][1].assert_called_once_with()
+
+        await hass.config.async_update(time_zone="Asia/Tokyo")
+        await hass.async_block_till_done()
+
+    assert coordinator.local_tz == ZoneInfo("Europe/London")
+    assert len(scheduled) == 2
+
+
+async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    now = datetime(2026, 7, 1, 17, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    scheduled: list[tuple[datetime, Mock]] = []
+
+    def track_projection(_hass, _action, deadline):
+        cancel = Mock()
+        scheduled.append((deadline, cancel))
+        return cancel
+
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    with patch(
+        "custom_components.beestat_statistics.coordinator."
+        "async_track_point_in_utc_time",
+        side_effect=track_projection,
+    ):
+        _async_track_time_zone_updates(hass, entry, coordinator)
+        coordinator._async_schedule_projection_boundary(coordinator.data)
+
+        await hass.config.async_update(time_zone="America/Chicago")
+        await hass.async_block_till_done()
+
+    assert coordinator.local_tz == ZoneInfo("America/Chicago")
+    assert client.calls == []
+    assert updates == []
+    assert len(scheduled) == 2
+    scheduled[0][1].assert_called_once_with()
     await entry._async_process_on_unload(hass)
 
 

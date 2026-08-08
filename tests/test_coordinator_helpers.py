@@ -80,6 +80,66 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0.75,
         )
 
+    def test_projection_change_compares_old_and_new_local_dates(self) -> None:
+        projected_at = datetime(2026, 7, 1, 1, tzinfo=UTC)
+        current = types.SimpleNamespace(
+            config=(),
+            thermostats={},
+            thermostat_metadata={},
+            projected_at=projected_at,
+        )
+        projected = types.SimpleNamespace(
+            config=(),
+            thermostats={},
+            thermostat_metadata={},
+            projected_at=projected_at,
+        )
+
+        self.assertTrue(
+            self.coordinator._projection_changed(
+                current,
+                projected,
+                ZoneInfo("America/New_York"),
+                ZoneInfo("Europe/London"),
+            )
+        )
+        self.assertFalse(
+            self.coordinator._projection_changed(
+                current,
+                projected,
+                ZoneInfo("Europe/London"),
+                ZoneInfo("Europe/Paris"),
+            )
+        )
+
+    def test_runtime_time_zone_update_cancels_rebuilds_and_ignores_noop(self) -> None:
+        calls: list[object] = []
+        coordinator = types.SimpleNamespace(
+            _local_tz=ZoneInfo("America/New_York"),
+            _async_cancel_projection_boundary=lambda: calls.append("cancel"),
+            _async_rebuild_projection_from_cached=lambda now, **kwargs: calls.append(
+                (now.tzinfo, kwargs)
+            ),
+        )
+
+        self.coordinator.BeestatRuntimeDataCoordinator.async_update_local_timezone(
+            coordinator,
+            ZoneInfo("Europe/London"),
+        )
+        self.coordinator.BeestatRuntimeDataCoordinator.async_update_local_timezone(
+            coordinator,
+            ZoneInfo("Europe/London"),
+        )
+
+        self.assertEqual(coordinator._local_tz, ZoneInfo("Europe/London"))
+        self.assertEqual(calls[0], "cancel")
+        self.assertEqual(calls[1][0], UTC)
+        self.assertEqual(
+            calls[1][1],
+            {"previous_local_tz": ZoneInfo("America/New_York")},
+        )
+        self.assertEqual(len(calls), 2)
+
     def test_runtime_hours_subtracts_click_baseline_only_from_change_day(self) -> None:
         rows = [
             {"date": "2026-07-05", "sum_fan": 36000},

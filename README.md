@@ -226,6 +226,9 @@ projections at the earliest relevant boundary. Those callbacks perform no
 Beestat I/O, reschedule after refresh and after each boundary, and notify
 entities only when projected state changes. Schedule boundaries and local
 midnight follow the configured/thermostat timezone across daylight-saving time.
+Changing Home Assistant's configured timezone rebuilds and reschedules these
+cached projections without contacting Beestat or reloading the config entry;
+Recorder import windows use the same current coordinator-owned timezone.
 The separate 15-minute filter-boundary retry can read Beestat and persist a
 result, so it is not part of this local projection scheduler.
 

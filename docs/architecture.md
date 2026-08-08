@@ -94,7 +94,10 @@
   reevaluates cached comfort schedules, the cloud-stale threshold, and local
   date-dependent runtime/filter projections at their earliest boundary without
   I/O. It reschedules after source refresh and every boundary, publishes only
-  actual projection changes, and cancels on unload. The filter-boundary retry
+  actual projection changes, follows configured-timezone changes without an
+  entry reload, and cancels both its deadline and timezone listener on unload.
+  The coordinator is the single current-timezone owner for these projections
+  and Recorder import windows. The filter-boundary retry
   remains a separate effect timer because its callback reads raw Beestat
   runtime and can persist reconciliation state. Health-projection evidence is
   owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;

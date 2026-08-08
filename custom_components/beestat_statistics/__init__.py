@@ -26,6 +26,7 @@ from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigEntry
 from homeassistant.const import (
     CONF_API_KEY,
     CONF_SCAN_INTERVAL,
+    EVENT_CORE_CONFIG_UPDATE,
     Platform,
 )
 from homeassistant.core import (
@@ -375,14 +376,18 @@ class BeestatStatisticsImporter:
         coordinator: BeestatRuntimeDataCoordinator,
         *,
         point_lookback_days: int,
-        local_tz: ZoneInfo,
     ) -> None:
         self._hass = hass
         self._client = client
         self._coordinator = coordinator
         self._point_lookback_days = point_lookback_days
-        self._local_tz = local_tz
         self._lock = asyncio.Lock()
+
+    @property
+    def _local_tz(self) -> ZoneInfo:
+        """Return the coordinator-owned current Home Assistant timezone."""
+
+        return self._coordinator.local_tz
 
     async def async_import_statistics(
         self,
@@ -1094,7 +1099,6 @@ async def async_setup_entry(
         client,
         coordinator,
         point_lookback_days=_entry_point_lookback_days(entry),
-        local_tz=local_tz,
     )
     runtime = BeestatStatisticsRuntime(
         client=client,
@@ -1103,6 +1107,7 @@ async def async_setup_entry(
         scan_interval=timedelta(seconds=_entry_scan_interval_seconds(entry)),
     )
     entry.runtime_data = runtime
+    _async_track_time_zone_updates(hass, entry, coordinator)
 
     await coordinator.async_config_entry_first_refresh()
     async_register_service_device(hass, entry)
@@ -1189,6 +1194,23 @@ async def async_setup_entry(
         eager_start=False,
     )
     return True
+
+
+@callback
+def _async_track_time_zone_updates(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+    coordinator: BeestatRuntimeDataCoordinator,
+) -> None:
+    """Reproject cached state when Home Assistant's configured timezone changes."""
+
+    @callback
+    def handle_core_config_update(_event: Event[Any]) -> None:
+        coordinator.async_update_local_timezone(ZoneInfo(str(hass.config.time_zone)))
+
+    entry.async_on_unload(
+        hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, handle_core_config_update)
+    )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

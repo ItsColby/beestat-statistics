@@ -218,6 +218,20 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         return self._local_tz
 
+    @callback
+    def async_update_local_timezone(self, local_tz: ZoneInfo) -> None:
+        """Reproject cached state after Home Assistant's timezone changes."""
+
+        if local_tz == self._local_tz:
+            return
+        previous_local_tz = self._local_tz
+        self._local_tz = local_tz
+        self._async_cancel_projection_boundary()
+        self._async_rebuild_projection_from_cached(
+            datetime.now(UTC),
+            previous_local_tz=previous_local_tz,
+        )
+
     @property
     def beestat_config_entry(self) -> BeestatStatisticsConfigEntry:
         """Return the non-optional config entry supplied at construction."""
@@ -374,7 +388,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._async_rebuild_projection_from_cached(datetime.now(UTC))
 
     @callback
-    def _async_rebuild_projection_from_cached(self, now: datetime) -> None:
+    def _async_rebuild_projection_from_cached(
+        self,
+        now: datetime,
+        *,
+        previous_local_tz: ZoneInfo | None = None,
+    ) -> None:
         """Rebuild elapsed projections from cached rows without external I/O."""
 
         self._cancel_projection_boundary = None
@@ -393,7 +412,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             evaluated_at=now,
             fetched_at=data.fetched_at,
         )
-        if _projection_changed(data, projected, self._local_tz):
+        if _projection_changed(
+            data,
+            projected,
+            previous_local_tz or self._local_tz,
+            self._local_tz,
+        ):
             self.data = projected
             self.async_update_listeners()
         self._async_schedule_projection_boundary(projected)
@@ -856,16 +880,19 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 def _projection_changed(
     current: BeestatRuntimeData,
     projected: BeestatRuntimeData,
-    local_tz: ZoneInfo,
+    current_local_tz: ZoneInfo,
+    projected_local_tz: ZoneInfo | None = None,
 ) -> bool:
     """Return whether a cached time projection changes entity-visible state."""
 
+    if projected_local_tz is None:
+        projected_local_tz = current_local_tz
     return (
         current.config != projected.config
         or current.thermostats != projected.thermostats
         or current.thermostat_metadata != projected.thermostat_metadata
-        or current.projected_at.astimezone(local_tz).date()
-        != projected.projected_at.astimezone(local_tz).date()
+        or current.projected_at.astimezone(current_local_tz).date()
+        != projected.projected_at.astimezone(projected_local_tz).date()
     )
 
 
