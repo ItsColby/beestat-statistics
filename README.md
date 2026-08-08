@@ -342,7 +342,7 @@ Local pure-module checks:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy shellcheck-py zizmor
-.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts

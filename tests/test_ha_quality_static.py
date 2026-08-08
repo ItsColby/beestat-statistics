@@ -643,6 +643,35 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 )
         self.assertNotIn("check_ha_test_dependencies.py", readme)
 
+    def test_declared_ha_modules_fail_closed_without_harness(self) -> None:
+        workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
+            encoding="utf-8"
+        )
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        dependency_light_runner = (
+            ROOT / "scripts/run_dependency_light_tests.py"
+        ).read_text(encoding="utf-8")
+        ha_modules = (
+            "tests/test_config_flow_ha.py",
+            "tests/test_runtime_ha.py",
+        )
+
+        self.assertIn(f"pytest {' '.join(ha_modules)} -q", workflow)
+        self.assertIn("python scripts/run_dependency_light_tests.py", workflow)
+        self.assertIn(
+            r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
+            readme,
+        )
+        self.assertNotIn("python -m unittest discover -s tests", workflow)
+        self.assertIn("if path.name not in HA_TEST_FILENAMES", dependency_light_runner)
+        for relative_path in ha_modules:
+            with self.subTest(path=relative_path):
+                text = (ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn("from homeassistant", text)
+                self.assertNotIn("unittest.SkipTest", text)
+                self.assertNotIn("except ModuleNotFoundError", text)
+                self.assertIn(f'"{Path(relative_path).name}"', dependency_light_runner)
+
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
         text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
 

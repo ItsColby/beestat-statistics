@@ -1,15 +1,13 @@
 """Home Assistant harness tests for Beestat Statistics.
 
-These tests exercise the real Home Assistant flow manager and registry helpers
-when the HA test harness is installed. Local pure-unit validation skips this
-module when the current Python environment cannot install Home Assistant.
+These tests exercise the real Home Assistant flow manager and registry helpers.
+They intentionally fail collection when the declared HA harness is unavailable.
 """
 
 from __future__ import annotations
 
 import sys
 import types
-import unittest
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -21,27 +19,24 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-try:
-    import pytest
-    import voluptuous as vol
-    from homeassistant.config_entries import (
-        SOURCE_IMPORT,
-        SOURCE_REAUTH,
-        SOURCE_RECONFIGURE,
-        SOURCE_USER,
-        ConfigEntryState,
-    )
-    from homeassistant.const import CONF_API_KEY
-    from homeassistant.core import HomeAssistant
-    from homeassistant.data_entry_flow import FlowResultType
-    from homeassistant.exceptions import ConfigEntryError, ServiceValidationError
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
-    from homeassistant.helpers import issue_registry as ir
-    from homeassistant.helpers.entity import Entity
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
-    raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
+import pytest
+import voluptuous as vol
+from homeassistant.config_entries import (
+    SOURCE_IMPORT,
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+    ConfigEntryState,
+)
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ConfigEntryError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.entity import Entity
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.beestat_statistics import (
     CONFIG_SCHEMA,

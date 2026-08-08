@@ -22,6 +22,10 @@
   each requirements owner, CI label, documentation, and assertion with the
   support contract it represents; advance the HACS and blueprint minima only
   when the distribution floor changes.
+- `scripts/run_dependency_light_tests.py` owns local and CI selection of tests
+  that do not import Home Assistant. The declared HA modules import the real
+  harness unconditionally so either hosted HA lane fails collection instead of
+  passing through module-level skips when its dependencies are unavailable.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
   working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
