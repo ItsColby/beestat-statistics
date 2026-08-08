@@ -13,12 +13,11 @@
   `pytest.ini`, `docs/`, `scripts/`, `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
   Assistant floor, currently Core `2026.8.0`, and its dependency-closed harness
-  lane. `requirements-ha-current.txt` owns exact same-month patch compatibility,
-  currently Core `2026.8.1`. That hosted lane verifies installed package
-  metadata, runs `pip check`, accepts no conflict or exactly the single proven
-  harness/Core pin mismatch, and then runs the complete HA tests. It proves
-  patch compatibility, not dependency closure. Cross-month, prerelease,
-  extra-conflict, skipped, or failing-test cases remain unsupported. Advance
+  lane. `requirements-ha-current.txt` owns a second dependency-closed lane for
+  the exact installed same-month patch, currently Core `2026.8.1` with harness
+  `0.13.355`. Both hosted lanes run `pip check` after the final dependency
+  installation and then run the complete HA tests. Conflicts, skipped
+  collection, or failing tests remain unsupported. Advance
   each requirements owner, CI label, documentation, and assertion with the
   support contract it represents; advance the HACS and blueprint minima only
   when the distribution floor changes.
@@ -101,6 +100,13 @@
   only when their current registry entry can be proven. YAML remains the
   portable entity-ID owner and is never silently rewritten; an unresolved YAML
   or unmigratable legacy mapping raises the existing mapping Repair.
+- The options flow can confirm every currently ambiguity-safe automatic
+  thermostat and room-sensor match in one transaction. It derives the
+  candidate solely from the coordinator's cached normalized configuration and
+  the in-memory entity registry, stores the same stable references as an
+  individual mapping, leaves missing or ambiguous matches unresolved, preserves
+  unrelated options, and causes at most one config-entry reload. It never
+  silently persists name matches without explicit confirmation.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate

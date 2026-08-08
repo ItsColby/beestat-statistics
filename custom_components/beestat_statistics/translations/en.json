@@ -312,6 +312,7 @@
         "menu_options": {
           "timing": "Import timing",
           "source_scope": "Choose Beestat sources",
+          "confirm_automatic_mappings": "Confirm automatic mappings",
           "thermostat_mapping": "Map a thermostat",
           "sensor_mapping": "Map a room sensor"
         }
@@ -343,6 +344,10 @@
       "source_scope_confirm": {
         "title": "Confirm source exclusions",
         "description": "This excludes {thermostat_count} currently included thermostat(s) and {sensor_count} currently included room sensor(s). Their native entities stop updating after reload and future statistics imports omit them. Recorder statistics already imported remain available."
+      },
+      "confirm_automatic_mappings": {
+        "title": "Confirm automatic HomeKit mappings",
+        "description": "Home Assistant found {thermostat_count} thermostat mapping(s) and {sensor_count} room-sensor mapping(s), covering {entity_count} local entities. Confirm to pin all of these current ambiguity-safe matches through stable entity-registry references in one update. Missing or ambiguous matches remain automatic and unresolved."
       },
       "thermostat_mapping": {
         "title": "Map a Beestat thermostat",
@@ -416,5 +421,8 @@
     "error": {
       "no_discovered_items": "No Beestat thermostats or room sensors have been discovered yet. Refresh runtime data, then try again."
     }
+  },
+  "abort": {
+    "no_automatic_mappings": "No unconfirmed automatic mappings are currently available. Existing explicit mappings were left unchanged."
   }
 }

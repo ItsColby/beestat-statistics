@@ -101,7 +101,7 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Automatic name matching remains an ambiguity-safe onboarding fallback only. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review and pin all current unambiguous HomeKit thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing or ambiguous matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
 
 Advanced thermostat override fields:
 
@@ -367,7 +367,7 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. A second hosted lane targets exact current same-month patch Core `2026.8.1`. Its bounded checker verifies installed package metadata and the real `pip check` result, permits no conflict or exactly the single proven harness/Core pin mismatch, and then runs the complete Home Assistant tests. That lane proves patch compatibility, not dependency closure. It fails for a cross-month or prerelease target, another dependency conflict, skipped collection, or a test failure. When the harness catches up, the same checker accepts a clean environment. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and a second dependency-closed lane targets exact current same-month patch Core `2026.8.1` with harness `0.13.355`. Each lane installs its exact harness and Core requirements separately, runs a literal `python -m pip check` after the final dependency installation, and then runs the complete Home Assistant tests. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
 
 Supported-minimum lane:
 
@@ -381,9 +381,9 @@ pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 Current same-month patch lane:
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.354
+python -m pip install pytest-homeassistant-custom-component==0.13.355
 python -m pip install --upgrade -r requirements-ha-current.txt
-python scripts/check_ha_patch_compatibility.py --minimum requirements-ha-test.txt --current requirements-ha-current.txt
+python -m pip check
 pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
@@ -398,8 +398,8 @@ actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
 Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
-unit, the dependency-closed supported-minimum lane, the current same-month
-patch lane, Hassfest, and HACS validation all succeed.
+unit, both dependency-closed Home Assistant lanes, Hassfest, and HACS validation
+all succeed.
 
 ## Release Publishing
 

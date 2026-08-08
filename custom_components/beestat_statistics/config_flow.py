@@ -86,6 +86,7 @@ from .const import (
 from .entity_reference import (
     SENSOR_STABLE_ENTITY_FIELDS,
     THERMOSTAT_STABLE_ENTITY_FIELDS,
+    entity_reference_field,
     mapping_form_defaults,
     mapping_updates_with_entity_references,
 )
@@ -183,6 +184,7 @@ OPTIONS_SCHEMA = vol.Schema(
 OPTIONS_MENU = {
     "timing": "Import timing",
     "source_scope": "Choose Beestat sources",
+    "confirm_automatic_mappings": "Confirm automatic mappings",
     "thermostat_mapping": "Map a thermostat",
     "sensor_mapping": "Map a room sensor",
 }
@@ -509,6 +511,8 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
     _pending_scope_options: dict[str, Any] | None = None
     _pending_scope_removed_thermostats = 0
     _pending_scope_removed_sensors = 0
+    _pending_automatic_mapping_options: dict[str, Any] | None = None
+    _pending_automatic_mapping_counts: tuple[int, int, int] = (0, 0, 0)
 
     async def async_step_init(
         self,
@@ -657,6 +661,41 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 }
             ),
             errors=_selection_errors(_thermostat_options(self.config_entry)),
+        )
+
+    async def async_step_confirm_automatic_mappings(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Confirm all ambiguity-safe cached automatic mappings in one update."""
+
+        if self._pending_automatic_mapping_options is None:
+            candidate = _automatic_mapping_options(
+                self.config_entry,
+                er.async_get(self.hass),
+            )
+            if candidate is None:
+                return self.async_abort(reason="no_automatic_mappings")
+            (
+                self._pending_automatic_mapping_options,
+                self._pending_automatic_mapping_counts,
+            ) = candidate
+        if user_input is not None:
+            options = self._pending_automatic_mapping_options
+            self._pending_automatic_mapping_options = None
+            return self.async_create_entry(data=options)
+
+        thermostat_count, sensor_count, entity_count = (
+            self._pending_automatic_mapping_counts
+        )
+        return self.async_show_form(
+            step_id="confirm_automatic_mappings",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "thermostat_count": str(thermostat_count),
+                "sensor_count": str(sensor_count),
+                "entity_count": str(entity_count),
+            },
         )
 
     async def async_step_thermostat_mapping_detail(
@@ -1143,6 +1182,120 @@ def _source_scope_defaults(
     return (
         {int(thermostat.thermostat_id) for thermostat in data.config.thermostats},
         {int(sensor.sensor_id) for sensor in data.config.sensors},
+    )
+
+
+def _automatic_mapping_options(
+    entry: config_entries.ConfigEntry,
+    registry: Any,
+) -> tuple[dict[str, Any], tuple[int, int, int]] | None:
+    """Build one options update from cached ambiguity-safe automatic mappings."""
+
+    runtime = getattr(entry, "runtime_data", None)
+    data = getattr(getattr(runtime, "coordinator", None), "data", None)
+    config = getattr(data, "config", None)
+    if config is None:
+        return None
+
+    config_data = entry_runtime_config_data(entry)
+    options = dict(entry.options)
+    thermostat_count = 0
+    sensor_count = 0
+    entity_count = 0
+
+    for item in getattr(config, "thermostats", ()):
+        item_id = int(item.thermostat_id)
+        override = _effective_override(config_data, CONF_THERMOSTATS, item_id)
+        updates = _stable_mapping_updates(
+            registry,
+            item,
+            _unconfirmed_mapping_fields(override, THERMOSTAT_STABLE_ENTITY_FIELDS),
+        )
+        if updates is None:
+            continue
+        options = update_thermostat_override_options(
+            entry.data,
+            options,
+            item_id,
+            updates,
+        )
+        thermostat_count += 1
+        entity_count += len(updates) // 2
+
+    for item in getattr(config, "sensors", ()):
+        item_id = int(item.sensor_id)
+        override = _effective_override(config_data, CONF_SENSORS, item_id)
+        updates = _stable_mapping_updates(
+            registry,
+            item,
+            _unconfirmed_mapping_fields(override, SENSOR_STABLE_ENTITY_FIELDS),
+        )
+        if updates is None:
+            continue
+        options = update_sensor_override_options(
+            entry.data,
+            options,
+            item_id,
+            updates,
+        )
+        sensor_count += 1
+        entity_count += len(updates) // 2
+
+    if thermostat_count == 0 and sensor_count == 0:
+        return None
+    return options, (thermostat_count, sensor_count, entity_count)
+
+
+def _effective_override(
+    config_data: Mapping[str, Any],
+    key: str,
+    item_id: int,
+) -> Mapping[str, Any]:
+    value = config_data.get(key)
+    if not isinstance(value, list):
+        return {}
+    return next(
+        (
+            item
+            for item in value
+            if isinstance(item, Mapping) and _resource_row_id(item) == item_id
+        ),
+        {},
+    )
+
+
+def _stable_mapping_updates(
+    registry: Any,
+    item: Any,
+    fields: tuple[str, ...],
+) -> dict[str, Any] | None:
+    updates: dict[str, Any] = {}
+    for field in fields:
+        value = getattr(item, field, None)
+        if value in (None, ""):
+            continue
+        try:
+            updates.update(
+                mapping_updates_with_entity_references(
+                    registry,
+                    {field: value},
+                    (field,),
+                )
+            )
+        except ValueError:
+            continue
+    return updates or None
+
+
+def _unconfirmed_mapping_fields(
+    override: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        field
+        for field in fields
+        if override.get(field) in (None, "")
+        and entity_reference_field(field) not in override
     )
 
 

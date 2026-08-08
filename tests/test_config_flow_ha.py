@@ -69,7 +69,11 @@ from custom_components.beestat_statistics.const import (
     CONF_CLIMATE_ENTITY_REF,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_NOTICE_DAYS,
     CONF_ID,
+    CONF_INCLUDE_TEMPERATURE,
+    CONF_MOTION_ENTITY_ID,
+    CONF_OCCUPANCY_ENTITY_ID,
     CONF_POINT_LOOKBACK_DAYS,
     CONF_SCAN_INTERVAL_SECONDS,
     CONF_SENSORS,
@@ -93,6 +97,7 @@ from custom_components.beestat_statistics.entity import (
     link_entity_to_device,
 )
 from custom_components.beestat_statistics.entity_reference import (
+    entity_reference_field,
     resolve_entity_reference,
 )
 from custom_components.beestat_statistics.issues import (
@@ -1446,6 +1451,7 @@ async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:
     assert result["menu_options"] == {
         "timing": "Import timing",
         "source_scope": "Choose Beestat sources",
+        "confirm_automatic_mappings": "Confirm automatic mappings",
         "thermostat_mapping": "Map a thermostat",
         "sensor_mapping": "Map a room sensor",
     }
@@ -1470,6 +1476,268 @@ async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:
         CONF_POINT_LOOKBACK_DAYS: 60,
         CONF_SCAN_INTERVAL_SECONDS: 1200,
     }
+
+
+async def test_options_flow_confirms_all_cached_automatic_mappings_once(
+    hass: HomeAssistant,
+) -> None:
+    """Test one confirmation pins all safe mappings without source I/O."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    sources = {
+        (domain, unique_id): registry.async_get_or_create(
+            domain,
+            "homekit_controller",
+            unique_id,
+            config_entry=source_entry,
+            suggested_object_id=unique_id.replace("-", "_"),
+        )
+        for domain, unique_id in (
+            ("climate", "zone-a-climate"),
+            ("sensor", "zone-a-temperature"),
+            ("binary_sensor", "zone-a-occupancy"),
+            ("binary_sensor", "zone-a-motion"),
+            ("sensor", "room-b-temperature"),
+            ("binary_sensor", "room-b-occupancy"),
+            ("binary_sensor", "room-b-motion"),
+        )
+    }
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [{CONF_ID: 1001, CONF_FILTER_NOTICE_DAYS: 12}],
+            CONF_SENSORS: [{CONF_ID: 2002, CONF_INCLUDE_TEMPERATURE: False}],
+            "future_option": {"preserve": True},
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id=sources[("climate", "zone-a-climate")].entity_id,
+                temperature_entity_id=sources[
+                    ("sensor", "zone-a-temperature")
+                ].entity_id,
+                occupancy_entity_id=sources[
+                    ("binary_sensor", "zone-a-occupancy")
+                ].entity_id,
+                motion_entity_id=sources[("binary_sensor", "zone-a-motion")].entity_id,
+            )
+        ],
+        sensors=[
+            _configured_sensor(
+                sensor_id=2002,
+                name="Room B",
+                slug="room_b",
+                temperature_entity_id=sources[
+                    ("sensor", "room-b-temperature")
+                ].entity_id,
+                occupancy_entity_id=sources[
+                    ("binary_sensor", "room-b-occupancy")
+                ].entity_id,
+                motion_entity_id=sources[("binary_sensor", "room-b-motion")].entity_id,
+            )
+        ],
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    with patch(
+        "custom_components.beestat_statistics.config_flow.BeestatClient",
+        side_effect=AssertionError("automatic mapping confirmation must not do I/O"),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "confirm_automatic_mappings"},
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm_automatic_mappings"
+    assert result["description_placeholders"] == {
+        "thermostat_count": "1",
+        "sensor_count": "1",
+        "entity_count": "7",
+    }
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    reload.assert_called_once_with(entry.entry_id)
+    assert result["data"]["future_option"] == {"preserve": True}
+    thermostat = result["data"][CONF_THERMOSTATS][0]
+    sensor = result["data"][CONF_SENSORS][0]
+    assert thermostat[CONF_FILTER_NOTICE_DAYS] == 12
+    assert sensor[CONF_INCLUDE_TEMPERATURE] is False
+    for field, source in (
+        (CONF_CLIMATE_ENTITY_ID, sources[("climate", "zone-a-climate")]),
+        (CONF_TEMPERATURE_ENTITY_ID, sources[("sensor", "zone-a-temperature")]),
+        (
+            CONF_OCCUPANCY_ENTITY_ID,
+            sources[("binary_sensor", "zone-a-occupancy")],
+        ),
+        (CONF_MOTION_ENTITY_ID, sources[("binary_sensor", "zone-a-motion")]),
+    ):
+        _assert_stable_mapping(thermostat, field, source)
+    for field, source in (
+        (CONF_TEMPERATURE_ENTITY_ID, sources[("sensor", "room-b-temperature")]),
+        (
+            CONF_OCCUPANCY_ENTITY_ID,
+            sources[("binary_sensor", "room-b-occupancy")],
+        ),
+        (CONF_MOTION_ENTITY_ID, sources[("binary_sensor", "room-b-motion")]),
+    ):
+        _assert_stable_mapping(sensor, field, source)
+
+
+async def test_options_flow_confirms_only_available_unpinned_mapping_fields(
+    hass: HomeAssistant,
+) -> None:
+    """Test partial explicit mappings stay intact and missing sources are skipped."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    climate = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "partial-zone-climate",
+        config_entry=source_entry,
+        suggested_object_id="partial_zone",
+    )
+    temperature = registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "partial-zone-temperature",
+        config_entry=source_entry,
+        suggested_object_id="partial_zone_temperature",
+    )
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_CLIMATE_ENTITY_ID: climate.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: _stable_reference(climate),
+                }
+            ]
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id=climate.entity_id,
+                temperature_entity_id=temperature.entity_id,
+                occupancy_entity_id="binary_sensor.missing",
+            )
+        ],
+        sensors=[],
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "confirm_automatic_mappings"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["description_placeholders"] == {
+        "thermostat_count": "1",
+        "sensor_count": "0",
+        "entity_count": "1",
+    }
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+    reload.assert_called_once_with(entry.entry_id)
+    thermostat = result["data"][CONF_THERMOSTATS][0]
+    _assert_stable_mapping(thermostat, CONF_CLIMATE_ENTITY_ID, climate)
+    _assert_stable_mapping(thermostat, CONF_TEMPERATURE_ENTITY_ID, temperature)
+    assert CONF_OCCUPANCY_ENTITY_ID not in thermostat
+    assert entity_reference_field(CONF_OCCUPANCY_ENTITY_ID) not in thermostat
+
+
+async def test_options_flow_automatic_mapping_confirmation_fails_closed(
+    hass: HomeAssistant,
+) -> None:
+    """Test missing registry sources and explicit mappings cause no update."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id="climate.missing",
+            )
+        ],
+        sensors=[],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "confirm_automatic_mappings"},
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_automatic_mappings"
+    reload.assert_not_called()
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    source = er.async_get(hass).async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "explicit-zone",
+        config_entry=source_entry,
+        suggested_object_id="explicit_zone",
+    )
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_CLIMATE_ENTITY_ID: source.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: _stable_reference(source),
+                }
+            ]
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id=source.entity_id,
+            )
+        ],
+        sensors=[],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": "confirm_automatic_mappings"},
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_automatic_mappings"
+    reload.assert_not_called()
 
 
 async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
@@ -2205,6 +2473,9 @@ def _configured_thermostat(
     name: str,
     slug: str,
     climate_entity_id: str | None = None,
+    temperature_entity_id: str | None = None,
+    occupancy_entity_id: str | None = None,
+    motion_entity_id: str | None = None,
     device_id: str | None = None,
     filter_change_day_runtime_baseline_seconds: float | None = None,
     filter_changed_date: date | None = None,
@@ -2217,6 +2488,9 @@ def _configured_thermostat(
         name=name,
         slug=slug,
         climate_entity_id=climate_entity_id,
+        temperature_entity_id=temperature_entity_id,
+        occupancy_entity_id=occupancy_entity_id,
+        motion_entity_id=motion_entity_id,
         device_id=device_id,
         filter_changed_date=filter_changed_date,
         filter_changed_at=filter_changed_at,
@@ -2233,6 +2507,9 @@ def _configured_sensor(
     sensor_id: int,
     name: str,
     slug: str,
+    temperature_entity_id: str | None = None,
+    occupancy_entity_id: str | None = None,
+    motion_entity_id: str | None = None,
     device_id: str | None = None,
 ) -> ConfiguredSensor:
     return ConfiguredSensor(
@@ -2245,5 +2522,26 @@ def _configured_sensor(
         include_air_quality=False,
         include_co2=False,
         include_voc=False,
+        temperature_entity_id=temperature_entity_id,
+        occupancy_entity_id=occupancy_entity_id,
+        motion_entity_id=motion_entity_id,
         device_id=device_id,
     )
+
+
+def _stable_reference(entry: Any) -> dict[str, str]:
+    return {
+        "registry_entry_id": entry.id,
+        "domain": entry.entity_id.split(".", 1)[0],
+        "platform": entry.platform,
+        "unique_id": entry.unique_id,
+    }
+
+
+def _assert_stable_mapping(
+    row: dict[str, Any],
+    field: str,
+    entry: Any,
+) -> None:
+    assert row[field] == entry.entity_id
+    assert row[entity_reference_field(field)] == _stable_reference(entry)
