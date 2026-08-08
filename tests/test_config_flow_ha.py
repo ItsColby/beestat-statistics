@@ -192,6 +192,25 @@ async def test_legacy_http_entry_fails_before_transport_and_creates_repair(
     assert ir.async_get(hass).async_get_issue(DOMAIN, "insecure_api_base")
 
 
+async def test_legacy_invalid_https_entry_fails_before_transport_and_creates_repair(
+    hass: HomeAssistant,
+) -> None:
+    """Test an invalid HTTPS entry is blocked with an accurate setup error."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            CONF_API_KEY: "synthetic-key",
+            CONF_API_BASE: "https://api.example.test/?mode=test",
+        },
+    )
+
+    with pytest.raises(ConfigEntryError, match="invalid or insecure"):
+        await async_setup_entry_impl(hass, entry)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "insecure_api_base")
+
+
 async def test_mapped_entities_relink_across_source_registry_lifecycle(
     hass: HomeAssistant,
 ) -> None:
@@ -1924,6 +1943,194 @@ async def test_options_flow_updates_room_sensor_mapping(hass: HomeAssistant) -> 
             },
         }
     ]
+
+
+async def test_options_flow_resolves_renamed_thermostat_mapping_default(
+    hass: HomeAssistant,
+) -> None:
+    """Test a stable thermostat reference supplies the current entity ID."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    source = entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate",
+        config_entry=source_entry,
+        suggested_object_id="zone_a",
+    )
+    original_entity_id = source.entity_id
+    renamed_entity_id = "climate.zone_a_renamed"
+    source_reference = {
+        "registry_entry_id": source.id,
+        "domain": "climate",
+        "platform": "homekit_controller",
+        "unique_id": "source-climate",
+    }
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_CLIMATE_ENTITY_ID: original_entity_id,
+                    CONF_CLIMATE_ENTITY_REF: source_reference,
+                }
+            ],
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+    )
+    entity_registry.async_update_entity(
+        original_entity_id,
+        new_entity_id=renamed_entity_id,
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat_mapping"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ID: "1001"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert _suggested_values(result)[CONF_CLIMATE_ENTITY_ID] == renamed_entity_id
+    assert entry.options[CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_ID] == (
+        original_entity_id
+    )
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_CLIMATE_ENTITY_ID: renamed_entity_id},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_ID] == (
+        renamed_entity_id
+    )
+    assert result["data"][CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_REF] == (
+        source_reference
+    )
+
+
+async def test_options_flow_recovers_temporarily_missing_room_sensor_default(
+    hass: HomeAssistant,
+) -> None:
+    """Test a missing stable source is blank and resolves after restoration."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    source = entity_registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "room-sensor-b-temperature",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_b_temperature",
+    )
+    original_entity_id = source.entity_id
+    source_reference = {
+        "registry_entry_id": source.id,
+        "domain": "sensor",
+        "platform": "homekit_controller",
+        "unique_id": "room-sensor-b-temperature",
+    }
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2002,
+                    CONF_TEMPERATURE_ENTITY_ID: original_entity_id,
+                    CONF_TEMPERATURE_ENTITY_REF: source_reference,
+                }
+            ],
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[],
+        sensors=[
+            _configured_sensor(
+                sensor_id=2002,
+                name="Room Sensor B",
+                slug="room_sensor_b",
+            )
+        ],
+    )
+    entity_registry.async_remove(original_entity_id)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "sensor_mapping"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ID: "2002"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert CONF_TEMPERATURE_ENTITY_ID not in _suggested_values(result)
+    assert entry.options[CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_ID] == (
+        original_entity_id
+    )
+
+    restored = entity_registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "room-sensor-b-temperature",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_b_temperature_restored",
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "sensor_mapping"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ID: "2002"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert _suggested_values(result)[CONF_TEMPERATURE_ENTITY_ID] == restored.entity_id
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_TEMPERATURE_ENTITY_ID: restored.entity_id},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_ID] == (
+        restored.entity_id
+    )
+    assert result["data"][CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_REF] == (
+        source_reference
+    )
+
+
+def _suggested_values(result: dict[str, Any]) -> dict[str, Any]:
+    """Return suggested values attached to one Home Assistant flow schema."""
+
+    return {
+        marker.schema: marker.description["suggested_value"]
+        for marker in result["data_schema"].schema
+        if marker.description is not None and "suggested_value" in marker.description
+    }
 
 
 def _add_mock_entry(

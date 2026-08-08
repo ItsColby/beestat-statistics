@@ -104,6 +104,26 @@ def resolve_override_entity_id(
     return _nonempty_string(override.get(entity_id_field))
 
 
+def mapping_form_defaults(
+    registry: Any,
+    override: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> dict[str, Any]:
+    """Return form defaults with stable references resolved to current IDs."""
+
+    defaults = dict(override)
+    for field in fields:
+        reference_field = entity_reference_field(field)
+        if reference_field not in override:
+            continue
+        entity_id = resolve_entity_reference(registry, override.get(reference_field))
+        if entity_id is None:
+            defaults.pop(field, None)
+        else:
+            defaults[field] = entity_id
+    return defaults
+
+
 def has_explicit_entity_mapping(
     override: Mapping[str, Any],
     fields: tuple[str, ...],

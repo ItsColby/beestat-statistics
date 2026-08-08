@@ -86,6 +86,7 @@ from .const import (
 from .entity_reference import (
     SENSOR_STABLE_ENTITY_FIELDS,
     THERMOSTAT_STABLE_ENTITY_FIELDS,
+    mapping_form_defaults,
     mapping_updates_with_entity_references,
 )
 from .issues import (
@@ -690,6 +691,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         defaults = _override_defaults(
             self.config_entry,
             self._thermostat_id,
+            er.async_get(self.hass),
             thermostats=True,
         )
         defaults = {
@@ -786,6 +788,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         defaults = _override_defaults(
             self.config_entry,
             self._sensor_id,
+            er.async_get(self.hass),
             thermostats=False,
         )
         return self.async_show_form(
@@ -1176,12 +1179,16 @@ def _selection_errors(options: list[SelectOptionDict]) -> dict[str, str]:
 def _override_defaults(
     entry: config_entries.ConfigEntry,
     item_id: int,
+    entity_registry: Any,
     *,
     thermostats: bool,
 ) -> dict[str, Any]:
     key = "thermostats" if thermostats else "sensors"
+    fields = (
+        THERMOSTAT_STABLE_ENTITY_FIELDS if thermostats else SENSOR_STABLE_ENTITY_FIELDS
+    )
     config_data = entry_runtime_config_data(entry)
     for item in config_data.get(key, ()):
         if isinstance(item, Mapping) and int(item.get(CONF_ID, -1)) == item_id:
-            return dict(item)
+            return mapping_form_defaults(entity_registry, item, fields)
     return {}

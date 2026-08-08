@@ -44,9 +44,9 @@
   stable-slug history overlap.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client
-  or exposing the API key to transport. A legacy insecure entry fails setup,
-  creates an actionable Repair, and remains uncontacted until Reconfigure saves
-  a secure URL.
+  or exposing the API key to transport. A legacy invalid or insecure entry
+  fails setup, creates an actionable Repair, and remains uncontacted until
+  Reconfigure saves a valid secure URL.
 - Config-entry `options` owns persistent behavior: import timing, selected
   Beestat source scope, and local mapping/filter/statistic overrides. Options
   save through native Home Assistant flows and reload the entry. Source scope
@@ -87,6 +87,9 @@
   the UUID first and the source tuple second so renames and registry recreation
   do not require a Beestat config-entry recreation. An unresolved stable
   reference is authoritative and must not fall back to mutable name matching.
+  Options forms resolve the reference to the current entity ID for suggested
+  values without rewriting storage; a temporarily unresolved source appears
+  unselected while its stored reference remains recoverable.
   Existing UI mappings gain references through the versioned minor migration
   only when their current registry entry can be proven. YAML remains the
   portable entity-ID owner and is never silently rewritten; an unresolved YAML

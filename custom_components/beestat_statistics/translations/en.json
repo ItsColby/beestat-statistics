@@ -167,7 +167,7 @@
       },
       "account_change_confirm": {
         "title": "Confirm Beestat account change",
-        "description": "The validated API key belongs to a different Beestat account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this account change and history boundary are intentional."
+        "description": "The validated API key does not share any known thermostat anchors with the saved connection and may belong to a different Beestat account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this possible account change and history boundary are intentional."
       }
     },
     "error": {
@@ -227,8 +227,8 @@
       "description": "Beestat Statistics has advanced entity overrides that no longer point to existing Home Assistant entities: {entities}. Update or remove those overrides, then reload the integration."
     },
     "insecure_api_base": {
-      "title": "Beestat API URL is not secure",
-      "description": "Beestat Statistics will not send the API key to the configured URL because it does not use HTTPS. Open Reconfigure and select an HTTPS API URL. The saved URL was not contacted."
+      "title": "Beestat API URL is invalid or insecure",
+      "description": "Beestat Statistics will not send the API key because the configured URL is invalid or does not meet the HTTPS safety requirements. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment. The saved URL was not contacted."
     },
     "yaml_connection_change_requires_reconfigure": {
       "title": "Beestat YAML connection change needs confirmation",

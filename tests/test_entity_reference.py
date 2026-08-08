@@ -143,6 +143,76 @@ class EntityReferenceTest(unittest.TestCase):
             "climate.zone_a",
         )
 
+    def test_mapping_form_defaults_resolve_without_rewriting_storage(self) -> None:
+        source = FakeEntityEntry(
+            "registry-a",
+            "climate.zone_a_renamed",
+            "climate",
+            "homekit_controller",
+            "source-climate",
+        )
+        registry = FakeEntityRegistry([source])
+        reference = entity_reference.entity_reference_from_registry(
+            registry,
+            source.entity_id,
+        )
+        stored = {
+            "id": 1001,
+            "climate_entity_id": "climate.zone_a",
+            "climate_entity_ref": reference,
+            "filter_notice_days": 14,
+        }
+
+        defaults = entity_reference.mapping_form_defaults(
+            registry,
+            stored,
+            entity_reference.THERMOSTAT_STABLE_ENTITY_FIELDS,
+        )
+
+        self.assertEqual(defaults["climate_entity_id"], source.entity_id)
+        self.assertEqual(defaults["filter_notice_days"], 14)
+        self.assertEqual(stored["climate_entity_id"], "climate.zone_a")
+
+    def test_mapping_form_defaults_hide_missing_source_and_recover(self) -> None:
+        reference = {
+            "registry_entry_id": "registry-a",
+            "domain": "sensor",
+            "platform": "homekit_controller",
+            "unique_id": "room-sensor-a-temperature",
+        }
+        stored = {
+            "id": 2001,
+            "temperature_entity_id": "sensor.room_sensor_a_temperature",
+            "temperature_entity_ref": reference,
+        }
+        registry = FakeEntityRegistry([])
+
+        missing_defaults = entity_reference.mapping_form_defaults(
+            registry,
+            stored,
+            entity_reference.SENSOR_STABLE_ENTITY_FIELDS,
+        )
+
+        self.assertNotIn("temperature_entity_id", missing_defaults)
+        registry.entries = [
+            FakeEntityEntry(
+                "registry-b",
+                "sensor.room_sensor_a_temperature_restored",
+                "sensor",
+                "homekit_controller",
+                "room-sensor-a-temperature",
+            )
+        ]
+        restored_defaults = entity_reference.mapping_form_defaults(
+            registry,
+            stored,
+            entity_reference.SENSOR_STABLE_ENTITY_FIELDS,
+        )
+        self.assertEqual(
+            restored_defaults["temperature_entity_id"],
+            "sensor.room_sensor_a_temperature_restored",
+        )
+
     def test_migration_backfills_only_options_owned_mappings(self) -> None:
         registry = FakeEntityRegistry(
             [

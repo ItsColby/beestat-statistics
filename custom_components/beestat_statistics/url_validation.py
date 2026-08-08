@@ -22,6 +22,6 @@ def normalize_api_base(value: object) -> str:
         raise ValueError("Invalid Beestat API URL")
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("Beestat API URL must not contain user information")
-    if parsed.query or parsed.fragment:
+    if parsed.query or parsed.fragment or "?" in text or "#" in text:
         raise ValueError("Beestat API URL must not contain a query or fragment")
     return text

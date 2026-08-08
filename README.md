@@ -130,7 +130,7 @@ Advanced room-sensor override fields:
 - `include_temperature`, `include_air_quality`, `include_co2`, `include_voc`: override which Beestat point-history fields are imported as Recorder statistics.
 - `enabled`: set to `false` to ignore a Beestat room sensor.
 
-To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation before replacing the connection with a key from a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
+To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation when the validated connection does not share any known thermostat anchors with the saved connection and may belong to a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed possible account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
 
 Do not rotate credentials for an existing YAML-managed entry by editing YAML
 alone when the replacement may belong to another account. Use **Reconfigure**
@@ -323,7 +323,7 @@ Removing the integration stops future imports and removes the integration's nati
 ## Troubleshooting
 
 - Check the Beestat Statistics **Status** sensor first. Its attributes include the latest error, runtime fetch time, summary row count, import mode/window/fallback details, automatic filter-alert dismissal results, and latest import row count.
-- If setup reports an insecure API URL, open **Reconfigure** and save an HTTPS URL. The integration does not contact the insecure endpoint.
+- If setup reports an invalid or insecure API URL, open **Reconfigure** and save a valid HTTPS URL without user information, a query, or a fragment. The integration does not contact the rejected endpoint.
 - If setup cannot identify the account, confirm that the Beestat account currently exposes at least one thermostat; the integration will not reuse an older account fingerprint for an empty response.
 - If summary dates lag, press **Refresh Runtime** or call `beestat_statistics.import_statistics` without `skip_sync`.
 - If Home Assistant asks for reauthentication, enter a current Beestat API key in the reauth flow.

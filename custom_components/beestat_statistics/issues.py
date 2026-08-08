@@ -17,7 +17,7 @@ def async_set_insecure_api_base_issue(
     *,
     active: bool,
 ) -> None:
-    """Create or clear the Repair for a credential-bearing HTTP API URL."""
+    """Create or clear the Repair for an invalid credential-bearing API URL."""
 
     if not active:
         ir.async_delete_issue(hass, DOMAIN, INSECURE_API_BASE_ISSUE_ID)

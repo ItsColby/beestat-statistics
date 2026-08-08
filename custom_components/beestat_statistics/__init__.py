@@ -1316,7 +1316,7 @@ def _validated_entry_api_base(
     except ValueError as err:
         async_set_insecure_api_base_issue(hass, active=True)
         raise ConfigEntryError(
-            "Beestat API URL must use HTTPS; use Reconfigure to correct it"
+            "Beestat API URL is invalid or insecure; use Reconfigure to correct it"
         ) from err
     async_set_insecure_api_base_issue(hass, active=False)
     return api_base
