@@ -9,6 +9,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from scripts.run_dependency_light_tests import discover_home_assistant_test_files
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -387,6 +389,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(
             (ROOT / "custom_components/beestat_statistics/brand/icon.png").is_file()
         )
+        release_notes = (ROOT / "RELEASE_NOTES.md").read_text(encoding="utf-8")
+        self.assertTrue(
+            release_notes.startswith(f"# Beestat Statistics v{manifest['version']}\n")
+        )
 
     def test_quality_scale_tracks_claimed_home_assistant_rules(self) -> None:
         quality_scale_path = (
@@ -470,7 +476,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         mypy_install = "python -m pip install --upgrade mypy"
         pip_check = "python -m pip check"
-        ha_pytest = "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+        ha_pytest = "pytest tests -q"
         self.assertLess(
             workflow.index(requirements_install), workflow.index(mypy_install)
         )
@@ -495,10 +501,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertLess(current_pip_check_position, current_pytest_position)
         self.assertFalse((ROOT / "scripts/check_ha_patch_compatibility.py").exists())
         self.assertFalse((ROOT / "tests/test_ha_patch_compatibility.py").exists())
-        self.assertIn(
-            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q",
-            workflow,
-        )
+        self.assertEqual(2, workflow.count(ha_pytest))
         self.assertNotIn("astral-sh/ruff-action@", workflow)
         self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn(
@@ -556,10 +559,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "custom_components tests scripts",
             readme,
         )
-        self.assertIn(
-            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q",
-            readme,
-        )
+        self.assertIn("pytest tests -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
 
     def test_ruff_policy_is_repository_owned_and_high_signal(self) -> None:
@@ -611,7 +611,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
             "python -m pip install --upgrade -r requirements-ha-test.txt\n"
             "python -m pip check\n"
-            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+            "pytest tests -q"
         )
         docker_commands = (
             "python -m pip install --upgrade pip && "
@@ -619,13 +619,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "pytest-homeassistant-custom-component==0.13.354 && "
             "python -m pip install --upgrade -r requirements-ha-test.txt && "
             "python -m pip check && "
-            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+            "pytest tests -q"
         )
         current_commands = (
             "python -m pip install pytest-homeassistant-custom-component==0.13.355\n"
             "python -m pip install --upgrade -r requirements-ha-current.txt\n"
             "python -m pip check\n"
-            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+            "pytest tests -q"
         )
 
         self.assertIn(local_commands, readme)
@@ -647,7 +647,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 )
         self.assertNotIn("check_ha_test_dependencies.py", readme)
 
-    def test_declared_ha_modules_fail_closed_without_harness(self) -> None:
+    def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
@@ -655,26 +655,32 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         dependency_light_runner = (
             ROOT / "scripts/run_dependency_light_tests.py"
         ).read_text(encoding="utf-8")
-        ha_modules = (
-            "tests/test_config_flow_ha.py",
-            "tests/test_runtime_ha.py",
+        test_files = tuple(sorted((ROOT / "tests").glob("test_*.py")))
+        discovered_ha_filenames = {
+            path.name for path in discover_home_assistant_test_files(test_files)
+        }
+        self.assertEqual(
+            discovered_ha_filenames,
+            {"test_config_flow_ha.py", "test_runtime_ha.py"},
+        )
+        ha_modules = tuple(
+            f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
         )
 
-        self.assertIn(f"pytest {' '.join(ha_modules)} -q", workflow)
+        self.assertEqual(2, workflow.count("pytest tests -q"))
         self.assertIn("python scripts/run_dependency_light_tests.py", workflow)
         self.assertIn(
             r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
             readme,
         )
         self.assertNotIn("python -m unittest discover -s tests", workflow)
-        self.assertIn("if path.name not in HA_TEST_FILENAMES", dependency_light_runner)
+        self.assertIn("if path not in ha_test_files", dependency_light_runner)
         for relative_path in ha_modules:
             with self.subTest(path=relative_path):
                 text = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertIn("from homeassistant", text)
                 self.assertNotIn("unittest.SkipTest", text)
                 self.assertNotIn("except ModuleNotFoundError", text)
-                self.assertIn(f'"{Path(relative_path).name}"', dependency_light_runner)
 
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
         text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
@@ -1237,7 +1243,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         mypy_install = "python -m pip install --upgrade mypy"
         pip_check = "python -m pip check"
-        ha_pytest = "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+        ha_pytest = "pytest tests -q"
         self.assertLess(
             validate.index(requirements_install), validate.index(mypy_install)
         )

@@ -21,10 +21,13 @@
   each requirements owner, CI label, documentation, and assertion with the
   support contract it represents; advance the HACS and blueprint minima only
   when the distribution floor changes.
-- `scripts/run_dependency_light_tests.py` owns local and CI selection of tests
-  that do not import Home Assistant. The declared HA modules import the real
-  harness unconditionally so either hosted HA lane fails collection instead of
-  passing through module-level skips when its dependencies are unavailable.
+- `scripts/run_dependency_light_tests.py` uses direct-import AST discovery to
+  select tests that do not require Home Assistant. Both hosted HA lanes run the
+  complete `tests/` tree, so a newly added module needs no second file-list
+  update and cannot miss the HA lane. The HA modules import the real harness
+  unconditionally so either hosted lane fails collection instead of passing
+  through module-level skips when its dependencies are unavailable; discovering
+  no HA modules also fails the dependency-light selector closed.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
   working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
@@ -104,9 +107,15 @@
   thermostat and room-sensor match in one transaction. It derives the
   candidate solely from the coordinator's cached normalized configuration and
   the in-memory entity registry, stores the same stable references as an
-  individual mapping, leaves missing or ambiguous matches unresolved, preserves
-  unrelated options, and causes at most one config-entry reload. It never
-  silently persists name matches without explicit confirmation.
+  individual mapping, leaves missing, ambiguous, and cross-row conflicting
+  matches unresolved, preserves unrelated options, and causes at most one
+  config-entry reload. A local source device may be claimed by at most one
+  automatic Beestat thermostat or room-sensor row; a higher-confidence unique
+  name match wins over a weaker fallback, while explicit mappings reserve their
+  source device. Bulk confirmation shows the exact entity candidates and
+  recomputes them against current cached mappings and options before saving;
+  target drift requires confirmation again. It never silently persists name
+  matches without explicit confirmation.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate

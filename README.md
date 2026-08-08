@@ -81,7 +81,7 @@ Configuration fields:
 
 By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched. Open the integration options and choose **Choose Beestat sources** to include only a subset. Newly discovered active sources remain included by default; explicit exclusions are preserved across discovery refreshes. Excluding a source stops its native entities from updating and omits it from future statistics imports, but does not delete external Recorder statistics already imported for it.
 
-Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Ambiguous duplicate name matches are left as Beestat-only fallback devices; use advanced overrides to pin those.
+Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Automatic mappings are one-to-one: when multiple Beestat sources compete for the same local device at the same confidence, every conflicting source remains unresolved; a unique name match can win over a weaker single-device fallback. Explicit mappings reserve their local device from automatic reuse. Use the mapping options to resolve conflicts deliberately.
 
 Advanced YAML can pin Beestat IDs to existing HomeKit entities when automatic name matching is not enough:
 
@@ -101,7 +101,7 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review and pin all current unambiguous HomeKit thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing or ambiguous matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all current unambiguous thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. The confirmation recomputes against current cached mappings and options immediately before saving: a changed target is shown again for confirmation, and unrelated concurrent option changes are preserved. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing, ambiguous, or conflicting matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
 
 Advanced thermostat override fields:
 
@@ -375,7 +375,7 @@ Supported-minimum lane:
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pip check
-pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+pytest tests -q
 ```
 
 Current same-month patch lane:
@@ -384,13 +384,13 @@ Current same-month patch lane:
 python -m pip install pytest-homeassistant-custom-component==0.13.355
 python -m pip install --upgrade -r requirements-ha-current.txt
 python -m pip check
-pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+pytest tests -q
 ```
 
 On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest

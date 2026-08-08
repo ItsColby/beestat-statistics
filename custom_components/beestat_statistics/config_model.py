@@ -100,6 +100,16 @@ class LocalEcobeeDevice:
 
 
 @dataclass(frozen=True, slots=True)
+class _LocalMatchCandidate:
+    """One explicit or automatic local-device candidate for a Beestat source."""
+
+    resource_id: int
+    device: LocalEcobeeDevice
+    explicit: bool
+    priority: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConfiguredThermostat:
     """One Beestat thermostat mapped to local HomeKit/Ecobee identity."""
 
@@ -386,9 +396,8 @@ def _build_thermostats(
     overrides: dict[int, dict[str, Any]],
     local_devices: tuple[LocalEcobeeDevice, ...],
 ) -> tuple[ConfiguredThermostat, ...]:
-    thermostats: list[ConfiguredThermostat] = []
+    items: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     seen: set[int] = set()
-    used_slugs: set[str] = set()
     local_thermostats = tuple(
         device for device in local_devices if device.is_thermostat
     )
@@ -404,6 +413,32 @@ def _build_thermostats(
             continue
         if _bool(row.get("inactive")) and thermostat_id not in overrides:
             continue
+        items.append((thermostat_id, row, override))
+        seen.add(thermostat_id)
+
+    for thermostat_id, override in sorted(overrides.items()):
+        if thermostat_id in seen or _is_disabled(override):
+            continue
+        items.append((thermostat_id, {}, override))
+
+    local_by_id = _resolve_unique_local_matches(
+        tuple(
+            candidate
+            for thermostat_id, row, override in items
+            if (
+                candidate := _thermostat_match_candidate(
+                    thermostat_id,
+                    row,
+                    override,
+                    local_thermostats,
+                )
+            )
+            is not None
+        )
+    )
+    thermostats: list[ConfiguredThermostat] = []
+    used_slugs: set[str] = set()
+    for thermostat_id, row, override in items:
         thermostats.append(
             _thermostat_from_row(
                 hass,
@@ -411,22 +446,7 @@ def _build_thermostats(
                 override,
                 used_slugs,
                 thermostat_id,
-                local_thermostats,
-            )
-        )
-        seen.add(thermostat_id)
-
-    for thermostat_id, override in sorted(overrides.items()):
-        if thermostat_id in seen or _is_disabled(override):
-            continue
-        thermostats.append(
-            _thermostat_from_row(
-                hass,
-                {},
-                override,
-                used_slugs,
-                thermostat_id,
-                local_thermostats,
+                local_by_id.get(thermostat_id),
             )
         )
 
@@ -439,9 +459,8 @@ def _thermostat_from_row(
     override: dict[str, Any],
     used_slugs: set[str],
     thermostat_id: int,
-    local_thermostats: tuple[LocalEcobeeDevice, ...],
+    local: LocalEcobeeDevice | None,
 ) -> ConfiguredThermostat:
-    local = _match_local_thermostat(row, override, local_thermostats)
     fallback_name = (
         _string_or_none(row.get("name"))
         or (local.name if local else None)
@@ -505,9 +524,8 @@ def _build_sensors(
     thermostats: tuple[ConfiguredThermostat, ...],
     local_devices: tuple[LocalEcobeeDevice, ...],
 ) -> tuple[ConfiguredSensor, ...]:
-    sensors: list[ConfiguredSensor] = []
+    items: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     seen: set[int] = set()
-    used_slugs: set[str] = set()
     thermostat_by_id = {
         thermostat.thermostat_id: thermostat for thermostat in thermostats
     }
@@ -526,6 +544,40 @@ def _build_sensors(
             continue
         if _bool(row.get("inactive")) and sensor_id not in overrides:
             continue
+        items.append((sensor_id, row, override))
+        seen.add(sensor_id)
+
+    for sensor_id, override in sorted(overrides.items()):
+        if sensor_id in seen or _is_disabled(override):
+            continue
+        items.append((sensor_id, {}, override))
+
+    local_by_id = _resolve_unique_local_matches(
+        tuple(
+            candidate
+            for sensor_id, row, override in items
+            if not (
+                _is_thermostat_sensor(row)
+                and (
+                    _row_int(override, CONF_THERMOSTAT_ID)
+                    or _row_int(row, "thermostat_id")
+                )
+                in thermostat_by_id
+            )
+            if (
+                candidate := _sensor_match_candidate(
+                    sensor_id,
+                    row,
+                    override,
+                    local_sensors,
+                )
+            )
+            is not None
+        )
+    )
+    sensors: list[ConfiguredSensor] = []
+    used_slugs: set[str] = set()
+    for sensor_id, row, override in items:
         sensors.append(
             _sensor_from_row(
                 row,
@@ -533,28 +585,14 @@ def _build_sensors(
                 used_slugs,
                 sensor_id,
                 thermostat_by_id,
-                local_sensors,
+                local_by_id.get(sensor_id),
                 default_include_temperature=_sensor_supports(
                     row,
                     _TEMPERATURE_CAPABILITIES,
                     fallback_field="temperature",
-                ),
-            )
-        )
-        seen.add(sensor_id)
-
-    for sensor_id, override in sorted(overrides.items()):
-        if sensor_id in seen or _is_disabled(override):
-            continue
-        sensors.append(
-            _sensor_from_row(
-                {},
-                override,
-                used_slugs,
-                sensor_id,
-                thermostat_by_id,
-                local_sensors,
-                default_include_temperature=True,
+                )
+                if row
+                else True,
             )
         )
 
@@ -567,7 +605,7 @@ def _sensor_from_row(
     used_slugs: set[str],
     sensor_id: int,
     thermostat_by_id: dict[int, ConfiguredThermostat],
-    local_sensors: tuple[LocalEcobeeDevice, ...],
+    local: LocalEcobeeDevice | None,
     *,
     default_include_temperature: bool,
 ) -> ConfiguredSensor:
@@ -578,7 +616,6 @@ def _sensor_from_row(
     thermostat = (
         thermostat_by_id.get(thermostat_id) if thermostat_id is not None else None
     )
-    local = _match_local_sensor(row, override, local_sensors)
     if _is_thermostat_sensor(row) and thermostat is not None:
         local = None
         fallback_name = thermostat.name
@@ -649,15 +686,16 @@ def _sensor_from_row(
     )
 
 
-def _match_local_thermostat(
+def _thermostat_match_candidate(
+    thermostat_id: int,
     row: dict[str, Any],
     override: dict[str, Any],
     local_thermostats: tuple[LocalEcobeeDevice, ...],
-) -> LocalEcobeeDevice | None:
+) -> _LocalMatchCandidate | None:
     for field in THERMOSTAT_STABLE_ENTITY_FIELDS:
         entity_id = _string_or_none(override.get(field))
         if entity_id and (local := _find_local_by_entity(local_thermostats, entity_id)):
-            return local
+            return _LocalMatchCandidate(thermostat_id, local, True, 3)
     if has_explicit_entity_mapping(override, THERMOSTAT_STABLE_ENTITY_FIELDS):
         return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
@@ -666,20 +704,21 @@ def _match_local_thermostat(
             tuple(local for local in local_thermostats if row_key in local.match_keys)
         )
         if local is not None:
-            return local
+            return _LocalMatchCandidate(thermostat_id, local, False, 2)
     strong_matches = tuple(
         local for local in local_thermostats if local.has_ecobee_signal
     )
     if len(strong_matches) == 1:
-        return strong_matches[0]
+        return _LocalMatchCandidate(thermostat_id, strong_matches[0], False, 1)
     return None
 
 
-def _match_local_sensor(
+def _sensor_match_candidate(
+    sensor_id: int,
     row: dict[str, Any],
     override: dict[str, Any],
     local_sensors: tuple[LocalEcobeeDevice, ...],
-) -> LocalEcobeeDevice | None:
+) -> _LocalMatchCandidate | None:
     for key in (
         CONF_TEMPERATURE_ENTITY_ID,
         CONF_OCCUPANCY_ENTITY_ID,
@@ -687,15 +726,51 @@ def _match_local_sensor(
     ):
         entity_id = _string_or_none(override.get(key))
         if entity_id and (local := _find_local_by_entity(local_sensors, entity_id)):
-            return local
+            return _LocalMatchCandidate(sensor_id, local, True, 3)
     if has_explicit_entity_mapping(override, SENSOR_STABLE_ENTITY_FIELDS):
         return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
     if row_key:
-        return _select_preferred_local_match(
+        local = _select_preferred_local_match(
             tuple(local for local in local_sensors if row_key in local.match_keys)
         )
+        if local is not None:
+            return _LocalMatchCandidate(sensor_id, local, False, 2)
     return None
+
+
+def _resolve_unique_local_matches(
+    candidates: tuple[_LocalMatchCandidate, ...],
+) -> dict[int, LocalEcobeeDevice]:
+    """Resolve automatic candidates without sharing one foreign source device."""
+
+    resolved = {
+        candidate.resource_id: candidate.device
+        for candidate in candidates
+        if candidate.explicit
+    }
+    explicitly_claimed = {
+        candidate.device.device_id for candidate in candidates if candidate.explicit
+    }
+    automatic_by_device: dict[str, list[_LocalMatchCandidate]] = {}
+    for candidate in candidates:
+        if candidate.explicit:
+            continue
+        automatic_by_device.setdefault(candidate.device.device_id, []).append(candidate)
+
+    for device_id, device_candidates in automatic_by_device.items():
+        if device_id in explicitly_claimed:
+            continue
+        highest_priority = max(candidate.priority for candidate in device_candidates)
+        winners = [
+            candidate
+            for candidate in device_candidates
+            if candidate.priority == highest_priority
+        ]
+        if len(winners) == 1:
+            winner = winners[0]
+            resolved[winner.resource_id] = winner.device
+    return resolved
 
 
 def _select_preferred_local_match(

@@ -347,7 +347,7 @@
       },
       "confirm_automatic_mappings": {
         "title": "Confirm automatic HomeKit mappings",
-        "description": "Home Assistant found {thermostat_count} thermostat mapping(s) and {sensor_count} room-sensor mapping(s), covering {entity_count} local entities. Confirm to pin all of these current ambiguity-safe matches through stable entity-registry references in one update. Missing or ambiguous matches remain automatic and unresolved."
+        "description": "Home Assistant found {thermostat_count} thermostat mapping(s) and {sensor_count} room-sensor mapping(s), covering {entity_count} local entities. Review the exact cached matches below, then confirm to pin them through stable entity-registry references in one update. If a match changes while this page is open, Home Assistant shows the refreshed list for confirmation again. Missing, ambiguous, or conflicting matches remain unresolved.\n\n{mapping_details}"
       },
       "thermostat_mapping": {
         "title": "Map a Beestat thermostat",

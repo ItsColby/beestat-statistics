@@ -1,7 +1,7 @@
 """Home Assistant harness tests for Beestat Statistics.
 
 These tests exercise the real Home Assistant flow manager and registry helpers.
-They intentionally fail collection when the declared HA harness is unavailable.
+They intentionally fail collection when the discovered HA harness is unavailable.
 """
 
 from __future__ import annotations
@@ -1557,11 +1557,28 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
         )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "confirm_automatic_mappings"
-    assert result["description_placeholders"] == {
+    assert {
+        key: value
+        for key, value in result["description_placeholders"].items()
+        if key != "mapping_details"
+    } == {
         "thermostat_count": "1",
         "sensor_count": "1",
         "entity_count": "7",
     }
+    mapping_details = result["description_placeholders"]["mapping_details"]
+    assert "Zone A" in mapping_details
+    assert sources[("climate", "zone-a-climate")].entity_id in mapping_details
+    assert "Room B" in mapping_details
+    assert sources[("sensor", "room-b-temperature")].entity_id in mapping_details
+
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **dict(entry.options),
+            "concurrent_after_preview": {"preserve": True},
+        },
+    )
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         result = await hass.config_entries.options.async_configure(
@@ -1572,6 +1589,7 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     reload.assert_called_once_with(entry.entry_id)
     assert result["data"]["future_option"] == {"preserve": True}
+    assert result["data"]["concurrent_after_preview"] == {"preserve": True}
     thermostat = result["data"][CONF_THERMOSTATS][0]
     sensor = result["data"][CONF_SENSORS][0]
     assert thermostat[CONF_FILTER_NOTICE_DAYS] == 12
@@ -1595,6 +1613,83 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
         (CONF_MOTION_ENTITY_ID, sources[("binary_sensor", "room-b-motion")]),
     ):
         _assert_stable_mapping(sensor, field, source)
+
+
+async def test_options_flow_reconfirms_changed_automatic_mapping_preview(
+    hass: HomeAssistant,
+) -> None:
+    """Test registry/runtime drift is shown again before the current target saves."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    first = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "zone-a-first",
+        config_entry=source_entry,
+        suggested_object_id="zone_a_first",
+    )
+    second = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "zone-a-second",
+        config_entry=source_entry,
+        suggested_object_id="zone_a_second",
+    )
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id=first.entity_id,
+            )
+        ],
+        sensors=[],
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "confirm_automatic_mappings"},
+    )
+    assert first.entity_id in result["description_placeholders"]["mapping_details"]
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+                climate_entity_id=second.entity_id,
+            )
+        ],
+        sensors=[],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "confirm_automatic_mappings"
+    assert second.entity_id in result["description_placeholders"]["mapping_details"]
+    reload.assert_not_called()
+
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    reload.assert_called_once_with(entry.entry_id)
+    _assert_stable_mapping(
+        result["data"][CONF_THERMOSTATS][0],
+        CONF_CLIMATE_ENTITY_ID,
+        second,
+    )
 
 
 async def test_options_flow_confirms_only_available_unpinned_mapping_fields(
@@ -1651,11 +1746,18 @@ async def test_options_flow_confirms_only_available_unpinned_mapping_fields(
         {"next_step_id": "confirm_automatic_mappings"},
     )
     assert result["type"] is FlowResultType.FORM
-    assert result["description_placeholders"] == {
+    assert {
+        key: value
+        for key, value in result["description_placeholders"].items()
+        if key != "mapping_details"
+    } == {
         "thermostat_count": "1",
         "sensor_count": "0",
         "entity_count": "1",
     }
+    assert (
+        temperature.entity_id in result["description_placeholders"]["mapping_details"]
+    )
 
     with patch.object(hass.config_entries, "async_schedule_reload") as reload:
         result = await hass.config_entries.options.async_configure(
@@ -1814,6 +1916,14 @@ async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
         {CONF_ID: 1002, "enabled": False},
     ]
 
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            **dict(entry.options),
+            "concurrent_after_preview": {"preserve": True},
+        },
+    )
+
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {},
@@ -1822,6 +1932,7 @@ async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_POINT_LOOKBACK_DAYS] == 30
     assert result["data"][CONF_SCAN_INTERVAL_SECONDS] == 900
+    assert result["data"]["concurrent_after_preview"] == {"preserve": True}
     assert result["data"][CONF_THERMOSTATS] == [
         {
             CONF_ID: 1001,
@@ -1837,6 +1948,70 @@ async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
         }
     ]
     assert entry.options == result["data"]
+
+
+async def test_options_flow_returns_to_source_scope_after_discovery_drift(
+    hass: HomeAssistant,
+) -> None:
+    """Test a stale destructive preview cannot commit after source discovery changes."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "included_thermostat_ids": [],
+            "included_sensor_ids": [],
+        },
+    )
+    assert result["step_id"] == "source_scope_confirm"
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            ),
+            _configured_thermostat(
+                thermostat_id=1002,
+                name="Zone B",
+                slug="zone_b",
+            ),
+        ],
+        sensors=[],
+        thermostat_rows=[
+            {"id": 1001, "name": "Zone A"},
+            {"id": 1002, "name": "Zone B"},
+        ],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope"
+    assert result["data_schema"]({})["included_thermostat_ids"] == ["1001", "1002"]
+    reload.assert_not_called()
+    assert entry.options == {}
 
 
 async def test_get_configuration_service_returns_exact_non_secret_response(
