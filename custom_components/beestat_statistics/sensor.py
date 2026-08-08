@@ -370,6 +370,7 @@ def _thermostat_sensor_descriptions(
             name="Runtime summary latest date",
             translation_key="runtime_summary_latest_date",
             device_class=SensorDeviceClass.DATE,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -391,6 +392,7 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.DAYS,
             state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -409,6 +411,7 @@ def _thermostat_sensor_descriptions(
             ),
             name="Current comfort profile",
             translation_key="current_comfort_profile",
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
@@ -487,6 +490,7 @@ def _thermostat_sensor_descriptions(
             translation_key="active_sensor_count",
             native_unit_of_measurement="sensors",
             state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
@@ -615,6 +619,7 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -635,6 +640,7 @@ def _thermostat_sensor_descriptions(
             translation_key="filter_recent_runtime_hours_per_day",
             native_unit_of_measurement="h/d",
             state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -656,6 +662,7 @@ def _thermostat_sensor_descriptions(
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
@@ -683,6 +690,7 @@ def _thermostat_sensor_descriptions(
             name="Filter runtime due date",
             translation_key="filter_runtime_due_date",
             device_class=SensorDeviceClass.DATE,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
@@ -710,6 +718,7 @@ def _thermostat_sensor_descriptions(
             name="Filter max age due date",
             translation_key="filter_max_age_due_date",
             device_class=SensorDeviceClass.DATE,
+            entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
@@ -860,7 +869,7 @@ def _filter_forecast(
     thermostat = _thermostat_config(coordinator, thermostat_id)
     if data is None or thermostat is None:
         return None
-    today = data.fetched_at.astimezone(coordinator.local_tz).date()
+    today = data.projected_at.astimezone(coordinator.local_tz).date()
     return build_filter_forecast(
         thermostat,
         data.thermostats.get(thermostat_id),

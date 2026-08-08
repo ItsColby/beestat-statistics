@@ -97,6 +97,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                 sensors=(sensor,),
             ),
             fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
+            projected_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),
@@ -183,7 +184,23 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertFalse(by_key["filter_due"].is_on)
         self.assertTrue(by_key["filter_due_soon"].is_on)
         self.assertTrue(by_key["runtime_summary_stale"].is_on)
-        self.assertTrue(by_key["cloud_data_stale"].is_on)
+        cloud_stale = by_key["cloud_data_stale"]
+        self.assertTrue(cloud_stale.is_on)
+        self.assertEqual(
+            cloud_stale.extra_state_attributes,
+            {"lag_minutes": 180, "threshold_minutes": 120},
+        )
+        metadata = data.thermostat_metadata[1]
+        fake_coordinator.data = replace(
+            data,
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=120)},
+        )
+        self.assertFalse(cloud_stale.is_on)
+        fake_coordinator.data = replace(
+            data,
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=121)},
+        )
+        self.assertTrue(cloud_stale.is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
         self.assertEqual(
             by_key["statistics_import_partial"].extra_state_attributes[
@@ -220,6 +237,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         data = self.coordinator.BeestatRuntimeData(
             config=self.config_model.BeestatConfig(thermostats=(old,), sensors=()),
             fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
+            projected_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),
@@ -250,6 +268,51 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
 
         self.assertFalse(entity.is_on)
+
+    def test_filter_due_sensor_uses_local_projection_date(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_max_age_days=1,
+        )
+        summary = self.coordinator.ThermostatRuntimeSummary(
+            thermostat_id=1,
+            slug="zone_a",
+            label="Zone A",
+            latest_date=date(2026, 7, 5),
+            lag_days=1,
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_source="native",
+            filter_runtime_hours=0,
+            recent_runtime_hours_per_day=1,
+        )
+        data = self.coordinator.BeestatRuntimeData(
+            config=self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=(),
+            ),
+            fetched_at=datetime(2026, 7, 5, 12, tzinfo=UTC),
+            projected_at=datetime(2026, 7, 6, 4, tzinfo=UTC),
+            sync_success_at=None,
+            metadata_sync_success_at=None,
+            summary_rows=(),
+            summary_rows_full=True,
+            summary_window_start=None,
+            summary_window_end=None,
+            thermostat_rows=(),
+            sensor_rows=(),
+            summary_row_count=0,
+            thermostats={1: summary},
+            thermostat_metadata={},
+            sensor_metadata={},
+        )
+        entity = self.binary_sensor.BeestatFilterDueProblemBinarySensor(
+            _FakeCoordinator(data),
+            thermostat,
+        )
+
+        self.assertTrue(entity.is_on)
 
     def _install_fake_homeassistant_modules(self) -> None:
         aiohttp = types.ModuleType("aiohttp")
@@ -295,6 +358,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         entity_platform.AddConfigEntryEntitiesCallback = object
         event.async_call_later = lambda *_args, **_kwargs: lambda: None
+        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
         update_coordinator.CoordinatorEntity = _FakeCoordinatorEntity

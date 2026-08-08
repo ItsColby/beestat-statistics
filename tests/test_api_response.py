@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import traceback
 import types
@@ -113,6 +114,14 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             "Unexpected integration error (KeyError)",
         )
 
+    def test_client_rejects_insecure_api_base_before_transport_setup(self) -> None:
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            self.api.BeestatClient(
+                object(),
+                "secret-token",
+                "http://api.test/",
+            )
+
     def test_exception_fingerprint_is_useful_without_exception_content(self) -> None:
         err = RuntimeError("private-response-secret")
         frame = traceback.FrameSummary(str(ROOT / "synthetic.py"), 17, "fail")
@@ -175,6 +184,50 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(secret, str(raised.exception))
 
+    async def test_deterministic_http_error_is_not_retried(self) -> None:
+        session = _FakeSession([_FakeResponse({}, status=400)])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=3,
+        )
+        sleep = AsyncMock()
+
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaisesRegex(
+                self.api.BeestatApiError,
+                r"thermostat\.read_id returned HTTP 400",
+            ),
+        ):
+            await client.async_read_id("thermostat")
+
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
+    async def test_transient_http_error_is_retried(self) -> None:
+        session = _FakeSession(
+            [
+                _FakeResponse({}, status=429),
+                {"data": [{"id": 1001}]},
+            ]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=2,
+        )
+        sleep = AsyncMock()
+
+        with patch.object(self.api.asyncio, "sleep", new=sleep):
+            result = await client.async_read_id("thermostat")
+
+        self.assertEqual(result, [{"id": 1001}])
+        self.assertEqual(session.call_count, 2)
+        sleep.assert_awaited_once_with(2)
+
     async def test_invalid_json_error_does_not_expose_parser_detail(self) -> None:
         secret = "parser-response-secret"
         session = _FakeSession([_FakeResponse({}, json_error=ValueError(secret))])
@@ -193,6 +246,68 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             await client.async_read_id("thermostat")
 
         self.assertNotIn(secret, str(raised.exception))
+
+    async def test_response_body_is_rejected_at_configured_size_limit(self) -> None:
+        session = _FakeSession([{"data": [{"value": "x" * 64}]}])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+            max_response_bytes=32,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            "response exceeded the size limit",
+        ):
+            await client.async_read_id("thermostat")
+
+    async def test_response_size_limit_is_not_retried(self) -> None:
+        session = _FakeSession([{"data": [{"value": "x" * 64}]}])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=3,
+            max_response_bytes=32,
+        )
+        sleep = AsyncMock()
+
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaisesRegex(
+                self.api.BeestatApiError,
+                "response exceeded the size limit",
+            ),
+        ):
+            await client.async_read_id("thermostat")
+
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
+    async def test_streamed_body_limit_does_not_require_content_length(self) -> None:
+        session = _FakeSession(
+            [
+                _FakeResponse(
+                    {"data": [{"value": "x" * 64}]},
+                    include_content_length=False,
+                )
+            ]
+        )
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=1,
+            max_response_bytes=32,
+        )
+
+        with self.assertRaisesRegex(
+            self.api.BeestatApiError,
+            "response exceeded the size limit",
+        ):
+            await client.async_read_id("thermostat")
 
     def test_read_boolean_response_is_not_silently_empty(self) -> None:
         with self.assertRaisesRegex(
@@ -231,11 +346,15 @@ class _FakeResponse:
         status: int = 200,
         text: str | None = None,
         json_error: Exception | None = None,
+        include_content_length: bool = True,
     ) -> None:
         self.status = status
         self._payload = payload
         self._text = text
         self._json_error = json_error
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        self.content = _FakeContent(body, json_error)
+        self.content_length = len(body) if include_content_length else None
 
     async def __aenter__(self):
         return self
@@ -250,6 +369,18 @@ class _FakeResponse:
 
     async def text(self) -> str:
         return self._text if self._text is not None else str(self._payload)
+
+
+class _FakeContent:
+    def __init__(self, body: bytes, read_error: Exception | None = None) -> None:
+        self._body = body
+        self._read_error = read_error
+
+    async def iter_chunked(self, size: int):
+        if self._read_error is not None:
+            raise self._read_error
+        for offset in range(0, len(self._body), size):
+            yield self._body[offset : offset + size]
 
 
 class _FakeSession:

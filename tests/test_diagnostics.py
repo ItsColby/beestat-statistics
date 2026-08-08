@@ -133,6 +133,7 @@ class DiagnosticsTest(unittest.TestCase):
                 sensors=(sensor,),
             ),
             fetched_at=datetime(2026, 7, 5, tzinfo=UTC),
+            projected_at=datetime(2026, 7, 5, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),
@@ -304,6 +305,7 @@ class DiagnosticsTest(unittest.TestCase):
             {},
         )
         event.async_call_later = lambda *_args, **_kwargs: lambda: None
+        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
 

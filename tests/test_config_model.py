@@ -36,6 +36,8 @@ class FakeEntityEntry:
     entity_id: str
     device_id: str
     platform: str = "homekit_controller"
+    id: str = ""
+    unique_id: str = ""
     disabled_by: str | None = None
     original_device_class: object | None = None
     device_class: object | None = None
@@ -62,6 +64,33 @@ class FakeDeviceEntry:
 class FakeEntityRegistry:
     def __init__(self, entries: list[FakeEntityEntry]) -> None:
         self.entities = {entry.entity_id: entry for entry in entries}
+
+    def async_get(self, entity_id_or_uuid: str) -> FakeEntityEntry | None:
+        return next(
+            (
+                entry
+                for entry in self.entities.values()
+                if entity_id_or_uuid in (entry.entity_id, entry.id)
+            ),
+            None,
+        )
+
+    def async_get_entity_id(
+        self,
+        domain: str,
+        platform: str,
+        unique_id: str,
+    ) -> str | None:
+        return next(
+            (
+                entry.entity_id
+                for entry in self.entities.values()
+                if entry.entity_id.startswith(f"{domain}.")
+                and entry.platform == platform
+                and entry.unique_id == unique_id
+            ),
+            None,
+        )
 
 
 class FakeDeviceRegistry:
@@ -228,6 +257,114 @@ class ConfigModelTest(unittest.TestCase):
         )
         self.assertEqual(room_sensor.device_id, "sensor_room_sensor_a")
         self.assertTrue(room_sensor.include_temperature)
+
+    def test_stable_override_survives_rename_and_registry_recreation(self) -> None:
+        reference = {
+            "registry_entry_id": "registry-old",
+            "domain": "climate",
+            "platform": "homekit_controller",
+            "unique_id": "source-climate",
+        }
+        config_data = {
+            "thermostats": [
+                {
+                    "id": 1001,
+                    "climate_entity_id": "climate.zone_a",
+                    "climate_entity_ref": reference,
+                }
+            ]
+        }
+        devices = {
+            "thermostat_zone_a": FakeDeviceEntry(
+                name="Zone A",
+                identifiers=(("homekit_controller", "zone-a-device"),),
+            )
+        }
+
+        for registry_id, entity_id in (
+            ("registry-old", "climate.zone_a_renamed"),
+            ("registry-restored", "climate.zone_a_restored"),
+        ):
+            with self.subTest(registry_id=registry_id):
+                self._install_fake_homeassistant_modules(
+                    devices=devices,
+                    entries=[
+                        FakeEntityEntry(
+                            entity_id,
+                            "thermostat_zone_a",
+                            id=registry_id,
+                            unique_id="source-climate",
+                        ),
+                        FakeEntityEntry(
+                            f"sensor.{registry_id}_temperature",
+                            "thermostat_zone_a",
+                            id=f"{registry_id}-temperature",
+                            unique_id=f"{registry_id}-temperature",
+                            original_device_class="temperature",
+                        ),
+                    ],
+                )
+
+                config = config_model.build_beestat_config(
+                    FakeHass({}),
+                    thermostat_rows=({"id": 1001, "name": "Zone A"},),
+                    sensor_rows=(),
+                    config_data=config_data,
+                )
+
+                self.assertEqual(config.thermostats[0].climate_entity_id, entity_id)
+                self.assertEqual(
+                    config.thermostats[0].device_id,
+                    "thermostat_zone_a",
+                )
+
+    def test_unresolved_stable_override_does_not_fall_back_to_name(self) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                )
+            },
+            entries=[
+                FakeEntityEntry(
+                    "climate.zone_a",
+                    "thermostat_zone_a",
+                    id="different-registry-entry",
+                    unique_id="different-source",
+                ),
+                FakeEntityEntry(
+                    "sensor.zone_a_temperature",
+                    "thermostat_zone_a",
+                    id="temperature-registry-entry",
+                    unique_id="temperature-source",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=(),
+            config_data={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "climate_entity_id": "climate.zone_a",
+                        "climate_entity_ref": {
+                            "registry_entry_id": "removed-registry-entry",
+                            "domain": "climate",
+                            "platform": "homekit_controller",
+                            "unique_id": "removed-source",
+                        },
+                    }
+                ]
+            },
+        )
+
+        self.assertIsNone(config.thermostats[0].climate_entity_id)
+        self.assertIsNone(config.thermostats[0].device_id)
 
     def test_reports_explicit_override_entity_references(self) -> None:
         references = config_model.configured_override_entity_ids(

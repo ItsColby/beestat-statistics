@@ -14,7 +14,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .alerts import active_alert_examples, classify_active_alerts
 from .config_model import ConfiguredSensor, ConfiguredThermostat
-from .const import sensor_entity_unique_id, thermostat_entity_unique_id
+from .const import (
+    CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+    sensor_entity_unique_id,
+    thermostat_entity_unique_id,
+)
 from .coordinator import (
     BeestatRuntimeData,
     BeestatRuntimeDataCoordinator,
@@ -506,7 +510,7 @@ class BeestatFilterDueProblemBinarySensor(
         )
         if thermostat is None:
             return None
-        today = data.fetched_at.astimezone(self.coordinator.local_tz).date()
+        today = data.projected_at.astimezone(self.coordinator.local_tz).date()
         return build_filter_forecast(
             thermostat,
             data.thermostats.get(self._thermostat.thermostat_id),
@@ -665,7 +669,7 @@ class BeestatCloudDataStaleProblemBinarySensor(
         metadata = self._metadata
         if metadata is None or metadata.data_lag_minutes is None:
             return None
-        return metadata.data_lag_minutes > 120
+        return metadata.data_lag_minutes > CLOUD_DATA_STALE_THRESHOLD_MINUTES
 
     @property
     def extra_state_attributes(self) -> dict[str, object] | None:
@@ -674,7 +678,10 @@ class BeestatCloudDataStaleProblemBinarySensor(
         metadata = self._metadata
         if metadata is None:
             return None
-        return {"lag_minutes": metadata.data_lag_minutes, "threshold_minutes": 120}
+        return {
+            "lag_minutes": metadata.data_lag_minutes,
+            "threshold_minutes": CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+        }
 
     @property
     def _metadata(self) -> ThermostatMetadata | None:

@@ -42,7 +42,7 @@ The preferred configuration path is the Home Assistant UI. The options flow expo
 - thermostat mapping overrides
 - room-sensor mapping overrides
 
-Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
+Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
 
 YAML remains supported as an import/backward-compatibility route:
 
@@ -75,7 +75,7 @@ runtime boundary.
 Configuration fields:
 
 - `api_key`: Beestat API key.
-- `api_base`: optional Beestat API URL override. Defaults to `https://api.beestat.io/`.
+- `api_base`: optional HTTPS Beestat API URL override. Defaults to `https://api.beestat.io/`. URLs containing user information, a query, or a fragment are rejected so the API key is never sent through an ambiguous or plaintext transport.
 - `point_lookback_days`: number of recent local days to import from Beestat point-history resources. Defaults to 45 and is capped at 366.
 - `scan_interval`: YAML import interval. Defaults to 6 hours. UI options expose this as `scan_interval_seconds` with a 300-second minimum.
 
@@ -101,7 +101,7 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Automatic name matching remains an ambiguity-safe onboarding fallback only. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
 
 Advanced thermostat override fields:
 
@@ -130,7 +130,7 @@ Advanced room-sensor override fields:
 - `include_temperature`, `include_air_quality`, `include_co2`, `include_voc`: override which Beestat point-history fields are imported as Recorder statistics.
 - `enabled`: set to `false` to ignore a Beestat room sensor.
 
-To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation before replacing the connection with a key from a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
+To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation when the validated thermostat fingerprint cannot prove the connection matches the saved Beestat account and it may belong to a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed possible account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
 
 Do not rotate credentials for an existing YAML-managed entry by editing YAML
 alone when the replacement may belong to another account. Use **Reconfigure**
@@ -183,11 +183,20 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - runtime summary stale problem binary sensor
 - cloud data stale problem binary sensor
 
+Scheduled/next comfort profiles, filter due date and days remaining, alerts,
+and filter-maintenance controls form the primary thermostat surface. Beestat's
+current comfort profile is delayed cloud diagnostic context: it mirrors the
+cached `program.currentClimateRef` and is not a replacement for Home
+Assistant's local thermostat mode or active hold. Freshness dates/lags,
+active-sensor count, raw filter-runtime detail, and intermediate
+runtime/max-age forecast dates are also categorized as diagnostic. Advanced
+account-wide import counters remain disabled by default.
+
 Room-level binary sensors expose whether Beestat reports each mapped Ecobee sensor as active in the current comfort profile. When a local HomeKit/Ecobee room sensor match exists, these entities attach to that local room-sensor device.
 
 Per-thermostat alert binary sensors expose whether Beestat/Ecobee reports any active thermostat alert. Equipment-looking or unknown alerts are also surfaced through a separate problem binary sensor, so routine maintenance reminders do not make the thermostat device look failed.
 
-The integration creates a Home Assistant service device for Beestat. Thermostat and room-sensor enrichment entities link to existing HomeKit/Ecobee devices when possible without adding Beestat as an owner of those devices or rewriting their name, manufacturer, model, or configuration link; otherwise, Beestat fallback devices are created. Setup also removes legacy cross-integration device ownership while preserving each enrichment entity's device assignment. This follows Home Assistant's helper-integration device model for Core 2026.8 and later. Keep local Ecobee/HomeKit devices and entities as the primary source for current state and control.
+The integration creates a Home Assistant service device for Beestat. Thermostat and room-sensor enrichment entities link to existing HomeKit/Ecobee devices when possible without adding Beestat as an owner of those devices or rewriting their name, manufacturer, model, or configuration link; otherwise, Beestat fallback devices are created. Setup also removes legacy cross-integration device ownership while preserving each enrichment entity's device assignment. Supported registry listeners resolve confirmed source identity across entity-ID renames, moves, detaches, removal, and restoration, rebinding existing enrichment entities without recreating the Beestat config entry or contacting Beestat; the listeners are removed on unload. This follows Home Assistant's helper-integration device model for Core 2026.8 and later. Keep local Ecobee/HomeKit devices and entities as the primary source for current state and control.
 
 New active Beestat thermostats or sensors discovered after setup are added on the next successful runtime refresh or statistics import unless they were explicitly excluded. Sources reported inactive by Beestat can be deliberately selected in **Choose Beestat sources**; that selection is stored explicitly so it survives refreshes.
 
@@ -204,11 +213,29 @@ If a Beestat-only fallback device disappears from current Beestat metadata, Home
 
 If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. The warning follows referenced entity-registry removal, rename, and recovery without waiting for an integration reload. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override when the mapping intentionally changed.
 
-When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list.
+When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list. Subsequent source-device association changes are reconciled from Home Assistant's registries, and only entity records owned by the loaded Beestat config entry can be changed.
 
 ## Data Updates
 
 On setup and each import interval, the integration asks Beestat to sync runtime, thermostat, and sensor metadata before reading summary data. The default import interval is 6 hours. Native Beestat entities are coordinator-backed and update from that shared runtime readback rather than polling each entity independently. Routine imports refresh native status with a bounded summary window covering recent runtime and the effective filter-change date; full summary baselines are reserved for first import, missing Recorder seeds, rebuilds, and fallback repair paths.
+
+The six-hour interval owns cloud acquisition only. Between cloud reads, one
+config-entry-owned local scheduler reevaluates the cached comfort schedule,
+cloud-stale threshold, runtime-summary local date, and filter due-date/day
+projections at the earliest relevant boundary. Those callbacks perform no
+Beestat I/O, reschedule after refresh and after each boundary, and notify
+entities only when projected state changes. Schedule boundaries and local
+midnight follow the configured/thermostat timezone across daylight-saving time.
+Changing Home Assistant's configured timezone rebuilds and reschedules these
+cached projections without contacting Beestat or reloading the config entry;
+each refresh and Recorder import attempt captures one evaluation time and
+coordinator-owned timezone revision. If a timezone change alters local-day
+bounds during an awaited refresh, the window is retried. Prepared statistics
+are discarded and retried before any Recorder write when their timezone
+revision becomes stale, so one import cannot mix local-day interpretations.
+The separate 15-minute filter-boundary retry can read Beestat and persist a
+result, so it is not part of this local projection scheduler; a timezone change
+during that read leaves the boundary pending for a fresh effect attempt.
 
 The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
 
@@ -253,7 +280,7 @@ Fields:
 
 The `beestat_statistics.rebuild_statistics` service action forces the full Beestat summary baseline before writing statistics, optionally limited by configured Beestat `thermostat_id`, `start_date`, and `end_date`. Use it for repairs, corrected historical Beestat rows, or targeted backfills rather than routine imports.
 
-The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets timestamps without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. This is a narrow historical repair tool, not the normal replacement workflow.
+The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets an unambiguous timestamp without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. During a repeated daylight-saving hour, include an explicit offset so the exact occurrence is known; nonexistent local times are rejected. This is a narrow historical repair tool, not the normal replacement workflow.
 
 ## Diagnostics
 
@@ -286,11 +313,18 @@ Beestat's public API is useful but not versioned as a stable Home Assistant inte
 
 Beestat is a cloud/history source. HomeKit/Ecobee entities should remain the primary source for live local temperature, occupancy, HVAC mode, setpoints, and control. Beestat alert entities mirror Beestat/Ecobee alert metadata and may include maintenance reminders rather than active equipment faults.
 
+The scheduled comfort profile and next transition are reevaluated locally from
+the last cached Beestat schedule. The current comfort profile remains delayed
+cloud diagnostic context because an active hold cannot be reconstructed safely
+from the schedule alone.
+
 Removing the integration stops future imports and removes the integration's native entities, but Recorder external statistics already imported under source `beestat` may remain in Home Assistant's statistics database.
 
 ## Troubleshooting
 
 - Check the Beestat Statistics **Status** sensor first. Its attributes include the latest error, runtime fetch time, summary row count, import mode/window/fallback details, automatic filter-alert dismissal results, and latest import row count.
+- If setup reports an invalid or insecure API URL, open **Reconfigure** and save a valid HTTPS URL without user information, a query, or a fragment. The integration does not contact the rejected endpoint.
+- If setup cannot identify the account, confirm that the Beestat account currently exposes at least one thermostat; the integration will not reuse an older account fingerprint for an empty response.
 - If summary dates lag, press **Refresh Runtime** or call `beestat_statistics.import_statistics` without `skip_sync`.
 - If Home Assistant asks for reauthentication, enter a current Beestat API key in the reauth flow.
 - If a thermostat or room sensor is absent, check **Choose Beestat sources** in the integration options.
@@ -333,19 +367,30 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. CI runs one exact lane for the supported stable Core release pinned in `requirements-ha-test.txt`, aligned with the maintained Home Assistant 2026.8 runtime. The harness owns its compatible pytest dependency; the requirements file pins Core only, and `pip check` rejects incompatible dependency overrides. Advance the Core and harness pins together only after the matching stable Home Assistant release and test harness are available. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. A second hosted lane targets exact current same-month patch Core `2026.8.1`. Its bounded checker verifies installed package metadata and the real `pip check` result, permits no conflict or exactly the single proven harness/Core pin mismatch, and then runs the complete Home Assistant tests. That lane proves patch compatibility, not dependency closure. It fails for a cross-month or prerelease target, another dependency conflict, skipped collection, or a test failure. When the harness catches up, the same checker accepts a clean environment. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+
+Supported-minimum lane:
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pip check
-pytest tests/test_config_flow_ha.py -q
+pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+```
+
+Current same-month patch lane:
+
+```powershell
+python -m pip install pytest-homeassistant-custom-component==0.13.354
+python -m pip install --upgrade -r requirements-ha-current.txt
+python scripts/check_ha_patch_compatibility.py --minimum requirements-ha-test.txt --current requirements-ha-current.txt
+pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
 On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests/test_config_flow_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest
@@ -353,8 +398,8 @@ actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
 Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
-unit, the supported Home Assistant harness lane, Hassfest, and HACS validation
-all succeed.
+unit, the dependency-closed supported-minimum lane, the current same-month
+patch lane, Hassfest, and HACS validation all succeed.
 
 ## Release Publishing
 

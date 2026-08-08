@@ -138,7 +138,7 @@
         },
         "data_description": {
           "api_key": "API key from Beestat. It is stored in the Home Assistant config entry and used only for Beestat API calls.",
-          "api_base": "Optional Beestat API base URL. Keep the default unless Beestat changes its API host or you are testing a compatible endpoint."
+          "api_base": "Optional HTTPS Beestat API base URL. Keep the default unless Beestat changes its API host or you are testing a compatible secure endpoint."
         }
       },
       "reconfigure": {
@@ -150,7 +150,7 @@
         },
         "data_description": {
           "api_key": "Enter a replacement Beestat API key, or leave blank to keep the current stored key.",
-          "api_base": "Beestat API base URL. Keep the default unless you need to move the integration back from a custom endpoint."
+          "api_base": "HTTPS Beestat API base URL. Keep the default unless you need to move the integration back from a custom secure endpoint."
         }
       },
       "reauth_confirm": {
@@ -162,24 +162,29 @@
         },
         "data_description": {
           "api_key": "Enter a current Beestat API key. Reauthentication requires a non-empty key.",
-          "api_base": "Beestat API base URL to validate the new key against."
+          "api_base": "HTTPS Beestat API base URL to validate the new key against."
         }
       },
       "account_change_confirm": {
         "title": "Confirm Beestat account change",
-        "description": "The validated API key belongs to a different Beestat account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this account change and history boundary are intentional."
+        "description": "The validated connection cannot be proven to match the saved Beestat account from its thermostat fingerprint and may belong to a different account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this possible account change and history boundary are intentional."
       }
     },
     "error": {
       "api_key_required": "Enter a Beestat API key.",
+      "account_identity_unavailable": "Beestat accepted the connection but returned no identifiable thermostats, so account continuity cannot be proven.",
       "invalid_auth": "Beestat rejected this API key.",
+      "invalid_api_base": "Enter an HTTPS API URL without user information, a query, or a fragment.",
+      "mapping_source_unavailable": "The selected Home Assistant entity has no available registry identity. Select a registered entity.",
       "cannot_connect": "Unable to connect to Beestat with this API key.",
       "unknown": "Unexpected error while validating the Beestat connection."
     },
     "abort": {
       "already_configured": "Beestat Statistics is already configured.",
+      "account_identity_unavailable": "Beestat returned no identifiable thermostats, so the account could not be configured.",
       "reauth_successful": "Beestat Statistics was reauthenticated.",
       "reconfigure_successful": "Beestat Statistics was reconfigured.",
+      "yaml_connection_unavailable": "The Beestat YAML connection could not be validated. Check the HTTPS API URL and API key.",
       "yaml_connection_change_requires_reconfigure": "The YAML connection was not applied because it could not be confirmed as the configured Beestat account. Use Reconfigure to validate and confirm the connection change, then make YAML match the saved connection."
     }
   },
@@ -190,8 +195,14 @@
     "beestat_request_failed": {
       "message": "The Beestat request failed. Check the Beestat Statistics status sensor for details."
     },
+    "invalid_api_base": {
+      "message": "The Beestat API URL is invalid or insecure. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment."
+    },
     "filter_change_boundary_date_mismatch": {
       "message": "The repair timestamp's local date does not match this thermostat's saved filter-change date."
+    },
+    "filter_change_boundary_local_time_invalid": {
+      "message": "The repair timestamp is ambiguous or does not exist in Home Assistant's local timezone. Include an explicit UTC offset."
     },
     "filter_change_boundary_out_of_range": {
       "message": "The repair timestamp must be in the past 31 days so Beestat's raw runtime endpoint can reconcile it."
@@ -217,6 +228,10 @@
     "missing_override_entities": {
       "title": "Beestat override entities are missing",
       "description": "Beestat Statistics has advanced entity overrides that no longer point to existing Home Assistant entities: {entities}. Update or remove those overrides, then reload the integration."
+    },
+    "insecure_api_base": {
+      "title": "Beestat API URL is invalid or insecure",
+      "description": "Beestat Statistics will not send the API key because the configured URL is invalid or does not meet the HTTPS safety requirements. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment. The saved URL was not contacted."
     },
     "yaml_connection_change_requires_reconfigure": {
       "title": "Beestat YAML connection change needs confirmation",
@@ -284,7 +299,7 @@
         },
         "changed_at": {
           "name": "Changed at",
-          "description": "Verified filter-change timestamp from the last 31 days. A value without an offset is interpreted in Home Assistant's local timezone."
+          "description": "Verified filter-change timestamp from the last 31 days. An unambiguous value without an offset uses Home Assistant's local timezone; include an explicit offset during a repeated daylight-saving hour."
         }
       }
     }

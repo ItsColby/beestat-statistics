@@ -41,6 +41,13 @@ from .const import (
     UNIT_FAHRENHEIT,
     SensorStatistic,
 )
+from .entity_reference import (
+    SENSOR_STABLE_ENTITY_FIELDS,
+    THERMOSTAT_STABLE_ENTITY_FIELDS,
+    entity_reference_field,
+    has_explicit_entity_mapping,
+    resolve_override_entity_id,
+)
 
 _AIR_QUALITY_CAPABILITIES = {"airquality", "air_quality"}
 _CO2_CAPABILITIES = {"co2", "co2ppm", "co2_concentration"}
@@ -168,8 +175,16 @@ def build_beestat_config(
     """Build the HomeKit-first runtime thermostat/sensor map."""
 
     local_devices = _local_ecobee_devices(hass)
-    thermostat_overrides = _override_map(config_data.get(CONF_THERMOSTATS))
-    sensor_overrides = _override_map(config_data.get(CONF_SENSORS))
+    thermostat_overrides = _resolved_override_map(
+        hass,
+        config_data.get(CONF_THERMOSTATS),
+        THERMOSTAT_STABLE_ENTITY_FIELDS,
+    )
+    sensor_overrides = _resolved_override_map(
+        hass,
+        config_data.get(CONF_SENSORS),
+        SENSOR_STABLE_ENTITY_FIELDS,
+    )
     thermostats = _build_thermostats(
         hass,
         thermostat_rows,
@@ -246,7 +261,11 @@ def build_sensor_statistics(config: BeestatConfig) -> tuple[SensorStatistic, ...
     return tuple(specs)
 
 
-def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str, ...]:
+def configured_override_entity_ids(
+    config_data: Mapping[str, Any],
+    *,
+    entity_registry: Any | None = None,
+) -> tuple[str, ...]:
     """Return entity IDs explicitly referenced by advanced override config."""
 
     references: list[str] = []
@@ -262,7 +281,13 @@ def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str,
                 CONF_MOTION_ENTITY_ID,
                 CONF_FILTER_CHANGED_ENTITY_ID,
             )
-            if (entity_id := _string_or_none(item.get(field)))
+            if (
+                entity_id := _configured_entity_id(
+                    entity_registry,
+                    item,
+                    field,
+                )
+            )
         )
     for item in _override_items(config_data.get(CONF_SENSORS)):
         if _is_disabled(item):
@@ -274,9 +299,40 @@ def configured_override_entity_ids(config_data: Mapping[str, Any]) -> tuple[str,
                 CONF_OCCUPANCY_ENTITY_ID,
                 CONF_MOTION_ENTITY_ID,
             )
-            if (entity_id := _string_or_none(item.get(field)))
+            if (
+                entity_id := _configured_entity_id(
+                    entity_registry,
+                    item,
+                    field,
+                )
+            )
         )
     return tuple(dict.fromkeys(references))
+
+
+def configured_unresolved_entity_ids(
+    config_data: Mapping[str, Any],
+    entity_registry: Any,
+) -> tuple[str, ...]:
+    """Return last-known IDs for stable references that cannot be resolved."""
+
+    unresolved: list[str] = []
+    for key, fields in (
+        (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS),
+        (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS),
+    ):
+        for item in _override_items(config_data.get(key)):
+            if _is_disabled(item):
+                continue
+            for field in fields:
+                if entity_reference_field(field) not in item:
+                    continue
+                if resolve_override_entity_id(entity_registry, item, field) is not None:
+                    continue
+                unresolved.append(
+                    _string_or_none(item.get(field)) or f"unavailable {field}"
+                )
+    return tuple(dict.fromkeys(unresolved))
 
 
 def configured_override_entity_domain_errors(
@@ -598,9 +654,12 @@ def _match_local_thermostat(
     override: dict[str, Any],
     local_thermostats: tuple[LocalEcobeeDevice, ...],
 ) -> LocalEcobeeDevice | None:
-    climate_entity_id = _string_or_none(override.get(CONF_CLIMATE_ENTITY_ID))
-    if climate_entity_id:
-        return _find_local_by_entity(local_thermostats, climate_entity_id)
+    for field in THERMOSTAT_STABLE_ENTITY_FIELDS:
+        entity_id = _string_or_none(override.get(field))
+        if entity_id and (local := _find_local_by_entity(local_thermostats, entity_id)):
+            return local
+    if has_explicit_entity_mapping(override, THERMOSTAT_STABLE_ENTITY_FIELDS):
+        return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
     if row_key:
         local = _select_preferred_local_match(
@@ -629,6 +688,8 @@ def _match_local_sensor(
         entity_id = _string_or_none(override.get(key))
         if entity_id and (local := _find_local_by_entity(local_sensors, entity_id)):
             return local
+    if has_explicit_entity_mapping(override, SENSOR_STABLE_ENTITY_FIELDS):
+        return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
     if row_key:
         return _select_preferred_local_match(
@@ -891,6 +952,45 @@ def _override_map(value: Any) -> dict[int, dict[str, Any]]:
             continue
         overrides[item_id] = dict(item)
     return overrides
+
+
+def _resolved_override_map(
+    hass: Any,
+    value: Any,
+    fields: tuple[str, ...],
+) -> dict[int, dict[str, Any]]:
+    """Return overrides with stable references resolved to current entity IDs."""
+
+    overrides = _override_map(value)
+    try:
+        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+    except ImportError:
+        return overrides
+    registry = er.async_get(hass)
+    for item in overrides.values():
+        for field in fields:
+            if entity_reference_field(field) not in item:
+                continue
+            resolved = resolve_override_entity_id(registry, item, field)
+            if resolved is None:
+                item.pop(field, None)
+            else:
+                item[field] = resolved
+    return overrides
+
+
+def _configured_entity_id(
+    registry: Any | None,
+    item: Mapping[str, Any],
+    field: str,
+) -> str | None:
+    if registry is not None and field in THERMOSTAT_STABLE_ENTITY_FIELDS:
+        resolved = resolve_override_entity_id(registry, item, field)
+        if resolved is not None:
+            return resolved
+        if entity_reference_field(field) in item:
+            return _string_or_none(item.get(field))
+    return _string_or_none(item.get(field))
 
 
 def _override_items(value: Any) -> tuple[dict[str, Any], ...]:

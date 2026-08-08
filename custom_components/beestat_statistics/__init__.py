@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
@@ -26,6 +26,7 @@ from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigEntry
 from homeassistant.const import (
     CONF_API_KEY,
     CONF_SCAN_INTERVAL,
+    EVENT_CORE_CONFIG_UPDATE,
     Platform,
 )
 from homeassistant.core import (
@@ -36,7 +37,11 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -55,9 +60,11 @@ from .api import (
     exception_fingerprint,
 )
 from .config_model import (
+    ConfiguredSensor,
     ConfiguredThermostat,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
+    configured_unresolved_entity_ids,
 )
 from .config_model import (
     build_sensor_statistics as build_sensor_specs,
@@ -122,15 +129,26 @@ from .const import (
     sensor_entity_unique_id,
     thermostat_entity_unique_id,
 )
-from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
+from .coordinator import (
+    BeestatRuntimeData,
+    BeestatRuntimeDataCoordinator,
+    TemporalContext,
+)
 from .entity import (
     async_register_service_device,
     async_remove_cross_integration_device_ownership,
     is_beestat_only_device,
 )
-from .entry_options import async_mark_filter_changed
+from .entity_reference import (
+    configured_entity_references,
+    entity_reference_matches_entry,
+)
+from .entry_options import async_mark_filter_changed, resolve_filter_change_timestamp
 from .import_evidence import SkippedWindowEvidence
-from .issues import async_set_yaml_connection_change_issue
+from .issues import (
+    async_set_insecure_api_base_issue,
+    async_set_yaml_connection_change_issue,
+)
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
     CumulativeStatisticSeed,
@@ -139,6 +157,8 @@ from .statistics_builder import (
     build_statistics,
     cumulative_statistic_ids,
 )
+from .task_coalescer import CoalescingTaskScheduler
+from .url_validation import normalize_api_base
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -183,6 +203,7 @@ _DEFAULT_ENABLED_PROBLEM_ENTITY_SUFFIXES: frozenset[str] = frozenset(
 )
 _MISSING_OVERRIDE_ENTITIES_ISSUE_ID = "missing_override_entities"
 _INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID = "invalid_override_entity_domains"
+_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS = 3
 _GLOBAL_UNIQUE_ID_MIGRATION = {
     "beestat_statistics_status": "status",
     "beestat_runtime_sync_last_success": "runtime_sync_last_success",
@@ -261,7 +282,10 @@ CONFIG_SCHEMA = vol.Schema(
                     str.strip,
                     vol.Length(min=1),
                 ),
-                vol.Optional(CONF_API_BASE, default=API_BASE): cv.url,
+                vol.Optional(CONF_API_BASE, default=API_BASE): vol.All(
+                    cv.url,
+                    normalize_api_base,
+                ),
                 vol.Optional(
                     CONF_POINT_LOOKBACK_DAYS,
                     default=DEFAULT_POINT_LOOKBACK_DAYS,
@@ -344,6 +368,18 @@ class SummaryImportPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedImport:
+    """One complete statistics import prepared before Recorder effects."""
+
+    summary_plan: SummaryImportPlan
+    summary_rows: list[dict[str, Any]]
+    skipped_windows: SkippedWindowEvidence
+    thermostat_rows_by_id: dict[int, list[dict[str, Any]]]
+    sensor_rows_by_id: dict[int, list[dict[str, Any]]]
+    series: list[StatisticsSeries]
+
+
+@dataclass(frozen=True, slots=True)
 class ImportResult:
     """Summary of one import pass."""
 
@@ -373,13 +409,11 @@ class BeestatStatisticsImporter:
         coordinator: BeestatRuntimeDataCoordinator,
         *,
         point_lookback_days: int,
-        local_tz: ZoneInfo,
     ) -> None:
         self._hass = hass
         self._client = client
         self._coordinator = coordinator
         self._point_lookback_days = point_lookback_days
-        self._local_tz = local_tz
         self._lock = asyncio.Lock()
 
     async def async_import_statistics(
@@ -401,52 +435,38 @@ class BeestatStatisticsImporter:
                 summary_window=not force_full_summary,
             )
             _validate_thermostat_id(runtime_data, thermostat_id)
-            summary_plan = await self._async_summary_import_plan(
-                runtime_data,
-                force_full_summary=force_full_summary,
-            )
-            summary_rows = _filter_summary_rows_by_thermostat(
-                summary_plan.rows,
-                thermostat_id,
-            )
-            skipped_windows = SkippedWindowEvidence()
-            thermostat_rows_by_id = await self._async_fetch_thermostat_rows(
-                lookback_days,
-                runtime_data,
-                skipped_windows,
-                start_day=rebuild_start,
-                end_day=rebuild_end,
-                thermostat_id=thermostat_id,
-            )
-            sensor_rows_by_id = await self._async_fetch_sensor_rows(
-                lookback_days,
-                runtime_data,
-                skipped_windows,
-                start_day=rebuild_start,
-                end_day=rebuild_end,
-                thermostat_id=thermostat_id,
-            )
-            series = build_statistics(
-                summary_rows,
-                thermostat_rows_by_id,
-                sensor_rows_by_id,
-                self._local_tz,
-                runtime_data.config,
-            )
-            if summary_plan.seeds:
-                series = apply_cumulative_seeds(series, summary_plan.seeds)
-            if rebuild_start is not None or rebuild_end is not None:
-                series = _filter_series_statistics(
-                    series,
-                    start_day=rebuild_start,
-                    end_day=rebuild_end,
-                    local_tz=self._local_tz,
+            prepared: PreparedImport | None = None
+            for attempt in range(_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS):
+                temporal_context = self._coordinator.capture_temporal_context()
+                prepared = await self._async_prepare_import(
+                    runtime_data,
+                    lookback_days=lookback_days,
+                    force_full_summary=force_full_summary,
+                    rebuild_start=rebuild_start,
+                    rebuild_end=rebuild_end,
+                    thermostat_id=thermostat_id,
+                    temporal_context=temporal_context,
                 )
-            series = [item for item in series if item.statistics]
+                if self._coordinator.temporal_context_is_current(temporal_context):
+                    break
+                if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
+                    raise RuntimeError(
+                        "Home Assistant timezone changed repeatedly during "
+                        "Beestat statistics import"
+                    )
+                _LOGGER.info(
+                    "Restarting Beestat statistics preparation after a Home "
+                    "Assistant timezone change"
+                )
+                if self._coordinator.data is not None:
+                    runtime_data = self._coordinator.data
+
+            if prepared is None:  # pragma: no cover - positive attempt constant
+                raise RuntimeError("Beestat statistics import was not prepared")
 
             imported_rows = 0
             latest_start_by_id: dict[str, str | None] = {}
-            for item in series:
+            for item in prepared.series:
                 async_add_external_statistics(
                     self._hass,
                     cast(StatisticMetaData, item.metadata),
@@ -456,24 +476,26 @@ class BeestatStatisticsImporter:
                 latest_start_by_id[item.statistic_id] = _format_start(item)
 
             result = ImportResult(
-                imported_series=len(series),
+                imported_series=len(prepared.series),
                 imported_rows=imported_rows,
-                source_rows=len(summary_rows)
-                + sum(len(rows) for rows in thermostat_rows_by_id.values())
-                + sum(len(rows) for rows in sensor_rows_by_id.values()),
-                skipped_windows=skipped_windows.total_count,
+                source_rows=len(prepared.summary_rows)
+                + sum(len(rows) for rows in prepared.thermostat_rows_by_id.values())
+                + sum(len(rows) for rows in prepared.sensor_rows_by_id.values()),
+                skipped_windows=prepared.skipped_windows.total_count,
                 skipped_runtime_thermostat_windows=(
-                    skipped_windows.runtime_thermostat_count
+                    prepared.skipped_windows.runtime_thermostat_count
                 ),
-                skipped_runtime_sensor_windows=skipped_windows.runtime_sensor_count,
-                skipped_window_examples=skipped_windows.examples,
+                skipped_runtime_sensor_windows=(
+                    prepared.skipped_windows.runtime_sensor_count
+                ),
+                skipped_window_examples=prepared.skipped_windows.examples,
                 latest_start_by_statistic_id=latest_start_by_id,
-                summary_mode=summary_plan.mode,
-                summary_window_start=_format_day(summary_plan.window_start),
-                summary_window_end=_format_day(summary_plan.window_end),
-                summary_overlap_days=summary_plan.overlap_days,
-                summary_fallback_reason=summary_plan.fallback_reason,
-                cumulative_seed_count=len(summary_plan.seeds),
+                summary_mode=prepared.summary_plan.mode,
+                summary_window_start=_format_day(prepared.summary_plan.window_start),
+                summary_window_end=_format_day(prepared.summary_plan.window_end),
+                summary_overlap_days=prepared.summary_plan.overlap_days,
+                summary_fallback_reason=prepared.summary_plan.fallback_reason,
+                cumulative_seed_count=len(prepared.summary_plan.seeds),
             )
             self._coordinator.async_record_import_result(
                 imported_series=result.imported_series,
@@ -504,11 +526,78 @@ class BeestatStatisticsImporter:
             )
             return result
 
+    async def _async_prepare_import(
+        self,
+        runtime_data: BeestatRuntimeData,
+        *,
+        lookback_days: int,
+        force_full_summary: bool,
+        rebuild_start: dt_date | None,
+        rebuild_end: dt_date | None,
+        thermostat_id: int | None,
+        temporal_context: TemporalContext,
+    ) -> PreparedImport:
+        """Prepare one coherent local-time import before Recorder writes."""
+
+        summary_plan = await self._async_summary_import_plan(
+            runtime_data,
+            force_full_summary=force_full_summary,
+            temporal_context=temporal_context,
+        )
+        summary_rows = _filter_summary_rows_by_thermostat(
+            summary_plan.rows,
+            thermostat_id,
+        )
+        skipped_windows = SkippedWindowEvidence()
+        thermostat_rows_by_id = await self._async_fetch_thermostat_rows(
+            lookback_days,
+            runtime_data,
+            skipped_windows,
+            start_day=rebuild_start,
+            end_day=rebuild_end,
+            thermostat_id=thermostat_id,
+            temporal_context=temporal_context,
+        )
+        sensor_rows_by_id = await self._async_fetch_sensor_rows(
+            lookback_days,
+            runtime_data,
+            skipped_windows,
+            start_day=rebuild_start,
+            end_day=rebuild_end,
+            thermostat_id=thermostat_id,
+            temporal_context=temporal_context,
+        )
+        series = build_statistics(
+            summary_rows,
+            thermostat_rows_by_id,
+            sensor_rows_by_id,
+            temporal_context.local_tz,
+            runtime_data.config,
+        )
+        if summary_plan.seeds:
+            series = apply_cumulative_seeds(series, summary_plan.seeds)
+        if rebuild_start is not None or rebuild_end is not None:
+            series = _filter_series_statistics(
+                series,
+                start_day=rebuild_start,
+                end_day=rebuild_end,
+                local_tz=temporal_context.local_tz,
+            )
+        return PreparedImport(
+            summary_plan=summary_plan,
+            summary_rows=summary_rows,
+            skipped_windows=skipped_windows,
+            thermostat_rows_by_id=thermostat_rows_by_id,
+            sensor_rows_by_id=sensor_rows_by_id,
+            series=[item for item in series if item.statistics],
+        )
+
     async def _async_summary_import_plan(
         self,
         runtime_data: BeestatRuntimeData,
         *,
         force_full_summary: bool,
+        temporal_context: TemporalContext,
     ) -> SummaryImportPlan:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
@@ -549,12 +638,15 @@ class BeestatStatisticsImporter:
             )
 
         latest_day = min(
-            value.astimezone(self._local_tz).date() for value in latest_by_id.values()
+            value.astimezone(temporal_context.local_tz).date()
+            for value in latest_by_id.values()
         )
         window_start = latest_day - timedelta(days=DEFAULT_SUMMARY_OVERLAP_DAYS)
         window_end = (
             _latest_summary_day(cached_rows)
-            or datetime.now(UTC).astimezone(self._local_tz).date()
+            or temporal_context.evaluated_at.astimezone(
+                temporal_context.local_tz
+            ).date()
         )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -572,6 +664,7 @@ class BeestatStatisticsImporter:
             statistic_ids,
             seed_day=window_start - timedelta(days=1),
             window_start=window_start,
+            local_tz=temporal_context.local_tz,
         )
         if len(seeds) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -639,14 +732,15 @@ class BeestatStatisticsImporter:
         *,
         seed_day: dt_date,
         window_start: dt_date,
+        local_tz: ZoneInfo,
     ) -> dict[str, CumulativeStatisticSeed]:
         return await get_recorder_instance(self._hass).async_add_executor_job(
             partial(
                 _cumulative_seeds_during_period,
                 self._hass,
                 tuple(statistic_ids),
-                _local_midnight(seed_day, self._local_tz).astimezone(UTC),
-                _local_midnight(window_start, self._local_tz).astimezone(UTC),
+                _local_midnight(seed_day, local_tz).astimezone(UTC),
+                _local_midnight(window_start, local_tz).astimezone(UTC),
             )
         )
 
@@ -659,8 +753,15 @@ class BeestatStatisticsImporter:
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
+        temporal_context: TemporalContext,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
+        start, end = _point_window(
+            lookback_days,
+            temporal_context.local_tz,
+            start_day,
+            end_day,
+            evaluated_at=temporal_context.evaluated_at,
+        )
         thermostat_data_end = _thermostat_data_end_map(
             list(runtime_data.thermostat_rows)
         )
@@ -751,8 +852,15 @@ class BeestatStatisticsImporter:
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
+        temporal_context: TemporalContext,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
+        start, end = _point_window(
+            lookback_days,
+            temporal_context.local_tz,
+            start_day,
+            end_day,
+            evaluated_at=temporal_context.evaluated_at,
+        )
         sensor_to_thermostat = _sensor_thermostat_map(list(runtime_data.sensor_rows))
         thermostat_data_end = _thermostat_data_end_map(
             list(runtime_data.thermostat_rows)
@@ -939,7 +1047,7 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
             translation_domain=DOMAIN,
             translation_key="unknown_thermostat_id",
             translation_placeholders={"thermostat_id": str(err.thermostat_id)},
-        ) from err
+        ) from None
     except BeestatAuthError as err:
         runtime.coordinator.async_record_import_error(err)
         runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
@@ -998,9 +1106,16 @@ async def _async_handle_repair_filter_change_boundary(
             translation_placeholders={"thermostat_id": str(thermostat_id)},
         )
     changed_at = call.data[ATTR_CHANGED_AT]
-    if changed_at.tzinfo is None:
-        changed_at = changed_at.replace(tzinfo=runtime.coordinator.local_tz)
-    changed_at = changed_at.astimezone(UTC)
+    try:
+        changed_at = resolve_filter_change_timestamp(
+            changed_at,
+            runtime.coordinator.local_tz,
+        )
+    except ValueError:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="filter_change_boundary_local_time_invalid",
+        ) from None
     now = datetime.now(UTC)
     if changed_at > now or changed_at < now - timedelta(days=31):
         raise ServiceValidationError(
@@ -1076,10 +1191,11 @@ async def async_setup_entry(
     """Set up Beestat Statistics from a config entry."""
 
     local_tz = ZoneInfo(str(hass.config.time_zone))
+    api_base = _validated_entry_api_base(hass, entry)
     client = BeestatClient(
         async_get_clientsession(hass),
         entry.data[CONF_API_KEY],
-        entry.data[CONF_API_BASE],
+        api_base,
     )
     coordinator = BeestatRuntimeDataCoordinator(
         hass,
@@ -1092,7 +1208,6 @@ async def async_setup_entry(
         client,
         coordinator,
         point_lookback_days=_entry_point_lookback_days(entry),
-        local_tz=local_tz,
     )
     runtime = BeestatStatisticsRuntime(
         client=client,
@@ -1101,12 +1216,14 @@ async def async_setup_entry(
         scan_interval=timedelta(seconds=_entry_scan_interval_seconds(entry)),
     )
     entry.runtime_data = runtime
+    _async_track_time_zone_updates(hass, entry, coordinator)
 
     await coordinator.async_config_entry_first_refresh()
     async_register_service_device(hass, entry)
     _migrate_legacy_unique_ids(hass, entry, coordinator.data)
     _async_enable_default_problem_entities(hass, entry, coordinator.data)
     _async_migrate_homekit_device_assignments(hass, entry, coordinator.data)
+    _async_track_source_device_relinks(hass, entry)
     if coordinator.data is not None:
         async_remove_cross_integration_device_ownership(
             hass,
@@ -1146,15 +1263,20 @@ async def async_setup_entry(
                 _LOGGER.info("Beestat statistics import is available again")
                 scheduled_import_unavailable_logged = False
 
+    import_scheduler = CoalescingTaskScheduler(
+        async_run_scheduled_import,
+        lambda coroutine: entry.async_create_background_task(
+            hass,
+            coroutine,
+            f"{DOMAIN}_scheduled_import",
+        ),
+    )
+
     @callback
     def async_schedule_import(_event_or_time: Any) -> None:
-        """Schedule an import from a Home Assistant event-loop callback."""
+        """Schedule one bounded import pass from an event-loop callback."""
 
-        entry.async_create_background_task(
-            hass,
-            async_run_scheduled_import(),
-            f"{DOMAIN}_scheduled_import",
-        )
+        import_scheduler.schedule()
 
     filter_changed_entity_ids = _filter_changed_entity_ids(coordinator.data)
     if filter_changed_entity_ids:
@@ -1183,6 +1305,41 @@ async def async_setup_entry(
     return True
 
 
+def _validated_entry_api_base(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> str:
+    """Return a secure stored API base before any credential-bearing transport."""
+
+    try:
+        api_base = normalize_api_base(entry.data[CONF_API_BASE])
+    except ValueError:
+        async_set_insecure_api_base_issue(hass, active=True)
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_api_base",
+        ) from None
+    async_set_insecure_api_base_issue(hass, active=False)
+    return api_base
+
+
+@callback
+def _async_track_time_zone_updates(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+    coordinator: BeestatRuntimeDataCoordinator,
+) -> None:
+    """Reproject cached state when Home Assistant's configured timezone changes."""
+
+    @callback
+    def handle_core_config_update(_event: Event[Any]) -> None:
+        coordinator.async_update_local_timezone(ZoneInfo(str(hass.config.time_zone)))
+
+    entry.async_on_unload(
+        hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, handle_core_config_update)
+    )
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate Beestat Statistics config entries."""
 
@@ -1194,7 +1351,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return False
 
-    migrated_data, migrated_options = migrate_entry_payload(entry.data, entry.options)
+    migrated_data, migrated_options = migrate_entry_payload(
+        entry.data,
+        entry.options,
+        entity_registry=er.async_get(hass),
+    )
     if (
         entry.version != CONFIG_ENTRY_VERSION
         or entry.minor_version != CONFIG_ENTRY_MINOR_VERSION
@@ -1383,8 +1544,12 @@ def _async_migrate_homekit_device_assignments(
         entity_registry,
         entry.entry_id,
     ):
-        target_device_id = target_device_ids.get(entity_entry.unique_id)
-        if target_device_id is None or entity_entry.device_id == target_device_id:
+        if entity_entry.config_entry_id != entry.entry_id:
+            continue
+        if entity_entry.unique_id not in target_device_ids:
+            continue
+        target_device_id = target_device_ids[entity_entry.unique_id]
+        if entity_entry.device_id == target_device_id:
             continue
         entity_registry.async_update_entity(
             entity_entry.entity_id,
@@ -1416,14 +1581,12 @@ def _async_migrate_homekit_device_assignments(
 
 def _mapped_unique_id_device_ids(
     data: BeestatRuntimeData,
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     """Return Beestat unique IDs that should attach to HomeKit devices."""
 
-    mappings: dict[str, str] = {}
+    mappings: dict[str, str | None] = {}
     for thermostat in data.config.thermostats:
         device_id = thermostat.device_id
-        if device_id is None:
-            continue
         for suffix in _THERMOSTAT_ENTITY_SUFFIXES:
             mappings[thermostat_entity_unique_id(thermostat.thermostat_id, suffix)] = (
                 device_id
@@ -1443,10 +1606,127 @@ def _mapped_unique_id_device_ids(
 
     for sensor in data.config.sensors:
         device_id = sensor.device_id
-        if device_id is None:
-            continue
         mappings[sensor_entity_unique_id(sensor.sensor_id, "sensor_in_use")] = device_id
     return mappings
+
+
+def _mapped_source_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
+    """Return source registry entities whose association drives helper linking."""
+
+    if data is None:
+        return set()
+    entity_ids: set[str] = set()
+    for thermostat in data.config.thermostats:
+        entity_ids.update(_configured_source_entity_ids(thermostat))
+    for sensor in data.config.sensors:
+        entity_ids.update(_configured_source_entity_ids(sensor))
+    return entity_ids
+
+
+def _configured_source_entity_ids(
+    item: ConfiguredThermostat | ConfiguredSensor,
+) -> set[str]:
+    """Return explicitly or automatically selected source entities."""
+
+    references = [
+        item.temperature_entity_id,
+        item.occupancy_entity_id,
+        item.motion_entity_id,
+    ]
+    if isinstance(item, ConfiguredThermostat):
+        references.append(item.climate_entity_id)
+    return {reference for reference in references if reference is not None}
+
+
+def _mapped_source_device_ids(data: BeestatRuntimeData | None) -> set[str]:
+    """Return current source device IDs that drive helper linking."""
+
+    if data is None:
+        return set()
+    return {
+        device_id
+        for device_id in (
+            *(item.device_id for item in data.config.thermostats),
+            *(item.device_id for item in data.config.sensors),
+        )
+        if device_id is not None
+    }
+
+
+@callback
+def _async_track_source_device_relinks(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> tuple[Callable[[], None], ...]:
+    """Rebind existing helpers when a mapped foreign source association changes."""
+
+    coordinator = entry.runtime_data.coordinator
+    watched_entity_ids = _mapped_source_entity_ids(coordinator.data)
+    entity_registry = er.async_get(hass)
+    stable_references = configured_entity_references(entry_runtime_config_data(entry))
+    watched_entity_ids.update(
+        configured_override_entity_ids(
+            entry_runtime_config_data(entry),
+            entity_registry=entity_registry,
+        )
+    )
+    watched_device_ids = _mapped_source_device_ids(coordinator.data)
+
+    @callback
+    def handle_coordinator_update() -> None:
+        data = coordinator.data
+        watched_entity_ids.update(_mapped_source_entity_ids(data))
+        watched_entity_ids.update(
+            configured_override_entity_ids(
+                entry_runtime_config_data(entry),
+                entity_registry=entity_registry,
+            )
+        )
+        watched_device_ids.update(_mapped_source_device_ids(data))
+        _async_migrate_homekit_device_assignments(hass, entry, data)
+
+    @callback
+    def reconcile_assignments() -> None:
+        coordinator.async_rebuild_runtime_from_cached_rows()
+
+    @callback
+    def handle_entity_registry_update(event: Event[Any]) -> None:
+        changed_entity_ids = {
+            str(value)
+            for key in ("entity_id", "old_entity_id")
+            if (value := event.data.get(key)) is not None
+        }
+        if watched_entity_ids.isdisjoint(
+            changed_entity_ids
+        ) and not _entity_registry_event_matches_references(
+            entity_registry,
+            changed_entity_ids,
+            stable_references,
+        ):
+            return
+        reconcile_assignments()
+
+    @callback
+    def handle_device_registry_update(event: Event[Any]) -> None:
+        device_id = event.data.get("device_id")
+        if device_id is None or str(device_id) not in watched_device_ids:
+            return
+        reconcile_assignments()
+
+    removers = (
+        coordinator.async_add_listener(handle_coordinator_update),
+        hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            handle_entity_registry_update,
+        ),
+        hass.bus.async_listen(
+            dr.EVENT_DEVICE_REGISTRY_UPDATED,
+            handle_device_registry_update,
+        ),
+    )
+    for remove_listener in removers:
+        entry.async_on_unload(remove_listener)
+    return removers
 
 
 def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:
@@ -1506,10 +1786,16 @@ def _async_track_override_issue_updates(
 ) -> None:
     """Refresh mapping Repairs when a referenced registry entity changes."""
 
-    watched_entity_ids = frozenset(
-        configured_override_entity_ids(entry_runtime_config_data(entry))
+    entity_registry = er.async_get(hass)
+    config_data = entry_runtime_config_data(entry)
+    watched_entity_ids = set(
+        configured_override_entity_ids(
+            config_data,
+            entity_registry=entity_registry,
+        )
     )
-    if not watched_entity_ids:
+    stable_references = configured_entity_references(config_data)
+    if not watched_entity_ids and not stable_references:
         return
 
     @callback
@@ -1519,9 +1805,21 @@ def _async_track_override_issue_updates(
             for key in ("entity_id", "old_entity_id")
             if (value := event.data.get(key)) is not None
         }
-        if watched_entity_ids.isdisjoint(changed_entity_ids):
+        if watched_entity_ids.isdisjoint(
+            changed_entity_ids
+        ) and not _entity_registry_event_matches_references(
+            entity_registry,
+            changed_entity_ids,
+            stable_references,
+        ):
             return
         _async_update_override_issues(hass, entry)
+        watched_entity_ids.update(
+            configured_override_entity_ids(
+                config_data,
+                entity_registry=entity_registry,
+            )
+        )
 
     entry.async_on_unload(
         hass.bus.async_listen(
@@ -1584,11 +1882,34 @@ def _missing_override_entity_ids(
     config_data: Mapping[str, Any],
 ) -> tuple[str, ...]:
     registry = er.async_get(hass)
+    unresolved = frozenset(configured_unresolved_entity_ids(config_data, registry))
     return tuple(
         entity_id
-        for entity_id in configured_override_entity_ids(config_data)
-        if hass.states.get(entity_id) is None and registry.async_get(entity_id) is None
+        for entity_id in configured_override_entity_ids(
+            config_data,
+            entity_registry=registry,
+        )
+        if entity_id in unresolved
+        or (
+            hass.states.get(entity_id) is None and registry.async_get(entity_id) is None
+        )
     )
+
+
+def _entity_registry_event_matches_references(
+    registry: er.EntityRegistry,
+    changed_entity_ids: set[str],
+    references: tuple[Mapping[str, Any], ...],
+) -> bool:
+    """Return whether a current registry event restores a stable source identity."""
+
+    for entity_id in changed_entity_ids:
+        entry = registry.async_get(entity_id)
+        if entry is not None and any(
+            entity_reference_matches_entry(reference, entry) for reference in references
+        ):
+            return True
+    return False
 
 
 def _first_runtime(hass: HomeAssistant) -> BeestatStatisticsRuntime | None:
@@ -1732,8 +2053,10 @@ def _point_window(
     local_tz: ZoneInfo,
     start_day: dt_date | None,
     end_day: dt_date | None,
+    *,
+    evaluated_at: datetime,
 ) -> tuple[datetime, datetime]:
-    end = datetime.now(UTC)
+    end = evaluated_at
     if end_day is not None:
         end = _local_midnight(end_day + timedelta(days=1), local_tz).astimezone(UTC)
     if start_day is None:

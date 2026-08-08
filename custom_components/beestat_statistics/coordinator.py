@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -31,6 +31,7 @@ from .config_payload import (
     update_thermostat_override_options,
 )
 from .const import (
+    CLOUD_DATA_STALE_THRESHOLD_MINUTES,
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
@@ -38,10 +39,12 @@ from .const import (
     DOMAIN,
     FILTER_RECENT_RUNTIME_DAYS,
 )
+from .filter_forecast import build_filter_forecast
 
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
 _FILTER_BOUNDARY_FAST_RETRY_WINDOW = timedelta(hours=6)
+_SUMMARY_TEMPORAL_CONTEXT_ATTEMPTS = 2
 
 if TYPE_CHECKING:
     from .runtime import BeestatStatisticsConfigEntry
@@ -117,6 +120,7 @@ class BeestatRuntimeData:
 
     config: BeestatConfig
     fetched_at: datetime
+    projected_at: datetime
     sync_success_at: datetime | None
     metadata_sync_success_at: datetime | None
     summary_rows: tuple[dict[str, Any], ...]
@@ -138,6 +142,15 @@ class RawFilterBoundary:
     baseline_seconds: float
     effective_at: datetime
     source_data_end: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalContext:
+    """One immutable clock and timezone revision for derived local state."""
+
+    evaluated_at: datetime
+    local_tz: ZoneInfo
+    timezone_revision: int
 
 
 def _typed_config_entry(coordinator: Any) -> BeestatStatisticsConfigEntry:
@@ -169,6 +182,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._client = client
         self._beestat_config_entry = config_entry
         self._local_tz = local_tz
+        self._timezone_revision = 0
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
         self.last_import_success_at: datetime | None = None
@@ -196,7 +210,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_filter_boundary_pending_count: int = 0
         self.last_filter_boundary_reconcile_error: str | None = None
         self._cancel_filter_boundary_retry: Callable[[], None] | None = None
+        self._cancel_projection_boundary: Callable[[], None] | None = None
         config_entry.async_on_unload(self._async_cancel_filter_boundary_retry)
+        config_entry.async_on_unload(self._async_cancel_projection_boundary)
 
     @property
     def status(self) -> str:
@@ -213,6 +229,37 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Return the Home Assistant local time zone used for Beestat dates."""
 
         return self._local_tz
+
+    @callback
+    def capture_temporal_context(self) -> TemporalContext:
+        """Capture one clock and timezone revision for an awaited operation."""
+
+        return TemporalContext(
+            evaluated_at=datetime.now(UTC),
+            local_tz=self._local_tz,
+            timezone_revision=self._timezone_revision,
+        )
+
+    @callback
+    def temporal_context_is_current(self, context: TemporalContext) -> bool:
+        """Return whether a captured timezone revision is still current."""
+
+        return context.timezone_revision == self._timezone_revision
+
+    @callback
+    def async_update_local_timezone(self, local_tz: ZoneInfo) -> None:
+        """Reproject cached state after Home Assistant's timezone changes."""
+
+        if local_tz == self._local_tz:
+            return
+        previous_local_tz = self._local_tz
+        self._local_tz = local_tz
+        self._timezone_revision += 1
+        self._async_cancel_projection_boundary()
+        self._async_rebuild_projection_from_cached(
+            datetime.now(UTC),
+            previous_local_tz=previous_local_tz,
+        )
 
     @property
     def beestat_config_entry(self) -> BeestatStatisticsConfigEntry:
@@ -323,16 +370,112 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 data.summary_rows_full,
                 data.summary_window_start,
                 data.summary_window_end,
+                temporal_context=self.capture_temporal_context(),
+                fetched_at=data.fetched_at,
             )
         )
+
+    @callback
+    def async_set_updated_data(self, data: BeestatRuntimeData) -> None:
+        """Publish source data and replace its local projection deadline."""
+
+        super().async_set_updated_data(data)
+        self._async_schedule_projection_boundary(data)
+
+    @callback
+    def _async_schedule_projection_boundary(
+        self,
+        data: BeestatRuntimeData | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Schedule the earliest I/O-free cached projection boundary."""
+
+        self._async_cancel_projection_boundary()
+        if data is None:
+            data = self.data
+        if data is None:
+            return
+        deadline = _next_projection_deadline(data, self._local_tz)
+        if now is None:
+            now = datetime.now(UTC)
+        if deadline <= now:
+            self._async_rebuild_projection_from_cached(now)
+            return
+        self._cancel_projection_boundary = async_track_point_in_utc_time(
+            self.hass,
+            self._async_handle_projection_boundary,
+            deadline,
+        )
+
+    @callback
+    def _async_cancel_projection_boundary(self) -> None:
+        """Cancel the config-entry-owned cached projection callback."""
+
+        if self._cancel_projection_boundary is None:
+            return
+        cancel = self._cancel_projection_boundary
+        self._cancel_projection_boundary = None
+        cancel()
+
+    @callback
+    def _async_handle_projection_boundary(self, _scheduled_at: datetime) -> None:
+        """Rebuild a due projection using the actual callback evaluation time."""
+
+        self._async_rebuild_projection_from_cached(datetime.now(UTC))
+
+    @callback
+    def _async_rebuild_projection_from_cached(
+        self,
+        now: datetime,
+        *,
+        previous_local_tz: ZoneInfo | None = None,
+    ) -> None:
+        """Rebuild elapsed projections from cached rows without external I/O."""
+
+        self._cancel_projection_boundary = None
+        data = self.data
+        if data is None:
+            return
+        projected = self._build_runtime_data(
+            list(data.summary_rows),
+            list(data.thermostat_rows),
+            list(data.sensor_rows),
+            data.sync_success_at,
+            data.metadata_sync_success_at,
+            data.summary_rows_full,
+            data.summary_window_start,
+            data.summary_window_end,
+            temporal_context=TemporalContext(
+                evaluated_at=now,
+                local_tz=self._local_tz,
+                timezone_revision=self._timezone_revision,
+            ),
+            fetched_at=data.fetched_at,
+        )
+        if _projection_changed(
+            data,
+            projected,
+            previous_local_tz or self._local_tz,
+            self._local_tz,
+        ):
+            self.data = projected
+            self.async_update_listeners()
+        self._async_schedule_projection_boundary(projected, now=now)
 
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
             return await self._async_fetch_runtime_data(skip_sync=False)
-        except BeestatAuthError as err:
-            raise ConfigEntryAuthFailed(self._client.redact_error(err)) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the coordinator boundary
-            raise UpdateFailed(self._client.redact_error(err)) from None
+        except BeestatAuthError:
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key="beestat_auth_failed",
+            ) from None
+        except Exception:  # noqa: BLE001 - translate at the coordinator boundary
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="beestat_request_failed",
+            ) from None
 
     async def async_refresh_runtime(
         self,
@@ -350,7 +493,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         except Exception as err:
             safe_error: Exception = err
             if not isinstance(err, BeestatApiError):
-                safe_error = UpdateFailed(self._client.redact_error(err))
+                safe_error = UpdateFailed(
+                    translation_domain=DOMAIN,
+                    translation_key="beestat_request_failed",
+                )
             self.async_set_update_error(safe_error)
             if isinstance(err, BeestatAuthError):
                 _typed_config_entry(self).async_start_reauth_if_available(self.hass)
@@ -481,42 +627,67 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             )
             await self._async_reconcile_pending_filter_boundaries(config)
             if summary_window:
-                today = datetime.now(UTC).astimezone(self._local_tz).date()
                 config = build_beestat_config(
                     self.hass,
                     thermostat_rows_tuple,
                     sensor_rows_tuple,
                     entry_runtime_config_data(_typed_config_entry(self)),
                 )
-                summary_start = self._summary_window_start(
-                    config,
-                    thermostat_rows_tuple,
-                    today,
-                )
-                try:
-                    rows = await self._client.async_read_runtime_thermostat_summary(
-                        summary_start.isoformat(),
-                        today.isoformat(),
+                for _attempt in range(_SUMMARY_TEMPORAL_CONTEXT_ATTEMPTS):
+                    query_context = self.capture_temporal_context()
+                    query_day = query_context.evaluated_at.astimezone(
+                        query_context.local_tz
+                    ).date()
+                    summary_start = self._summary_window_start(
+                        config,
+                        thermostat_rows_tuple,
+                        query_day,
                     )
-                except BeestatAuthError:
-                    raise
-                except BeestatApiError:
-                    _LOGGER.warning(
-                        "Falling back to full Beestat summary status read "
-                        "after windowed read failed"
+                    try:
+                        rows = await self._client.async_read_runtime_thermostat_summary(
+                            summary_start.isoformat(),
+                            query_day.isoformat(),
+                        )
+                    except BeestatAuthError:
+                        raise
+                    except BeestatApiError:
+                        _LOGGER.warning(
+                            "Falling back to full Beestat summary status read "
+                            "after windowed read failed"
+                        )
+                        rows = await self._client.async_read_id(
+                            "runtime_thermostat_summary"
+                        )
+                        temporal_context = self.capture_temporal_context()
+                        summary_rows_full = True
+                        summary_window_start = None
+                        summary_window_end = None
+                        break
+
+                    temporal_context = self.capture_temporal_context()
+                    current_day = temporal_context.evaluated_at.astimezone(
+                        temporal_context.local_tz
+                    ).date()
+                    if current_day == query_day:
+                        summary_rows_full = False
+                        summary_window_start = summary_start
+                        summary_window_end = query_day
+                        break
+                else:
+                    _LOGGER.info(
+                        "Falling back to full Beestat summary status read after "
+                        "the local date changed repeatedly during refresh"
                     )
                     rows = await self._client.async_read_id(
                         "runtime_thermostat_summary"
                     )
+                    temporal_context = self.capture_temporal_context()
                     summary_rows_full = True
                     summary_window_start = None
                     summary_window_end = None
-                else:
-                    summary_rows_full = False
-                    summary_window_start = summary_start
-                    summary_window_end = today
             else:
                 rows = await self._client.async_read_id("runtime_thermostat_summary")
+                temporal_context = self.capture_temporal_context()
                 summary_rows_full = True
                 summary_window_start = None
                 summary_window_end = None
@@ -529,6 +700,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 summary_rows_full,
                 summary_window_start,
                 summary_window_end,
+                temporal_context=temporal_context,
             )
         except Exception as err:
             self._async_record_error(err)
@@ -565,20 +737,24 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             self._async_cancel_filter_boundary_retry()
             return
 
-        self.last_filter_boundary_reconcile_attempt_at = datetime.now(UTC)
+        temporal_context = self.capture_temporal_context()
+        self.last_filter_boundary_reconcile_attempt_at = temporal_context.evaluated_at
         pending_count = 0
         for thermostat in pending:
+            if not self.temporal_context_is_current(temporal_context):
+                pending_count += 1
+                continue
             changed_at = thermostat.filter_changed_at
             if changed_at is None:  # pragma: no cover - narrowed above
                 continue
-            local_date = changed_at.astimezone(self._local_tz).date()
+            local_date = changed_at.astimezone(temporal_context.local_tz).date()
             window_start = (
                 datetime.combine(local_date, time.min)
-                .replace(tzinfo=self._local_tz)
+                .replace(tzinfo=temporal_context.local_tz)
                 .astimezone(UTC)
             )
             window_end = min(
-                datetime.now(UTC),
+                temporal_context.evaluated_at,
                 changed_at + timedelta(minutes=5),
             )
             try:
@@ -596,6 +772,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     "Unable to reconcile a pending Beestat filter boundary (%s)",
                     exception_fingerprint(err),
                 )
+                continue
+
+            if not self.temporal_context_is_current(temporal_context):
+                pending_count += 1
                 continue
 
             boundary = _raw_filter_boundary(rows, changed_at)
@@ -660,9 +840,21 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_rows_full: bool,
         summary_window_start: date | None,
         summary_window_end: date | None,
+        *,
+        temporal_context: TemporalContext | None = None,
+        evaluated_at: datetime | None = None,
+        fetched_at: datetime | None = None,
     ) -> BeestatRuntimeData:
-        fetched_at = datetime.now(UTC)
-        today = fetched_at.astimezone(self._local_tz).date()
+        if temporal_context is None:
+            temporal_context = TemporalContext(
+                evaluated_at=evaluated_at or datetime.now(UTC),
+                local_tz=self._local_tz,
+                timezone_revision=self._timezone_revision,
+            )
+        projected_at = temporal_context.evaluated_at
+        local_tz = temporal_context.local_tz
+        source_fetched_at = fetched_at or projected_at
+        today = projected_at.astimezone(local_tz).date()
         rows_tuple = tuple(row for row in rows if not row.get("deleted"))
         thermostat_rows_tuple = tuple(
             row for row in thermostat_rows if not row.get("deleted")
@@ -716,7 +908,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         return BeestatRuntimeData(
             config=config,
-            fetched_at=fetched_at,
+            fetched_at=source_fetched_at,
+            projected_at=projected_at,
             sync_success_at=sync_success_at,
             metadata_sync_success_at=metadata_sync_success_at,
             summary_rows=rows_tuple,
@@ -730,8 +923,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             thermostat_metadata=_build_thermostat_metadata(
                 thermostat_rows_tuple,
                 sensor_metadata,
-                fetched_at,
-                self._local_tz,
+                projected_at,
+                local_tz,
                 config.thermostats,
             ),
             sensor_metadata=sensor_metadata,
@@ -774,6 +967,72 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if changed_date := _beestat_filter_changed_date(thermostat_row):
             return changed_date, "beestat"
         return None, None
+
+
+def _projection_changed(
+    current: BeestatRuntimeData,
+    projected: BeestatRuntimeData,
+    current_local_tz: ZoneInfo,
+    projected_local_tz: ZoneInfo | None = None,
+) -> bool:
+    """Return whether a cached time projection changes entity-visible state."""
+
+    if projected_local_tz is None:
+        projected_local_tz = current_local_tz
+    if (
+        current.config != projected.config
+        or current.thermostats != projected.thermostats
+        or current.thermostat_metadata != projected.thermostat_metadata
+    ):
+        return True
+
+    current_day = current.projected_at.astimezone(current_local_tz).date()
+    projected_day = projected.projected_at.astimezone(projected_local_tz).date()
+    if current_day == projected_day:
+        return False
+
+    return any(
+        build_filter_forecast(
+            thermostat,
+            current.thermostats.get(thermostat.thermostat_id),
+            today=current_day,
+        )
+        != build_filter_forecast(
+            thermostat,
+            projected.thermostats.get(thermostat.thermostat_id),
+            today=projected_day,
+        )
+        for thermostat in current.config.thermostats
+    )
+
+
+def _next_projection_deadline(
+    data: BeestatRuntimeData,
+    local_tz: ZoneInfo,
+) -> datetime:
+    """Return the earliest cached schedule, freshness, or local-date boundary."""
+
+    projection_at = data.projected_at
+    deadlines = [_next_local_midnight(projection_at, local_tz)]
+    for metadata in data.thermostat_metadata.values():
+        if (
+            metadata.next_scheduled_at is not None
+            and metadata.next_scheduled_at > projection_at
+        ):
+            deadlines.append(metadata.next_scheduled_at)
+        if metadata.data_end is None:
+            continue
+        stale_at = _cloud_data_stale_deadline(metadata.data_end)
+        if stale_at > projection_at:
+            deadlines.append(stale_at)
+    return min(deadlines)
+
+
+def _next_local_midnight(now: datetime, local_tz: ZoneInfo) -> datetime:
+    """Return the next local calendar boundary as an absolute UTC instant."""
+
+    local_day = now.astimezone(local_tz).date() + timedelta(days=1)
+    return datetime.combine(local_day, time.min, tzinfo=local_tz).astimezone(UTC)
 
 
 def _latest_row_date(rows: list[dict[str, Any]]) -> date | None:
@@ -1099,8 +1358,6 @@ def _schedule_snapshot(
     next_ref, next_at = _next_schedule_transition(
         schedule,
         local_now,
-        day_index,
-        slot_index,
         scheduled_ref,
     )
     next_profile = profile_by_ref.get(next_ref or "")
@@ -1175,7 +1432,9 @@ def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
 
 
 def _ecobee_day_index(value: datetime) -> int:
-    return (value.weekday() + 1) % 7
+    """Return Ecobee's Monday-first schedule index for a local datetime."""
+
+    return value.weekday()
 
 
 def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
@@ -1188,24 +1447,21 @@ def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
 def _next_schedule_transition(
     schedule: Any,
     local_now: datetime,
-    day_index: int,
-    slot_index: int,
     current_ref: str | None,
 ) -> tuple[str | None, datetime | None]:
-    slot_hour = local_now.hour
-    slot_minute = 30 if local_now.minute >= 30 else 0
-    slot_start = datetime.combine(
-        local_now.date(),
-        time(hour=slot_hour, minute=slot_minute),
-        tzinfo=local_now.tzinfo,
-    )
-    for offset in range(1, 7 * 48 + 1):
-        absolute_slot = day_index * 48 + slot_index + offset
-        candidate_day = (absolute_slot // 48) % 7
-        candidate_slot = absolute_slot % 48
-        candidate_ref = _schedule_ref(schedule, candidate_day, candidate_slot)
-        if candidate_ref is not None and candidate_ref != current_ref:
-            return candidate_ref, slot_start + timedelta(minutes=30 * offset)
+    candidate_utc = local_now.astimezone(UTC).replace(second=0, microsecond=0)
+    candidate_utc += timedelta(minutes=1)
+    for _offset in range(8 * 24 * 60):
+        candidate_local = candidate_utc.astimezone(local_now.tzinfo)
+        if candidate_local.minute in (0, 30):
+            candidate_ref = _schedule_ref(
+                schedule,
+                _ecobee_day_index(candidate_local),
+                candidate_local.hour * 2 + (candidate_local.minute // 30),
+            )
+            if candidate_ref is not None and candidate_ref != current_ref:
+                return candidate_ref, candidate_local
+        candidate_utc += timedelta(minutes=1)
     return None, None
 
 
@@ -1284,6 +1540,16 @@ def _lag_minutes(now: datetime, then: datetime | None) -> int | None:
     if then is None:
         return None
     return max(round((now - then).total_seconds() / 60), 0)
+
+
+def _cloud_data_stale_deadline(data_end: datetime) -> datetime:
+    """Return when rounded cloud lag first exceeds the shared threshold."""
+
+    return data_end + timedelta(
+        minutes=CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+        seconds=30,
+        microseconds=1,
+    )
 
 
 def _parse_date(value: Any) -> date | None:

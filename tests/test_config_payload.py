@@ -124,6 +124,26 @@ class ConfigPayloadTest(unittest.TestCase):
                 "api_base": "https://example.test/",
             },
         )
+
+    def test_connection_payloads_reject_insecure_api_base(self) -> None:
+        with self.assertRaises(ValueError):
+            config_payload.split_entry_payload(
+                {
+                    "api_key": "key",
+                    "api_base": "http://api.example.test/",
+                }
+            )
+        with self.assertRaises(ValueError):
+            config_payload.connection_data_from_user_input(
+                {
+                    "api_key": "old-key",
+                    "api_base": "https://api.example.test/",
+                },
+                {
+                    "api_key": "replacement-key",
+                    "api_base": "https://user@example.test/",
+                },
+            )
         self.assertEqual(
             config_payload.connection_data_from_user_input(
                 {
@@ -500,6 +520,41 @@ class ConfigPayloadTest(unittest.TestCase):
                     "temperature_entity_id": "sensor.room",
                     "include_temperature": True,
                     "include_air_quality": False,
+                }
+            ],
+        )
+
+    def test_update_sensor_override_preserves_missing_mapping_fields(self) -> None:
+        reference = {
+            "registry_entry_id": "registry-entry-a",
+            "domain": "sensor",
+            "platform": "homekit_controller",
+            "unique_id": "room-sensor-a-temperature",
+        }
+
+        options = config_payload.update_sensor_override_options(
+            {},
+            {
+                "sensors": [
+                    {
+                        "id": 2,
+                        "temperature_entity_id": "sensor.room_sensor_a",
+                        "temperature_entity_ref": reference,
+                    }
+                ]
+            },
+            2,
+            {"include_temperature": False},
+        )
+
+        self.assertEqual(
+            options["sensors"],
+            [
+                {
+                    "id": 2,
+                    "temperature_entity_id": "sensor.room_sensor_a",
+                    "temperature_entity_ref": reference,
+                    "include_temperature": False,
                 }
             ],
         )

@@ -10,8 +10,13 @@ from typing import Any
 
 import aiohttp
 
+from .url_validation import normalize_api_base
+
 _FINGERPRINT_COMPONENT_MAX = 48
 _FINGERPRINT_MAX = 160
+_DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+_RESPONSE_CHUNK_BYTES = 64 * 1024
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429})
 
 
 class BeestatApiError(RuntimeError):
@@ -20,6 +25,10 @@ class BeestatApiError(RuntimeError):
 
 class BeestatAuthError(BeestatApiError):
     """Raised when Beestat rejects the configured API key."""
+
+
+class _BeestatNonRetryableError(BeestatApiError):
+    """Raised when another identical request cannot plausibly correct the error."""
 
 
 def exception_fingerprint(err: BaseException) -> str:
@@ -161,16 +170,20 @@ class BeestatClient:
         *,
         timeout: int = 60,
         retries: int = 3,
+        max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
+        if max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be positive")
         self._session = session
         self._api_key = api_key
-        self._api_base = api_base.rstrip("/") + "/"
+        self._api_base = normalize_api_base(api_base).rstrip("/") + "/"
         self._redactions = _redaction_replacements(
             api_key=api_key,
             api_base=self._api_base,
         )
         self._timeout = timeout
         self._retries = retries
+        self._max_response_bytes = max_response_bytes
 
     def redact_error(self, err: Exception) -> str:
         """Return an error string safe to expose in Home Assistant state."""
@@ -228,11 +241,18 @@ class BeestatClient:
                                 f"{resource}.{method} authentication failed "
                                 f"with HTTP {response.status}"
                             )
+                        if (
+                            400 <= response.status < 500
+                            and response.status not in _RETRYABLE_HTTP_STATUSES
+                        ):
+                            raise _BeestatNonRetryableError(
+                                f"{resource}.{method} returned HTTP {response.status}"
+                            )
                         if response.status >= 400:
                             raise BeestatApiError(
                                 f"{resource}.{method} returned HTTP {response.status}"
                             )
-                        payload = await response.json(content_type=None)
+                        payload = await self._async_read_json(response)
                 data = _unwrap_response(payload, resource, method)
                 if method == "sync" and data is False:
                     raise BeestatApiError(
@@ -241,6 +261,10 @@ class BeestatClient:
                 return data
             except BeestatAuthError:
                 raise
+            except _BeestatNonRetryableError as err:
+                raise BeestatApiError(
+                    f"Failed Beestat call {resource}.{method}: {self.redact_error(err)}"
+                ) from None
             except (
                 TimeoutError,
                 aiohttp.ClientError,
@@ -260,6 +284,24 @@ class BeestatClient:
         raise BeestatApiError(
             f"Failed Beestat call {resource}.{method}: {detail}"
         ) from None
+
+    async def _async_read_json(self, response: aiohttp.ClientResponse) -> Any:
+        """Decode one response without retaining an unbounded remote body."""
+
+        content_length = response.content_length
+        if content_length is not None and content_length > self._max_response_bytes:
+            raise _BeestatNonRetryableError("Beestat response exceeded the size limit")
+
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.content.iter_chunked(_RESPONSE_CHUNK_BYTES):
+            size += len(chunk)
+            if size > self._max_response_bytes:
+                raise _BeestatNonRetryableError(
+                    "Beestat response exceeded the size limit"
+                )
+            chunks.append(chunk)
+        return json.loads(b"".join(chunks))
 
     async def async_sync_runtime(self) -> list[dict[str, Any]]:
         """Ask Beestat to sync runtime data before reading it."""

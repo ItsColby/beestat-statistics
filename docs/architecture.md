@@ -9,15 +9,21 @@
   manages one integration per repository, and all runtime files required by Home
   Assistant must live under that integration directory.
 - Keep GitHub/HACS support at the repository root: `README.md`, `hacs.json`,
-  `.github/`, `requirements-ha-test.txt`, `pytest.ini`, `docs/`, `scripts/`,
-  `tests/`, and `blueprints/`.
+  `.github/`, `requirements-ha-test.txt`, `requirements-ha-current.txt`,
+  `pytest.ini`, `docs/`, `scripts/`, `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
-  Assistant baseline, currently Core `2026.8.0`. Keep one exact harness lane
-  aligned with the maintained runtime and advance all three pins together only
-  after a stable runtime upgrade.
-- Treat `.venv/`, `.local/`, `.pytest_cache/`, `.ruff_cache/`, `.agents/`, and
-  `.codex/` as local working state unless a future task explicitly turns one
-  into a tracked repo feature. Do not commit Home Assistant config backups, API
+  Assistant floor, currently Core `2026.8.0`, and its dependency-closed harness
+  lane. `requirements-ha-current.txt` owns exact same-month patch compatibility,
+  currently Core `2026.8.1`. That hosted lane verifies installed package
+  metadata, runs `pip check`, accepts no conflict or exactly the single proven
+  harness/Core pin mismatch, and then runs the complete HA tests. It proves
+  patch compatibility, not dependency closure. Cross-month, prerelease,
+  extra-conflict, skipped, or failing-test cases remain unsupported. Advance
+  each requirements owner, CI label, documentation, and assertion with the
+  support contract it represents; advance the HACS and blueprint minima only
+  when the distribution floor changes.
+- Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
+  working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
   household evidence.
 
@@ -27,13 +33,23 @@
   support exists for import/backward compatibility; do not make YAML the
   preferred routine configuration path.
 - Config-entry `data` owns required connection identity: API key, API base URL,
-  and the non-reversible account fingerprint. Initial setup is connection-only;
-  reconfigure and reauthentication validate replacements before saving them and
-  require an explicit confirmation before changing accounts. A confirmed
-  account replacement clears saved source scope and per-source overrides before
-  reload so numeric resource IDs cannot silently cross the account boundary;
-  timing options remain intact. Previously imported Recorder statistics remain,
-  so the confirmation must also explain the possible stable-slug history overlap.
+  and the non-reversible account fingerprint. Initial UI/YAML setup,
+  reconfigure, and reauthentication require at least one identifiable
+  thermostat anchor before saving a connection. A successful but empty
+  thermostat response leaves the entry unchanged because account continuity is
+  unproven. Reconfigure and reauthentication validate replacements before
+  saving them and require explicit confirmation when the thermostat
+  fingerprints cannot prove account continuity and may indicate a different
+  account. A confirmed possible account change clears saved source scope and
+  per-source overrides before reload so numeric resource IDs cannot silently
+  cross the account boundary; timing options remain intact. Previously imported
+  Recorder statistics remain, so the confirmation must also explain the possible
+  stable-slug history overlap.
+- The API base URL must use HTTPS and must not contain user information, a
+  query, or a fragment. Validate this boundary before constructing the client
+  or exposing the API key to transport. A legacy invalid or insecure entry
+  fails setup, creates an actionable Repair, and remains uncontacted until
+  Reconfigure saves a valid secure URL.
 - Config-entry `options` owns persistent behavior: import timing, selected
   Beestat source scope, and local mapping/filter/statistic overrides. Options
   save through native Home Assistant flows and reload the entry. Source scope
@@ -68,6 +84,24 @@
   preserves entity assignments. Fallback devices remain Beestat-owned and do
   not use the deprecated `via_device` identifier contract. This is required for
   Home Assistant Core 2026.8's one-config-entry-per-device model.
+- User-confirmed UI mappings store a stable foreign-source reference containing
+  the entity-registry UUID plus `(domain, platform, unique_id)`, while retaining
+  the selection-time entity ID for safe downgrade and local diagnostics. Resolve
+  the UUID first and the source tuple second so renames and registry recreation
+  do not require a Beestat config-entry recreation. An unresolved stable
+  reference is authoritative and must not fall back to mutable name matching.
+  Options forms resolve the reference to the current entity ID for suggested
+  values without rewriting storage; a temporarily unresolved source appears
+  unselected while its stored reference remains recoverable.
+  Existing UI mappings gain references through the versioned minor migration
+  only when their current registry entry can be proven. YAML remains the
+  portable entity-ID owner and is never silently rewritten; an unresolved YAML
+  or unmigratable legacy mapping raises the existing mapping Repair.
+- Entity- and device-registry lifecycle listeners rebuild only the cached runtime
+  mapping and rebind existing Beestat enrichment entities when a foreign source
+  moves, detaches, is removed, or is restored. Reconciliation must not recreate
+  the config entry or contact Beestat, may update only entities owned by the
+  current Beestat config entry, and removes both listeners on unload.
 - Automated stale-fallback removal is limited to devices owned only by the
   current Beestat config entry, carrying only Beestat identifiers and no foreign
   connections. A mixed or shared registry record must fail closed.
@@ -79,6 +113,27 @@
   need `docs/beestat-api-surface.json`,
   `scripts/check_beestat_api_surface.py`, README, diagnostics, and test
   coverage updates.
+- Keep acquisition, observation, local projection, and effect deadlines as
+  separate time domains. The configured import interval owns Beestat cloud I/O
+  and remains six hours by default. One config-entry-owned local scheduler
+  reevaluates cached comfort schedules, the cloud-stale threshold, and local
+  date-dependent runtime/filter projections at their earliest boundary without
+  I/O. It reschedules after source refresh and every boundary, publishes only
+  actual projection changes, follows configured-timezone changes without an
+  entry reload, and cancels both its deadline and timezone listener on unload.
+  The coordinator is the single current-timezone owner for these projections
+  and Recorder import windows. Every normalized refresh and prepared Recorder
+  import captures one evaluation clock, timezone, and timezone revision. A
+  windowed refresh retries when an awaited timezone/date rollover invalidates
+  its requested local-day bounds, while an import discards the uncommitted
+  preparation and retries before any Recorder write. Repeated churn is bounded.
+  The filter-boundary retry remains a separate effect timer because its callback
+  reads raw Beestat runtime and can persist reconciliation state; it captures
+  its own temporal context and leaves the boundary pending rather than
+  persisting a result from a stale timezone revision. Health-projection evidence
+  is owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;
+  `tests/test_runtime_ha.py` owns the exact-Core scheduler/lifecycle cases, but
+  their presence is not executed dependency-closure evidence.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button first persists the local date and exact UTC click timestamp, because
@@ -90,7 +145,11 @@
   day's fan-runtime baseline, and retries every 15 minutes for six hours while
   source data is not ready. Normal coordinator refreshes continue attempts after
   that fast-retry window. Same-day forecasts subtract the finalized baseline. A
-  manual date edit clears the click timestamp and boundary because date-only
+  historical repair accepts an offsetless local timestamp only when it resolves
+  to one real instant in the configured timezone. Repeated daylight-saving times
+  require an explicit offset, and nonexistent local times fail validation rather
+  than being normalized to a different wall time. A manual date edit clears the
+  click timestamp and boundary because date-only
   input does not prove when the replacement occurred, then performs a skip-sync
   refresh so the selected historical date is covered. Keep the timestamp and
   boundary internal attributes of the date entity; do not add a second datetime
@@ -148,6 +207,13 @@
   public fixtures, or public documentation examples.
 - Keep filter-date source, helper, and click-boundary attributes available in
   current state but excluded from Recorder history.
+- Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
+  as the primary thermostat surface. Categorize freshness dates/lags, active
+  sensor count, filter runtime details, intermediate forecast dates, and
+  Beestat's delayed `program.currentClimateRef` current-comfort-profile context
+  as diagnostic; keep advanced global import counters disabled by default.
+  Scheduled profile and next transition are local projections of the cached
+  Beestat schedule and do not claim the thermostat's live hold/mode state.
 - Keep partial-import and active-alert evidence bounded in ordinary entity
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in
@@ -160,6 +226,10 @@
 - Refresh enabled override mapping Repairs when a referenced entity-registry
   record is removed, renamed, or restored, and remove the listener on unload.
   Do not silently rewrite the explicit YAML/options mapping owner.
+- Preserve the supported helper-device association across foreign source move,
+  detach, removal, and restoration without config-entry recreation. Registry
+  reconciliation must prove config-entry ownership before each helper update
+  and remove its listeners on unload.
 - Clear the YAML connection-change Repair after a validated same-account import
   or after the YAML block is removed. Never apply a YAML credential replacement
   when the saved and candidate account fingerprints cannot prove continuity.
