@@ -186,9 +186,11 @@ async def test_legacy_http_entry_fails_before_transport_and_creates_repair(
         },
     )
 
-    with pytest.raises(ConfigEntryError, match="must use HTTPS"):
+    with pytest.raises(ConfigEntryError) as raised:
         await async_setup_entry_impl(hass, entry)
 
+    assert raised.value.translation_domain == DOMAIN
+    assert raised.value.translation_key == "invalid_api_base"
     assert ir.async_get(hass).async_get_issue(DOMAIN, "insecure_api_base")
 
 
@@ -205,9 +207,11 @@ async def test_legacy_invalid_https_entry_fails_before_transport_and_creates_rep
         },
     )
 
-    with pytest.raises(ConfigEntryError, match="invalid or insecure"):
+    with pytest.raises(ConfigEntryError) as raised:
         await async_setup_entry_impl(hass, entry)
 
+    assert raised.value.translation_domain == DOMAIN
+    assert raised.value.translation_key == "invalid_api_base"
     assert ir.async_get(hass).async_get_issue(DOMAIN, "insecure_api_base")
 
 
@@ -2090,6 +2094,9 @@ async def test_options_flow_recovers_temporarily_missing_room_sensor_default(
     assert entry.options[CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_ID] == (
         original_entity_id
     )
+    assert entry.options[CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_REF] == (
+        source_reference
+    )
 
     restored = entity_registry.async_get_or_create(
         "sensor",
@@ -2119,7 +2126,10 @@ async def test_options_flow_recovers_temporarily_missing_room_sensor_default(
         restored.entity_id
     )
     assert result["data"][CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_REF] == (
-        source_reference
+        {
+            **source_reference,
+            "registry_entry_id": restored.id,
+        }
     )
 
 

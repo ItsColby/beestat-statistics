@@ -920,7 +920,7 @@ def _wrong_account(
     current_data: Mapping[str, Any],
     account_fingerprint: Any | None,
 ) -> bool:
-    """Return whether validation appears to target a different Beestat account."""
+    """Return whether fingerprints require possible account-change confirmation."""
 
     current_fingerprint = current_data.get(CONF_ACCOUNT_FINGERPRINT)
     if not current_fingerprint or not account_fingerprint:

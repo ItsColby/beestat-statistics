@@ -524,6 +524,41 @@ class ConfigPayloadTest(unittest.TestCase):
             ],
         )
 
+    def test_update_sensor_override_preserves_missing_mapping_fields(self) -> None:
+        reference = {
+            "registry_entry_id": "registry-entry-a",
+            "domain": "sensor",
+            "platform": "homekit_controller",
+            "unique_id": "room-sensor-a-temperature",
+        }
+
+        options = config_payload.update_sensor_override_options(
+            {},
+            {
+                "sensors": [
+                    {
+                        "id": 2,
+                        "temperature_entity_id": "sensor.room_sensor_a",
+                        "temperature_entity_ref": reference,
+                    }
+                ]
+            },
+            2,
+            {"include_temperature": False},
+        )
+
+        self.assertEqual(
+            options["sensors"],
+            [
+                {
+                    "id": 2,
+                    "temperature_entity_id": "sensor.room_sensor_a",
+                    "temperature_entity_ref": reference,
+                    "include_temperature": False,
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

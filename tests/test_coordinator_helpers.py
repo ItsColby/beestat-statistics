@@ -15,6 +15,22 @@ ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_stat
 PACKAGE = "beestat_statistics_coordinator_test"
 
 
+class _FakeTranslatedHomeAssistantError(Exception):
+    """Minimal translated Home Assistant exception used by pure unit tests."""
+
+    def __init__(
+        self,
+        *args: object,
+        translation_domain: str | None = None,
+        translation_key: str | None = None,
+        translation_placeholders: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(*args or ((translation_key,) if translation_key else ()))
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
+
+
 def _load_module(name: str):
     package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
     package.__path__ = [str(ROOT)]
@@ -904,9 +920,11 @@ class CoordinatorHelpersTest(unittest.TestCase):
         core.HomeAssistant = object
         core.callback = lambda func: func
         exceptions.ConfigEntryAuthFailed = type(
-            "ConfigEntryAuthFailed", (Exception,), {}
+            "ConfigEntryAuthFailed", (_FakeTranslatedHomeAssistantError,), {}
         )
-        update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
+        update_coordinator.UpdateFailed = type(
+            "UpdateFailed", (_FakeTranslatedHomeAssistantError,), {}
+        )
         update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
         event.async_call_later = lambda *_args, **_kwargs: lambda: None
         event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
@@ -1275,13 +1293,57 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 coordinator
             )
 
-        self.assertEqual(
-            str(raised.exception),
-            "Unexpected integration error (RuntimeError)",
-        )
+        self.assertEqual(raised.exception.translation_domain, "beestat_statistics")
+        self.assertEqual(raised.exception.translation_key, "beestat_request_failed")
         self.assertIsNone(raised.exception.__cause__)
         self.assertEqual(recorded_errors, [raised.exception])
         self.assertNotIn(secret, str(recorded_errors[0]))
+
+    async def test_periodic_refresh_translates_auth_failure(self) -> None:
+        secret = "private-auth-response-detail"
+
+        async def fetch_runtime_data(**_kwargs):
+            raise self.coordinator.BeestatAuthError(secret)
+
+        coordinator = types.SimpleNamespace(
+            _async_fetch_runtime_data=fetch_runtime_data,
+            _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
+        )
+        auth_failed = sys.modules["homeassistant.exceptions"].ConfigEntryAuthFailed
+
+        with self.assertRaises(auth_failed) as raised:
+            await self.coordinator.BeestatRuntimeDataCoordinator._async_update_data(
+                coordinator
+            )
+
+        self.assertEqual(raised.exception.translation_domain, "beestat_statistics")
+        self.assertEqual(raised.exception.translation_key, "beestat_auth_failed")
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn(secret, str(raised.exception))
+
+    async def test_periodic_refresh_translates_unexpected_failure(self) -> None:
+        secret = "private-response-detail"
+
+        async def fetch_runtime_data(**_kwargs):
+            raise RuntimeError(secret)
+
+        coordinator = types.SimpleNamespace(
+            _async_fetch_runtime_data=fetch_runtime_data,
+            _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
+        )
+        update_failed = sys.modules[
+            "homeassistant.helpers.update_coordinator"
+        ].UpdateFailed
+
+        with self.assertRaises(update_failed) as raised:
+            await self.coordinator.BeestatRuntimeDataCoordinator._async_update_data(
+                coordinator
+            )
+
+        self.assertEqual(raised.exception.translation_domain, "beestat_statistics")
+        self.assertEqual(raised.exception.translation_key, "beestat_request_failed")
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn(secret, str(raised.exception))
 
     async def test_pending_boundary_finalizes_from_raw_runtime_rows(self) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")

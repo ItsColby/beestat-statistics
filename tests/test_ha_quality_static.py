@@ -824,22 +824,41 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         button_text = (
             ROOT / "custom_components/beestat_statistics/button.py"
         ).read_text(encoding="utf-8")
+        coordinator_text = (
+            ROOT / "custom_components/beestat_statistics/coordinator.py"
+        ).read_text(encoding="utf-8")
         issues_text = (
             ROOT / "custom_components/beestat_statistics/issues.py"
         ).read_text(encoding="utf-8")
 
-        exception_keys = set(
-            re.findall(
-                r"(?:HomeAssistantError|ServiceValidationError)\("
-                r"[\s\S]*?translation_key=\"([^\"]+)\"",
-                init_text + button_text,
-            )
+        translated_exception_names = {
+            "ConfigEntryAuthFailed",
+            "ConfigEntryError",
+            "HomeAssistantError",
+            "ServiceValidationError",
+            "UpdateFailed",
+        }
+        trees = tuple(
+            ast.parse(text) for text in (init_text, button_text, coordinator_text)
         )
+        exception_keys = {
+            keyword.value.value
+            for tree in trees
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id in translated_exception_names
+            for keyword in call.keywords
+            if keyword.arg == "translation_key"
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, str)
+        }
         self.assertEqual(
             exception_keys,
             {
                 "beestat_auth_failed",
                 "beestat_request_failed",
+                "invalid_api_base",
                 "filter_change_boundary_date_mismatch",
                 "filter_change_boundary_local_time_invalid",
                 "filter_change_boundary_out_of_range",
@@ -851,14 +870,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertTrue(exception_keys <= set(strings["exceptions"]))
 
-        for tree in (ast.parse(init_text), ast.parse(button_text)):
+        for tree in trees:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Raise) or node.exc is None:
                     continue
                 if not (
                     isinstance(node.exc, ast.Call)
                     and isinstance(node.exc.func, ast.Name)
-                    and node.exc.func.id == "HomeAssistantError"
+                    and node.exc.func.id in translated_exception_names
                 ):
                     continue
                 self.assertTrue(
@@ -867,12 +886,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                         isinstance(node.cause, ast.Constant)
                         and node.cause.value is None
                     ),
-                    "HomeAssistantError must not retain a raw exception cause",
+                    "Translated Home Assistant exceptions must not retain a raw "
+                    "exception cause",
                 )
 
-        coordinator_text = (
-            ROOT / "custom_components/beestat_statistics/coordinator.py"
-        ).read_text(encoding="utf-8")
         self.assertIn("async_record_import_error", coordinator_text)
         self.assertIn("def _async_record_error", coordinator_text)
         self.assertIn(

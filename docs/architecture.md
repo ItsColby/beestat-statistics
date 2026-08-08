@@ -36,11 +36,12 @@
   thermostat anchor before saving a connection. A successful but empty
   thermostat response leaves the entry unchanged because account continuity is
   unproven. Reconfigure and reauthentication validate replacements before
-  saving them and require an explicit confirmation before changing accounts. A
-  confirmed account replacement clears saved source scope and per-source
-  overrides before reload so numeric resource IDs cannot silently cross the
-  account boundary; timing options remain intact. Previously imported Recorder
-  statistics remain, so the confirmation must also explain the possible
+  saving them and require explicit confirmation when the thermostat
+  fingerprints cannot prove account continuity and may indicate a different
+  account. A confirmed possible account change clears saved source scope and
+  per-source overrides before reload so numeric resource IDs cannot silently
+  cross the account boundary; timing options remain intact. Previously imported
+  Recorder statistics remain, so the confirmation must also explain the possible
   stable-slug history overlap.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client

@@ -1047,7 +1047,7 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
             translation_domain=DOMAIN,
             translation_key="unknown_thermostat_id",
             translation_placeholders={"thermostat_id": str(err.thermostat_id)},
-        ) from err
+        ) from None
     except BeestatAuthError as err:
         runtime.coordinator.async_record_import_error(err)
         runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
@@ -1313,11 +1313,12 @@ def _validated_entry_api_base(
 
     try:
         api_base = normalize_api_base(entry.data[CONF_API_BASE])
-    except ValueError as err:
+    except ValueError:
         async_set_insecure_api_base_issue(hass, active=True)
         raise ConfigEntryError(
-            "Beestat API URL is invalid or insecure; use Reconfigure to correct it"
-        ) from err
+            translation_domain=DOMAIN,
+            translation_key="invalid_api_base",
+        ) from None
     async_set_insecure_api_base_issue(hass, active=False)
     return api_base
 

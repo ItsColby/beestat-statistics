@@ -167,7 +167,7 @@
       },
       "account_change_confirm": {
         "title": "Confirm Beestat account change",
-        "description": "The validated API key does not share any known thermostat anchors with the saved connection and may belong to a different Beestat account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this possible account change and history boundary are intentional."
+        "description": "The validated connection cannot be proven to match the saved Beestat account from its thermostat fingerprint and may belong to a different account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this possible account change and history boundary are intentional."
       }
     },
     "error": {
@@ -194,6 +194,9 @@
     },
     "beestat_request_failed": {
       "message": "The Beestat request failed. Check the Beestat Statistics status sensor for details."
+    },
+    "invalid_api_base": {
+      "message": "The Beestat API URL is invalid or insecure. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment."
     },
     "filter_change_boundary_date_mismatch": {
       "message": "The repair timestamp's local date does not match this thermostat's saved filter-change date."

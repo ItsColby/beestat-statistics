@@ -459,10 +459,16 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
             return await self._async_fetch_runtime_data(skip_sync=False)
-        except BeestatAuthError as err:
-            raise ConfigEntryAuthFailed(self._client.redact_error(err)) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the coordinator boundary
-            raise UpdateFailed(self._client.redact_error(err)) from None
+        except BeestatAuthError:
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key="beestat_auth_failed",
+            ) from None
+        except Exception:  # noqa: BLE001 - translate at the coordinator boundary
+            raise UpdateFailed(
+                translation_domain=DOMAIN,
+                translation_key="beestat_request_failed",
+            ) from None
 
     async def async_refresh_runtime(
         self,
@@ -480,7 +486,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         except Exception as err:
             safe_error: Exception = err
             if not isinstance(err, BeestatApiError):
-                safe_error = UpdateFailed(self._client.redact_error(err))
+                safe_error = UpdateFailed(
+                    translation_domain=DOMAIN,
+                    translation_key="beestat_request_failed",
+                )
             self.async_set_update_error(safe_error)
             if isinstance(err, BeestatAuthError):
                 _typed_config_entry(self).async_start_reauth_if_available(self.hass)
