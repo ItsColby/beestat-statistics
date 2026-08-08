@@ -1023,7 +1023,10 @@ async def test_import_flow_preserves_external_data_update_during_validation(
         "future": {"v": 2, "unknown": True},
     }
 
-    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+    async def validate(
+        _hass: HomeAssistant,
+        _data: dict[str, Any],
+    ) -> dict[str, Any]:
         hass.config_entries.async_update_entry(entry, data=external_data)
         return ACCOUNT_A
 
@@ -1067,7 +1070,10 @@ async def test_import_flow_reconciles_concurrent_options_update(
     )
     external_options = {**dict(entry.options), "future_option": {"v": 2}}
 
-    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+    async def validate(
+        _hass: HomeAssistant,
+        _data: dict[str, Any],
+    ) -> dict[str, Any]:
         hass.config_entries.async_update_entry(entry, options=external_options)
         return ACCOUNT_A
 
@@ -1585,7 +1591,10 @@ async def test_reconfigure_second_flow_wins_during_awaited_validation(
     first_validation_started = asyncio.Event()
     release_first_validation = asyncio.Event()
 
-    async def validate(data: dict[str, Any]) -> dict[str, Any]:
+    async def validate(
+        _hass: HomeAssistant,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
         if data[CONF_API_KEY] == "first-key":
             first_validation_started.set()
             await release_first_validation.wait()
@@ -1639,7 +1648,10 @@ async def test_reconfigure_preserves_external_update_during_validation(
         "future": {"v": 2, "unknown": True},
     }
 
-    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+    async def validate(
+        _hass: HomeAssistant,
+        _data: dict[str, Any],
+    ) -> dict[str, Any]:
         hass.config_entries.async_update_entry(entry, data=external_data)
         return ACCOUNT_A
 
@@ -1680,7 +1692,10 @@ async def test_reconfigure_reconciles_concurrent_options_update(
     )
     external_options = {**dict(entry.options), "future_option": {"v": 2}}
 
-    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+    async def validate(
+        _hass: HomeAssistant,
+        _data: dict[str, Any],
+    ) -> dict[str, Any]:
         hass.config_entries.async_update_entry(entry, options=external_options)
         return ACCOUNT_A
 
