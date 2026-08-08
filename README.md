@@ -403,15 +403,26 @@ all succeed.
 
 ## Release Publishing
 
-Do not use a direct push to `main` as the first build check. Push a
-release-candidate branch, wait for every **Validate** pull-request job to reach
-terminal success, then merge. After the merge, wait for the `main` **Validate**
-run and CodeQL analysis of the exact commit to complete, scan the complete
-Validate logs, and inspect open code-scanning alerts. CodeQL workflow success
-means the analysis ran; it does not mean the result contains no findings.
-Resolve or explicitly disposition candidate-introduced alerts before creating
-the immutable tag and GitHub Release. A source push alone is not a completed
-Home Assistant integration release.
+Every release follows this order:
+
+1. Create a release-candidate branch from current `main`.
+2. Open a pull request and require terminal success for **Unit tests**, **Home
+   Assistant minimum integration tests (Core 2026.8.0)**, **Home Assistant
+   current-patch integration tests (Core 2026.8.1)**, **Hassfest**, **HACS**,
+   the aggregate **Release gate**, and CodeQL's **Analyze (actions)**, **Analyze
+   (python)**, and **CodeQL** checks.
+3. Merge through default-branch protection without bypass, using squash or
+   rebase so history remains linear.
+4. On the resulting `main` commit, require a successful **Validate** push run
+   and CodeQL analysis. Inspect the complete logs and open code-scanning alerts;
+   workflow success proves analysis completed, not that it found nothing.
+5. Resolve or explicitly disposition candidate-introduced alerts, then align
+   the manifest version, immutable `vYYYY.M.D` tag, and GitHub Release to that
+   exact `main` commit.
+6. Treat HACS selection or installation, the Home Assistant configuration
+   check, restart, live validation, migration, and rollback as later, separately
+   gated phases. A source push or GitHub Release alone is not a completed Home
+   Assistant deployment.
 
 Before publishing a release intended for HACS, verify the repository still has a public description, relevant Home Assistant/HACS topics, issues enabled, a brand icon, passing unit and Home Assistant tests, passing Hassfest, passing HACS Action, and a GitHub release tag matching the manifest version.
 
