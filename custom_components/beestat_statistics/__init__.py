@@ -134,7 +134,7 @@ from .entity import (
     async_remove_cross_integration_device_ownership,
     is_beestat_only_device,
 )
-from .entry_options import async_mark_filter_changed
+from .entry_options import async_mark_filter_changed, resolve_filter_change_timestamp
 from .import_evidence import SkippedWindowEvidence
 from .issues import async_set_yaml_connection_change_issue
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
@@ -1090,9 +1090,16 @@ async def _async_handle_repair_filter_change_boundary(
             translation_placeholders={"thermostat_id": str(thermostat_id)},
         )
     changed_at = call.data[ATTR_CHANGED_AT]
-    if changed_at.tzinfo is None:
-        changed_at = changed_at.replace(tzinfo=runtime.coordinator.local_tz)
-    changed_at = changed_at.astimezone(UTC)
+    try:
+        changed_at = resolve_filter_change_timestamp(
+            changed_at,
+            runtime.coordinator.local_tz,
+        )
+    except ValueError:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="filter_change_boundary_local_time_invalid",
+        ) from None
     now = datetime.now(UTC)
     if changed_at > now or changed_at < now - timedelta(days=31):
         raise ServiceValidationError(

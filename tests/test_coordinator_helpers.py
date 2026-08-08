@@ -744,6 +744,22 @@ class CoordinatorHelpersTest(unittest.TestCase):
             datetime(2026, 11, 2, 5, tzinfo=UTC),
         )
 
+    def test_next_local_midnight_uses_first_valid_instant_after_midnight_gap(
+        self,
+    ) -> None:
+        local_tz = ZoneInfo("Africa/Cairo")
+
+        boundary = self.coordinator._next_local_midnight(
+            datetime(2026, 4, 23, 12, tzinfo=UTC),
+            local_tz,
+        )
+
+        self.assertEqual(boundary, datetime(2026, 4, 23, 22, tzinfo=UTC))
+        self.assertEqual(
+            boundary.astimezone(local_tz),
+            datetime(2026, 4, 24, 1, tzinfo=local_tz),
+        )
+
     def test_thermostat_metadata_filters_inactive_sensors_and_active_alerts(
         self,
     ) -> None:

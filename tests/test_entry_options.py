@@ -7,7 +7,7 @@ import sys
 import types
 import unittest
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -49,6 +49,47 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
                 sys.modules.pop(key, None)
             else:
                 sys.modules[key] = module
+
+    def test_filter_change_timestamp_accepts_unique_local_and_explicit_folds(
+        self,
+    ) -> None:
+        local_tz = ZoneInfo("America/New_York")
+
+        self.assertEqual(
+            self.entry_options.resolve_filter_change_timestamp(
+                datetime(2026, 7, 5, 17, 48),  # noqa: DTZ001 - local wall time
+                local_tz,
+            ),
+            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
+        )
+        self.assertEqual(
+            self.entry_options.resolve_filter_change_timestamp(
+                datetime.fromisoformat("2026-11-01T01:30:00-04:00"),
+                local_tz,
+            ),
+            datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
+        )
+        self.assertEqual(
+            self.entry_options.resolve_filter_change_timestamp(
+                datetime.fromisoformat("2026-11-01T01:30:00-05:00"),
+                local_tz,
+            ),
+            datetime(2026, 11, 1, 6, 30, tzinfo=UTC),
+        )
+
+    def test_filter_change_timestamp_rejects_ambiguous_local_time(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ambiguous or does not exist"):
+            self.entry_options.resolve_filter_change_timestamp(
+                datetime(2026, 11, 1, 1, 30),  # noqa: DTZ001 - ambiguous wall time
+                ZoneInfo("America/New_York"),
+            )
+
+    def test_filter_change_timestamp_rejects_nonexistent_local_time(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ambiguous or does not exist"):
+            self.entry_options.resolve_filter_change_timestamp(
+                datetime(2026, 3, 8, 2, 30),  # noqa: DTZ001 - nonexistent wall time
+                ZoneInfo("America/New_York"),
+            )
 
     async def test_set_filter_changed_date_saves_local_option_and_dismisses_alerts(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, cast
+from zoneinfo import ZoneInfo
 
 from .api import exception_fingerprint
 from .config_payload import update_thermostat_override_options
@@ -21,6 +22,29 @@ _LOGGER = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from .coordinator import BeestatRuntimeDataCoordinator
     from .runtime import BeestatStatisticsConfigEntry
+
+
+def resolve_filter_change_timestamp(value: datetime, local_tz: ZoneInfo) -> datetime:
+    """Resolve one exact filter-change timestamp to UTC without DST guessing."""
+
+    if value.tzinfo is not None and value.utcoffset() is not None:
+        return value.astimezone(UTC)
+    if value.tzinfo is not None:
+        raise ValueError("filter-change local time is ambiguous or does not exist")
+
+    local_wall_time = value.replace(fold=0)
+    candidates = {
+        candidate.astimezone(UTC)
+        for fold in (0, 1)
+        if (candidate := local_wall_time.replace(tzinfo=local_tz, fold=fold))
+        .astimezone(UTC)
+        .astimezone(local_tz)
+        .replace(tzinfo=None, fold=0)
+        == local_wall_time
+    }
+    if len(candidates) != 1:
+        raise ValueError("filter-change local time is ambiguous or does not exist")
+    return candidates.pop()
 
 
 async def async_set_filter_changed_date(

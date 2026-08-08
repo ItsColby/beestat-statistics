@@ -120,7 +120,11 @@
   day's fan-runtime baseline, and retries every 15 minutes for six hours while
   source data is not ready. Normal coordinator refreshes continue attempts after
   that fast-retry window. Same-day forecasts subtract the finalized baseline. A
-  manual date edit clears the click timestamp and boundary because date-only
+  historical repair accepts an offsetless local timestamp only when it resolves
+  to one real instant in the configured timezone. Repeated daylight-saving times
+  require an explicit offset, and nonexistent local times fail validation rather
+  than being normalized to a different wall time. A manual date edit clears the
+  click timestamp and boundary because date-only
   input does not prove when the replacement occurred, then performs a skip-sync
   refresh so the selected historical date is covered. Keep the timestamp and
   boundary internal attributes of the date entity; do not add a second datetime

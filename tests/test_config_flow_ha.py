@@ -34,6 +34,7 @@ try:
     from homeassistant.const import CONF_API_KEY
     from homeassistant.core import HomeAssistant
     from homeassistant.data_entry_flow import FlowResultType
+    from homeassistant.exceptions import ServiceValidationError
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
@@ -1330,6 +1331,66 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     assert mark_changed.await_args.args[1] == 1001
     assert mark_changed.await_args.args[2] == repair_at.astimezone(UTC)
     assert mark_changed.await_args.kwargs == {"dismiss_alerts": False}
+
+
+@pytest.mark.parametrize(
+    ("changed_at", "evaluated_at"),
+    [
+        ("2026-03-08T02:30:00", datetime(2026, 3, 15, tzinfo=UTC)),
+        ("2026-11-01T01:30:00", datetime(2026, 11, 8, tzinfo=UTC)),
+    ],
+)
+async def test_repair_filter_change_boundary_rejects_inexact_local_wall_time(
+    hass: HomeAssistant,
+    changed_at: str,
+    evaluated_at: datetime,
+) -> None:
+    entry = _add_mock_entry(hass)
+    local_tz = ZoneInfo("America/New_York")
+    thermostat = _configured_thermostat(
+        thermostat_id=1001,
+        name="Zone A",
+        slug="zone_a",
+        filter_changed_date=datetime.fromisoformat(changed_at).date(),
+    )
+    coordinator = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            config=types.SimpleNamespace(thermostats=(thermostat,))
+        ),
+        local_tz=local_tz,
+    )
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert await async_setup(hass, {})
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return evaluated_at.replace(tzinfo=None)
+            return evaluated_at.astimezone(tz)
+
+    with (
+        patch("custom_components.beestat_statistics.datetime", FrozenDateTime),
+        patch(
+            "custom_components.beestat_statistics.async_mark_filter_changed",
+            new_callable=AsyncMock,
+        ) as mark_changed,
+        pytest.raises(ServiceValidationError) as raised,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+            {
+                ATTR_CONFIG_ENTRY_ID: entry.entry_id,
+                "thermostat_id": 1001,
+                ATTR_CHANGED_AT: changed_at,
+            },
+            blocking=True,
+        )
+
+    assert raised.value.translation_key == "filter_change_boundary_local_time_invalid"
+    mark_changed.assert_not_awaited()
 
 
 async def test_native_filter_button_forwards_exact_aware_click_time(

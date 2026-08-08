@@ -52,7 +52,7 @@ repair_filter_change_boundary:
           mode: box
     changed_at:
       name: Changed at
-      description: Verified filter-change timestamp from the last 31 days. A value without an offset is interpreted in Home Assistant's local timezone.
+      description: Verified filter-change timestamp from the last 31 days. An unambiguous value without an offset uses Home Assistant's local timezone; include an explicit offset during a repeated daylight-saving hour.
       required: true
       selector:
         datetime: {}

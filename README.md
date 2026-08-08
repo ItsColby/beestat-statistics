@@ -280,7 +280,7 @@ Fields:
 
 The `beestat_statistics.rebuild_statistics` service action forces the full Beestat summary baseline before writing statistics, optionally limited by configured Beestat `thermostat_id`, `start_date`, and `end_date`. Use it for repairs, corrected historical Beestat rows, or targeted backfills rather than routine imports.
 
-The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets timestamps without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. This is a narrow historical repair tool, not the normal replacement workflow.
+The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets an unambiguous timestamp without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. During a repeated daylight-saving hour, include an explicit offset so the exact occurrence is known; nonexistent local times are rejected. This is a narrow historical repair tool, not the normal replacement workflow.
 
 ## Diagnostics
 

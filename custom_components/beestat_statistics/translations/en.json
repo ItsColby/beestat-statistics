@@ -193,6 +193,9 @@
     "filter_change_boundary_date_mismatch": {
       "message": "The repair timestamp's local date does not match this thermostat's saved filter-change date."
     },
+    "filter_change_boundary_local_time_invalid": {
+      "message": "The repair timestamp is ambiguous or does not exist in Home Assistant's local timezone. Include an explicit UTC offset."
+    },
     "filter_change_boundary_out_of_range": {
       "message": "The repair timestamp must be in the past 31 days so Beestat's raw runtime endpoint can reconcile it."
     },
@@ -284,7 +287,7 @@
         },
         "changed_at": {
           "name": "Changed at",
-          "description": "Verified filter-change timestamp from the last 31 days. A value without an offset is interpreted in Home Assistant's local timezone."
+          "description": "Verified filter-change timestamp from the last 31 days. An unambiguous value without an offset uses Home Assistant's local timezone; include an explicit offset during a repeated daylight-saving hour."
         }
       }
     }

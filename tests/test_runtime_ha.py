@@ -255,6 +255,43 @@ async def test_empty_local_midnight_projection_does_not_dispatch_entity_updates(
     await entry._async_process_on_unload(hass)
 
 
+async def test_noop_midnight_rearms_real_timer_for_next_schedule_change(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    before = datetime(2026, 7, 1, 3, 59, tzinfo=UTC)
+    midnight = datetime(2026, 7, 1, 4, tzinfo=UTC)
+    schedule_boundary = datetime(2026, 7, 1, 14, tzinfo=UTC)
+    freezer.move_to(before)
+    schedule = [["sleep"] * 48 for _ in range(7)]
+    schedule[2][20] = "home"
+    entry, coordinator, client = _coordinator_data(
+        hass,
+        evaluated_at=before,
+        schedule=schedule,
+    )
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    coordinator._async_schedule_projection_boundary(coordinator.data)
+    freezer.move_to(midnight)
+    async_fire_time_changed_exact(hass, midnight)
+    await hass.async_block_till_done()
+
+    assert coordinator.data.projected_at == before
+    assert updates == []
+
+    freezer.move_to(schedule_boundary)
+    async_fire_time_changed_exact(hass, schedule_boundary)
+    await hass.async_block_till_done()
+
+    assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
+    assert coordinator.data.projected_at == schedule_boundary
+    assert client.calls == []
+    assert updates == ["updated"]
+    await entry._async_process_on_unload(hass)
+
+
 async def test_core_time_zone_update_reprojects_without_io_and_unloads(
     hass: HomeAssistant,
     freezer: Any,
