@@ -229,8 +229,11 @@
 - API parsing, authentication mechanics, request safety limits, normalization,
   diagnostics redaction, unique-ID composition, statistics metadata, and
   cumulative Recorder math are implementation invariants, not preferences.
-- Recorder normalization admits only finite numeric values and produces at most
-  one summary row per thermostat and local date. If a response repeats that
+- Recorder normalization admits only finite numeric values. Derived means,
+  cumulative totals, and Recorder seed offsets must also remain representable;
+  an invalid cumulative contribution ends that series before any invalid row is
+  written. Normalization produces at most one summary row per thermostat and
+  local date. If a response repeats that
   identity, its last row is effective; a winning deletion omits it. Runtime
   points use their source row ID, or resource ID plus timestamp fallback, under
   the same rule before daily aggregation. Globally unique configured slugs and

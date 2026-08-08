@@ -108,6 +108,30 @@ class CoordinatorHelpersTest(unittest.TestCase):
             3600,
         )
 
+    def test_runtime_projections_reject_unrepresentable_finite_totals(self) -> None:
+        """Finite source fields cannot overflow cached runtime projections."""
+
+        rows = [
+            {"date": "2026-07-01", "sum_fan": 1e308},
+            {"date": "2026-07-02", "sum_fan": 1e308},
+        ]
+
+        self.assertIsNone(self.coordinator._sum_fan_seconds(rows))
+        self.assertIsNone(self.coordinator._runtime_hours_since(rows, date(2026, 7, 1)))
+        self.assertIsNone(
+            self.coordinator._recent_runtime_hours_per_day(rows, date(2026, 7, 2))
+        )
+        self.assertIsNone(
+            self.coordinator._raw_filter_boundary(
+                [
+                    {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 1e308},
+                    {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 1e308},
+                    {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+                ],
+                datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
+            )
+        )
+
     def test_cached_rows_use_one_last_effective_identity(self) -> None:
         """Duplicate cloud identities cannot create duplicate entities or totals."""
 

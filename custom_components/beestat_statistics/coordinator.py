@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from math import isfinite
+from math import fsum, isfinite
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -1069,7 +1069,8 @@ def _runtime_hours_since(
     if not matched_rows:
         return 0.0
     if change_day_baseline_seconds is None:
-        return round(_sum_fan_seconds(matched_rows) / 3600, 1)
+        total_seconds = _sum_fan_seconds(matched_rows)
+        return round(total_seconds / 3600, 1) if total_seconds is not None else None
     changed_day_rows = [
         row for row in matched_rows if _parse_date(row.get("date")) == changed_date
     ]
@@ -1079,11 +1080,14 @@ def _runtime_hours_since(
         if (row_date := _parse_date(row.get("date"))) is not None
         and row_date > changed_date
     ]
-    changed_day_seconds = max(
-        _sum_fan_seconds(changed_day_rows) - change_day_baseline_seconds,
-        0.0,
-    )
-    total_seconds = changed_day_seconds + _sum_fan_seconds(later_rows)
+    changed_day_total = _sum_fan_seconds(changed_day_rows)
+    later_total = _sum_fan_seconds(later_rows)
+    if changed_day_total is None or later_total is None:
+        return None
+    changed_day_seconds = max(changed_day_total - change_day_baseline_seconds, 0.0)
+    total_seconds = _finite_sum((changed_day_seconds, later_total))
+    if total_seconds is None:
+        return None
     return round(total_seconds / 3600, 1)
 
 
@@ -1153,11 +1157,13 @@ def _raw_filter_boundary(
     if source_data_end < click_bucket:
         return None
     effective_at = _nearest_five_minutes(changed_at)
-    baseline_seconds = sum(
+    baseline_seconds = _finite_sum(
         _float_or_zero(row.get("fan"))
         for timestamp, row in parsed_rows
         if timestamp < effective_at
     )
+    if baseline_seconds is None:
+        return None
     return RawFilterBoundary(
         baseline_seconds=baseline_seconds,
         effective_at=effective_at,
@@ -1199,11 +1205,22 @@ def _recent_runtime_hours_per_day(
     ]
     if not matched_rows:
         return None
-    return round((_sum_fan_seconds(matched_rows) / 3600) / len(matched_rows), 2)
+    total_seconds = _sum_fan_seconds(matched_rows)
+    if total_seconds is None:
+        return None
+    return round((total_seconds / 3600) / len(matched_rows), 2)
 
 
-def _sum_fan_seconds(rows: list[dict[str, Any]]) -> float:
-    return sum(_float_or_zero(row.get("sum_fan")) for row in rows)
+def _sum_fan_seconds(rows: list[dict[str, Any]]) -> float | None:
+    return _finite_sum(_float_or_zero(row.get("sum_fan")) for row in rows)
+
+
+def _finite_sum(values: Iterable[float]) -> float | None:
+    try:
+        total = fsum(values)
+    except OverflowError:
+        return None
+    return total if isfinite(total) else None
 
 
 def _thermostat_row(
