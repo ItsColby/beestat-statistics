@@ -386,6 +386,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     def _async_schedule_projection_boundary(
         self,
         data: BeestatRuntimeData | None = None,
+        *,
+        now: datetime | None = None,
     ) -> None:
         """Schedule the earliest I/O-free cached projection boundary."""
 
@@ -395,6 +397,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if data is None:
             return
         deadline = _next_projection_deadline(data, self._local_tz)
+        if now is None:
+            now = datetime.now(UTC)
+        if deadline <= now:
+            self._async_rebuild_projection_from_cached(now)
+            return
         self._cancel_projection_boundary = async_track_point_in_utc_time(
             self.hass,
             self._async_handle_projection_boundary,
@@ -454,7 +461,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         ):
             self.data = projected
             self.async_update_listeners()
-        self._async_schedule_projection_boundary(projected)
+        self._async_schedule_projection_boundary(projected, now=now)
 
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:

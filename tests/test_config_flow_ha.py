@@ -385,7 +385,9 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
         suggested_object_id="zone_a_renamed",
     )
     await hass.async_block_till_done()
-    assert restored_source.id != original_registry_id
+    # Home Assistant preserves the registry entry UUID when the same source
+    # identity is restored through the supported registry API.
+    assert restored_source.id == original_registry_id
     assert restored_source.entity_id != original_entity_id
     assert resolve_entity_reference(entity_registry, source_reference) == (
         restored_source.entity_id
@@ -481,7 +483,8 @@ async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
         suggested_object_id="room_sensor_a_temperature",
     )
     await hass.async_block_till_done()
-    assert restored_entity.id != source_entity.id
+    # Removal and restoration retain the stable registry UUID for this source.
+    assert restored_entity.id == source_entity.id
     assert restored_entity.entity_id != source_entity.entity_id
     assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
 

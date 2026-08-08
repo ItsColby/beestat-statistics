@@ -9,6 +9,7 @@ import types
 import unittest
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -1135,6 +1136,39 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(deadline, datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
+
+    async def test_scheduler_rebuilds_boundary_crossed_during_registration(
+        self,
+    ) -> None:
+        before = datetime(2026, 7, 1, 13, 59, 59, 900000, tzinfo=UTC)
+        after = datetime(2026, 7, 1, 14, 0, 0, 100000, tzinfo=UTC)
+        schedule = [["sleep"] * 48 for _ in range(7)]
+        schedule[2][20] = "home"
+        coordinator = self._cached_coordinator(
+            evaluated_at=before,
+            schedule=schedule,
+        )
+
+        with patch.object(
+            self.coordinator,
+            "async_track_point_in_utc_time",
+            return_value=lambda: None,
+        ) as track_point:
+            coordinator._async_schedule_projection_boundary(
+                coordinator.data,
+                now=after,
+            )
+
+        self.assertEqual(
+            coordinator.data.thermostat_metadata[1].scheduled_climate_name,
+            "Home",
+        )
+        self.assertEqual(coordinator.data.projected_at, after)
+        self.assertEqual(coordinator.listener_updates, 1)
+        self.assertEqual(
+            track_point.call_args.args[2],
+            datetime(2026, 7, 1, 14, 30, tzinfo=UTC),
+        )
 
     async def test_cached_projection_crosses_local_date_boundary(self) -> None:
         before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
