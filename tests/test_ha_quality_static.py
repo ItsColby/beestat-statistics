@@ -1177,6 +1177,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertNotIn("[%key:", translations_text)
 
+    def test_options_abort_translation_is_scoped_to_options_flow(self) -> None:
+        """Options-flow abort reasons belong under the options namespace."""
+
+        translations = _json_file(
+            "custom_components/beestat_statistics/translations/en.json"
+        )
+
+        self.assertNotIn("abort", translations)
+        self.assertEqual(
+            translations["options"]["abort"]["no_automatic_mappings"],
+            "No unconfirmed automatic mappings are currently available. "
+            "Existing explicit mappings were left unchanged.",
+        )
+
     def test_validate_workflow_runs_on_a_schedule(self) -> None:
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"

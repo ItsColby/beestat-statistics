@@ -426,9 +426,9 @@
       "mapping_device_conflict": "Choose entities from one HomeKit/Ecobee source device, and do not assign that source device to another mapping of the same type.",
       "mapping_source_unavailable": "The selected Home Assistant entity has no available registry identity. Select a registered entity.",
       "no_discovered_items": "No Beestat thermostats or room sensors have been discovered yet. Refresh runtime data, then try again."
+    },
+    "abort": {
+      "no_automatic_mappings": "No unconfirmed automatic mappings are currently available. Existing explicit mappings were left unchanged."
     }
-  },
-  "abort": {
-    "no_automatic_mappings": "No unconfirmed automatic mappings are currently available. Existing explicit mappings were left unchanged."
   }
 }
