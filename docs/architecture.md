@@ -97,10 +97,16 @@
   actual projection changes, follows configured-timezone changes without an
   entry reload, and cancels both its deadline and timezone listener on unload.
   The coordinator is the single current-timezone owner for these projections
-  and Recorder import windows. The filter-boundary retry
-  remains a separate effect timer because its callback reads raw Beestat
-  runtime and can persist reconciliation state. Health-projection evidence is
-  owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;
+  and Recorder import windows. Every normalized refresh and prepared Recorder
+  import captures one evaluation clock, timezone, and timezone revision. A
+  windowed refresh retries when an awaited timezone/date rollover invalidates
+  its requested local-day bounds, while an import discards the uncommitted
+  preparation and retries before any Recorder write. Repeated churn is bounded.
+  The filter-boundary retry remains a separate effect timer because its callback
+  reads raw Beestat runtime and can persist reconciliation state; it captures
+  its own temporal context and leaves the boundary pending rather than
+  persisting a result from a stale timezone revision. Health-projection evidence
+  is owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;
   `tests/test_runtime_ha.py` owns the exact-Core scheduler/lifecycle cases, but
   their presence is not executed dependency-closure evidence.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated

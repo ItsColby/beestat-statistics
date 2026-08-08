@@ -28,12 +28,16 @@ except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
 
 from custom_components.beestat_statistics import (
     BeestatStatisticsImporter,
+    PreparedImport,
+    SummaryImportPlan,
     _async_track_time_zone_updates,
 )
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
 )
+from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
+from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
 
 pytestmark = pytest.mark.asyncio
 
@@ -239,12 +243,6 @@ async def test_core_time_zone_update_reprojects_without_io_and_unloads(
     now = datetime(2026, 7, 1, 1, tzinfo=UTC)
     freezer.move_to(now)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
-    importer = BeestatStatisticsImporter(
-        hass,
-        client,
-        coordinator,
-        point_lookback_days=31,
-    )
     scheduled: list[tuple[datetime, Mock]] = []
 
     def track_projection(_hass, _action, deadline):
@@ -262,13 +260,17 @@ async def test_core_time_zone_update_reprojects_without_io_and_unloads(
     ):
         _async_track_time_zone_updates(hass, entry, coordinator)
         coordinator._async_schedule_projection_boundary(coordinator.data)
-        assert importer._local_tz == ZoneInfo("America/New_York")
+        assert coordinator.capture_temporal_context().local_tz == ZoneInfo(
+            "America/New_York"
+        )
 
         await hass.config.async_update(time_zone="Europe/London")
         await hass.async_block_till_done()
 
         assert coordinator.local_tz == ZoneInfo("Europe/London")
-        assert importer._local_tz == ZoneInfo("Europe/London")
+        assert coordinator.capture_temporal_context().local_tz == ZoneInfo(
+            "Europe/London"
+        )
         assert client.calls == []
         assert updates == ["updated"]
         assert len(scheduled) == 2
@@ -317,6 +319,175 @@ async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
     assert updates == []
     assert len(scheduled) == 2
     scheduled[0][1].assert_called_once_with()
+    await entry._async_process_on_unload(hass)
+
+
+async def test_import_restarts_before_recorder_write_after_timezone_change(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    now = datetime(2026, 7, 1, 1, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    importer = BeestatStatisticsImporter(
+        hass,
+        client,
+        coordinator,
+        point_lookback_days=31,
+    )
+    _async_track_time_zone_updates(hass, entry, coordinator)
+    attempts: list[tuple[str, ZoneInfo, datetime]] = []
+    writes: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+
+    async def refresh_runtime(**_kwargs):
+        return coordinator.data
+
+    async def summary_plan(
+        _runtime_data,
+        *,
+        force_full_summary,
+        temporal_context,
+    ):
+        attempts.append(
+            (
+                "summary",
+                temporal_context.local_tz,
+                temporal_context.evaluated_at,
+            )
+        )
+        return SummaryImportPlan(
+            rows=[],
+            seeds={},
+            mode="full",
+            window_start=None,
+            window_end=None,
+            overlap_days=None,
+            fallback_reason=None,
+        )
+
+    async def thermostat_rows(
+        _lookback_days,
+        _runtime_data,
+        _skipped_windows,
+        **kwargs,
+    ):
+        context = kwargs["temporal_context"]
+        attempts.append(("thermostat", context.local_tz, context.evaluated_at))
+        if sum(name == "thermostat" for name, _zone, _at in attempts) == 1:
+            await hass.config.async_update(time_zone="Europe/London")
+            await hass.async_block_till_done()
+        return {}
+
+    async def sensor_rows(
+        _lookback_days,
+        _runtime_data,
+        _skipped_windows,
+        **kwargs,
+    ):
+        context = kwargs["temporal_context"]
+        attempts.append(("sensor", context.local_tz, context.evaluated_at))
+        return {}
+
+    def build_series(_summary, _thermostat, _sensor, local_tz, _config):
+        attempts.append(("build", local_tz, now))
+        return [
+            StatisticsSeries(
+                metadata={"statistic_id": "beestat:test"},
+                statistics=[{"start": now}],
+                source_rows=0,
+            )
+        ]
+
+    def add_statistics(_hass, metadata, statistics):
+        writes.append((metadata, list(statistics)))
+
+    with (
+        patch.object(coordinator, "async_refresh_runtime", new=refresh_runtime),
+        patch.object(importer, "_async_summary_import_plan", new=summary_plan),
+        patch.object(importer, "_async_fetch_thermostat_rows", new=thermostat_rows),
+        patch.object(importer, "_async_fetch_sensor_rows", new=sensor_rows),
+        patch(
+            "custom_components.beestat_statistics.build_statistics",
+            side_effect=build_series,
+        ),
+        patch(
+            "custom_components.beestat_statistics.async_add_external_statistics",
+            side_effect=add_statistics,
+        ),
+    ):
+        result = await importer.async_import_statistics(skip_sync=True)
+
+    attempt_zones = [zone for _name, zone, _at in attempts]
+    assert attempt_zones[:4] == [ZoneInfo("America/New_York")] * 4
+    assert attempt_zones[4:] == [ZoneInfo("Europe/London")] * 4
+    assert len({at for _name, _zone, at in attempts[:3]}) == 1
+    assert len({at for _name, _zone, at in attempts[4:7]}) == 1
+    assert len(writes) == 1
+    assert result.imported_rows == 1
+    await entry._async_process_on_unload(hass)
+
+
+async def test_import_timezone_restart_is_bounded_before_recorder_write(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    now = datetime(2026, 7, 1, 1, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    importer = BeestatStatisticsImporter(
+        hass,
+        client,
+        coordinator,
+        point_lookback_days=31,
+    )
+    attempts = 0
+    writes: list[object] = []
+    summary_plan = SummaryImportPlan(
+        rows=[],
+        seeds={},
+        mode="full",
+        window_start=None,
+        window_end=None,
+        overlap_days=None,
+        fallback_reason=None,
+    )
+    prepared = PreparedImport(
+        summary_plan=summary_plan,
+        summary_rows=[],
+        skipped_windows=SkippedWindowEvidence(),
+        thermostat_rows_by_id={},
+        sensor_rows_by_id={},
+        series=[
+            StatisticsSeries(
+                metadata={"statistic_id": "beestat:test"},
+                statistics=[{"start": now}],
+                source_rows=0,
+            )
+        ],
+    )
+
+    async def refresh_runtime(**_kwargs):
+        return coordinator.data
+
+    async def prepare_import(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        coordinator._timezone_revision += 1
+        return prepared
+
+    with (
+        patch.object(coordinator, "async_refresh_runtime", new=refresh_runtime),
+        patch.object(importer, "_async_prepare_import", new=prepare_import),
+        patch(
+            "custom_components.beestat_statistics.async_add_external_statistics",
+            side_effect=lambda *_args: writes.append(object()),
+        ),
+        pytest.raises(RuntimeError, match="timezone changed repeatedly"),
+    ):
+        await importer.async_import_statistics(skip_sync=True)
+
+    assert attempts == 3
+    assert writes == []
     await entry._async_process_on_unload(hass)
 
 

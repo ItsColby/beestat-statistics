@@ -124,7 +124,11 @@ from .const import (
     sensor_entity_unique_id,
     thermostat_entity_unique_id,
 )
-from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
+from .coordinator import (
+    BeestatRuntimeData,
+    BeestatRuntimeDataCoordinator,
+    TemporalContext,
+)
 from .entity import (
     async_register_service_device,
     async_remove_cross_integration_device_ownership,
@@ -186,6 +190,7 @@ _DEFAULT_ENABLED_PROBLEM_ENTITY_SUFFIXES: frozenset[str] = frozenset(
 )
 _MISSING_OVERRIDE_ENTITIES_ISSUE_ID = "missing_override_entities"
 _INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID = "invalid_override_entity_domains"
+_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS = 3
 _GLOBAL_UNIQUE_ID_MIGRATION = {
     "beestat_statistics_status": "status",
     "beestat_runtime_sync_last_success": "runtime_sync_last_success",
@@ -347,6 +352,18 @@ class SummaryImportPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedImport:
+    """One complete statistics import prepared before Recorder effects."""
+
+    summary_plan: SummaryImportPlan
+    summary_rows: list[dict[str, Any]]
+    skipped_windows: SkippedWindowEvidence
+    thermostat_rows_by_id: dict[int, list[dict[str, Any]]]
+    sensor_rows_by_id: dict[int, list[dict[str, Any]]]
+    series: list[StatisticsSeries]
+
+
+@dataclass(frozen=True, slots=True)
 class ImportResult:
     """Summary of one import pass."""
 
@@ -383,12 +400,6 @@ class BeestatStatisticsImporter:
         self._point_lookback_days = point_lookback_days
         self._lock = asyncio.Lock()
 
-    @property
-    def _local_tz(self) -> ZoneInfo:
-        """Return the coordinator-owned current Home Assistant timezone."""
-
-        return self._coordinator.local_tz
-
     async def async_import_statistics(
         self,
         *,
@@ -408,52 +419,38 @@ class BeestatStatisticsImporter:
                 summary_window=not force_full_summary,
             )
             _validate_thermostat_id(runtime_data, thermostat_id)
-            summary_plan = await self._async_summary_import_plan(
-                runtime_data,
-                force_full_summary=force_full_summary,
-            )
-            summary_rows = _filter_summary_rows_by_thermostat(
-                summary_plan.rows,
-                thermostat_id,
-            )
-            skipped_windows = SkippedWindowEvidence()
-            thermostat_rows_by_id = await self._async_fetch_thermostat_rows(
-                lookback_days,
-                runtime_data,
-                skipped_windows,
-                start_day=rebuild_start,
-                end_day=rebuild_end,
-                thermostat_id=thermostat_id,
-            )
-            sensor_rows_by_id = await self._async_fetch_sensor_rows(
-                lookback_days,
-                runtime_data,
-                skipped_windows,
-                start_day=rebuild_start,
-                end_day=rebuild_end,
-                thermostat_id=thermostat_id,
-            )
-            series = build_statistics(
-                summary_rows,
-                thermostat_rows_by_id,
-                sensor_rows_by_id,
-                self._local_tz,
-                runtime_data.config,
-            )
-            if summary_plan.seeds:
-                series = apply_cumulative_seeds(series, summary_plan.seeds)
-            if rebuild_start is not None or rebuild_end is not None:
-                series = _filter_series_statistics(
-                    series,
-                    start_day=rebuild_start,
-                    end_day=rebuild_end,
-                    local_tz=self._local_tz,
+            prepared: PreparedImport | None = None
+            for attempt in range(_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS):
+                temporal_context = self._coordinator.capture_temporal_context()
+                prepared = await self._async_prepare_import(
+                    runtime_data,
+                    lookback_days=lookback_days,
+                    force_full_summary=force_full_summary,
+                    rebuild_start=rebuild_start,
+                    rebuild_end=rebuild_end,
+                    thermostat_id=thermostat_id,
+                    temporal_context=temporal_context,
                 )
-            series = [item for item in series if item.statistics]
+                if self._coordinator.temporal_context_is_current(temporal_context):
+                    break
+                if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
+                    raise RuntimeError(
+                        "Home Assistant timezone changed repeatedly during "
+                        "Beestat statistics import"
+                    )
+                _LOGGER.info(
+                    "Restarting Beestat statistics preparation after a Home "
+                    "Assistant timezone change"
+                )
+                if self._coordinator.data is not None:
+                    runtime_data = self._coordinator.data
+
+            if prepared is None:  # pragma: no cover - positive attempt constant
+                raise RuntimeError("Beestat statistics import was not prepared")
 
             imported_rows = 0
             latest_start_by_id: dict[str, str | None] = {}
-            for item in series:
+            for item in prepared.series:
                 async_add_external_statistics(
                     self._hass,
                     cast(StatisticMetaData, item.metadata),
@@ -463,24 +460,26 @@ class BeestatStatisticsImporter:
                 latest_start_by_id[item.statistic_id] = _format_start(item)
 
             result = ImportResult(
-                imported_series=len(series),
+                imported_series=len(prepared.series),
                 imported_rows=imported_rows,
-                source_rows=len(summary_rows)
-                + sum(len(rows) for rows in thermostat_rows_by_id.values())
-                + sum(len(rows) for rows in sensor_rows_by_id.values()),
-                skipped_windows=skipped_windows.total_count,
+                source_rows=len(prepared.summary_rows)
+                + sum(len(rows) for rows in prepared.thermostat_rows_by_id.values())
+                + sum(len(rows) for rows in prepared.sensor_rows_by_id.values()),
+                skipped_windows=prepared.skipped_windows.total_count,
                 skipped_runtime_thermostat_windows=(
-                    skipped_windows.runtime_thermostat_count
+                    prepared.skipped_windows.runtime_thermostat_count
                 ),
-                skipped_runtime_sensor_windows=skipped_windows.runtime_sensor_count,
-                skipped_window_examples=skipped_windows.examples,
+                skipped_runtime_sensor_windows=(
+                    prepared.skipped_windows.runtime_sensor_count
+                ),
+                skipped_window_examples=prepared.skipped_windows.examples,
                 latest_start_by_statistic_id=latest_start_by_id,
-                summary_mode=summary_plan.mode,
-                summary_window_start=_format_day(summary_plan.window_start),
-                summary_window_end=_format_day(summary_plan.window_end),
-                summary_overlap_days=summary_plan.overlap_days,
-                summary_fallback_reason=summary_plan.fallback_reason,
-                cumulative_seed_count=len(summary_plan.seeds),
+                summary_mode=prepared.summary_plan.mode,
+                summary_window_start=_format_day(prepared.summary_plan.window_start),
+                summary_window_end=_format_day(prepared.summary_plan.window_end),
+                summary_overlap_days=prepared.summary_plan.overlap_days,
+                summary_fallback_reason=prepared.summary_plan.fallback_reason,
+                cumulative_seed_count=len(prepared.summary_plan.seeds),
             )
             self._coordinator.async_record_import_result(
                 imported_series=result.imported_series,
@@ -511,11 +510,78 @@ class BeestatStatisticsImporter:
             )
             return result
 
+    async def _async_prepare_import(
+        self,
+        runtime_data: BeestatRuntimeData,
+        *,
+        lookback_days: int,
+        force_full_summary: bool,
+        rebuild_start: dt_date | None,
+        rebuild_end: dt_date | None,
+        thermostat_id: int | None,
+        temporal_context: TemporalContext,
+    ) -> PreparedImport:
+        """Prepare one coherent local-time import before Recorder writes."""
+
+        summary_plan = await self._async_summary_import_plan(
+            runtime_data,
+            force_full_summary=force_full_summary,
+            temporal_context=temporal_context,
+        )
+        summary_rows = _filter_summary_rows_by_thermostat(
+            summary_plan.rows,
+            thermostat_id,
+        )
+        skipped_windows = SkippedWindowEvidence()
+        thermostat_rows_by_id = await self._async_fetch_thermostat_rows(
+            lookback_days,
+            runtime_data,
+            skipped_windows,
+            start_day=rebuild_start,
+            end_day=rebuild_end,
+            thermostat_id=thermostat_id,
+            temporal_context=temporal_context,
+        )
+        sensor_rows_by_id = await self._async_fetch_sensor_rows(
+            lookback_days,
+            runtime_data,
+            skipped_windows,
+            start_day=rebuild_start,
+            end_day=rebuild_end,
+            thermostat_id=thermostat_id,
+            temporal_context=temporal_context,
+        )
+        series = build_statistics(
+            summary_rows,
+            thermostat_rows_by_id,
+            sensor_rows_by_id,
+            temporal_context.local_tz,
+            runtime_data.config,
+        )
+        if summary_plan.seeds:
+            series = apply_cumulative_seeds(series, summary_plan.seeds)
+        if rebuild_start is not None or rebuild_end is not None:
+            series = _filter_series_statistics(
+                series,
+                start_day=rebuild_start,
+                end_day=rebuild_end,
+                local_tz=temporal_context.local_tz,
+            )
+        return PreparedImport(
+            summary_plan=summary_plan,
+            summary_rows=summary_rows,
+            skipped_windows=skipped_windows,
+            thermostat_rows_by_id=thermostat_rows_by_id,
+            sensor_rows_by_id=sensor_rows_by_id,
+            series=[item for item in series if item.statistics],
+        )
+
     async def _async_summary_import_plan(
         self,
         runtime_data: BeestatRuntimeData,
         *,
         force_full_summary: bool,
+        temporal_context: TemporalContext,
     ) -> SummaryImportPlan:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
@@ -556,12 +622,15 @@ class BeestatStatisticsImporter:
             )
 
         latest_day = min(
-            value.astimezone(self._local_tz).date() for value in latest_by_id.values()
+            value.astimezone(temporal_context.local_tz).date()
+            for value in latest_by_id.values()
         )
         window_start = latest_day - timedelta(days=DEFAULT_SUMMARY_OVERLAP_DAYS)
         window_end = (
             _latest_summary_day(cached_rows)
-            or datetime.now(UTC).astimezone(self._local_tz).date()
+            or temporal_context.evaluated_at.astimezone(
+                temporal_context.local_tz
+            ).date()
         )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -579,6 +648,7 @@ class BeestatStatisticsImporter:
             statistic_ids,
             seed_day=window_start - timedelta(days=1),
             window_start=window_start,
+            local_tz=temporal_context.local_tz,
         )
         if len(seeds) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -646,14 +716,15 @@ class BeestatStatisticsImporter:
         *,
         seed_day: dt_date,
         window_start: dt_date,
+        local_tz: ZoneInfo,
     ) -> dict[str, CumulativeStatisticSeed]:
         return await get_recorder_instance(self._hass).async_add_executor_job(
             partial(
                 _cumulative_seeds_during_period,
                 self._hass,
                 tuple(statistic_ids),
-                _local_midnight(seed_day, self._local_tz).astimezone(UTC),
-                _local_midnight(window_start, self._local_tz).astimezone(UTC),
+                _local_midnight(seed_day, local_tz).astimezone(UTC),
+                _local_midnight(window_start, local_tz).astimezone(UTC),
             )
         )
 
@@ -666,8 +737,15 @@ class BeestatStatisticsImporter:
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
+        temporal_context: TemporalContext,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
+        start, end = _point_window(
+            lookback_days,
+            temporal_context.local_tz,
+            start_day,
+            end_day,
+            evaluated_at=temporal_context.evaluated_at,
+        )
         thermostat_data_end = _thermostat_data_end_map(
             list(runtime_data.thermostat_rows)
         )
@@ -758,8 +836,15 @@ class BeestatStatisticsImporter:
         start_day: dt_date | None = None,
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
+        temporal_context: TemporalContext,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = _point_window(lookback_days, self._local_tz, start_day, end_day)
+        start, end = _point_window(
+            lookback_days,
+            temporal_context.local_tz,
+            start_day,
+            end_day,
+            evaluated_at=temporal_context.evaluated_at,
+        )
         sensor_to_thermostat = _sensor_thermostat_map(list(runtime_data.sensor_rows))
         thermostat_data_end = _thermostat_data_end_map(
             list(runtime_data.thermostat_rows)
@@ -1861,8 +1946,10 @@ def _point_window(
     local_tz: ZoneInfo,
     start_day: dt_date | None,
     end_day: dt_date | None,
+    *,
+    evaluated_at: datetime,
 ) -> tuple[datetime, datetime]:
-    end = datetime.now(UTC)
+    end = evaluated_at
     if end_day is not None:
         end = _local_midnight(end_day + timedelta(days=1), local_tz).astimezone(UTC)
     if start_day is None:

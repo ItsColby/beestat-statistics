@@ -228,9 +228,14 @@ entities only when projected state changes. Schedule boundaries and local
 midnight follow the configured/thermostat timezone across daylight-saving time.
 Changing Home Assistant's configured timezone rebuilds and reschedules these
 cached projections without contacting Beestat or reloading the config entry;
-Recorder import windows use the same current coordinator-owned timezone.
+each refresh and Recorder import attempt captures one evaluation time and
+coordinator-owned timezone revision. If a timezone change alters local-day
+bounds during an awaited refresh, the window is retried. Prepared statistics
+are discarded and retried before any Recorder write when their timezone
+revision becomes stale, so one import cannot mix local-day interpretations.
 The separate 15-minute filter-boundary retry can read Beestat and persist a
-result, so it is not part of this local projection scheduler.
+result, so it is not part of this local projection scheduler; a timezone change
+during that read leaves the boundary pending for a fresh effect attempt.
 
 The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
 

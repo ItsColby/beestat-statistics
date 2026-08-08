@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -116,6 +117,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         calls: list[object] = []
         coordinator = types.SimpleNamespace(
             _local_tz=ZoneInfo("America/New_York"),
+            _timezone_revision=0,
             _async_cancel_projection_boundary=lambda: calls.append("cancel"),
             _async_rebuild_projection_from_cached=lambda now, **kwargs: calls.append(
                 (now.tzinfo, kwargs)
@@ -132,6 +134,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )
 
         self.assertEqual(coordinator._local_tz, ZoneInfo("Europe/London"))
+        self.assertEqual(coordinator._timezone_revision, 1)
         self.assertEqual(calls[0], "cancel")
         self.assertEqual(calls[1][0], UTC)
         self.assertEqual(
@@ -139,6 +142,102 @@ class CoordinatorHelpersTest(unittest.TestCase):
             {"previous_local_tz": ZoneInfo("America/New_York")},
         )
         self.assertEqual(len(calls), 2)
+
+    def test_summary_refresh_retries_when_timezone_changes_local_day(
+        self,
+    ) -> None:
+        evaluated_at = datetime(2026, 7, 1, 1, 0, tzinfo=UTC)
+        summary_calls: list[tuple[str, str]] = []
+        built: list[tuple[date | None, ZoneInfo, datetime]] = []
+        coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
+        coordinator.data = None
+        coordinator._local_tz = ZoneInfo("America/New_York")
+        coordinator._timezone_revision = 0
+        coordinator._beestat_config_entry = types.SimpleNamespace(data={}, options={})
+        coordinator.config_entry = coordinator._beestat_config_entry
+        coordinator.hass = types.SimpleNamespace()
+
+        async def read_id(_resource):
+            return []
+
+        async def read_summary(start, end):
+            summary_calls.append((start, end))
+            if len(summary_calls) == 1:
+                coordinator._local_tz = ZoneInfo("Europe/London")
+                coordinator._timezone_revision += 1
+            return []
+
+        async def reconcile(_config):
+            return None
+
+        def build_runtime_data(
+            _self,
+            _rows,
+            _thermostat_rows,
+            _sensor_rows,
+            _sync_success_at,
+            _metadata_sync_success_at,
+            _summary_rows_full,
+            _summary_window_start,
+            summary_window_end,
+            *,
+            temporal_context,
+            fetched_at=None,
+        ):
+            built.append(
+                (
+                    summary_window_end,
+                    temporal_context.local_tz,
+                    temporal_context.evaluated_at,
+                )
+            )
+            return types.SimpleNamespace(summary_window_end=summary_window_end)
+
+        coordinator._client = types.SimpleNamespace(
+            async_read_id=read_id,
+            async_read_runtime_thermostat_summary=read_summary,
+        )
+        coordinator._async_reconcile_pending_filter_boundaries = reconcile
+        coordinator._summary_window_start = lambda _config, _rows, today: today
+        coordinator._build_runtime_data = types.MethodType(
+            build_runtime_data,
+            coordinator,
+        )
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                if tz is None:
+                    return evaluated_at.replace(tzinfo=None)
+                return evaluated_at.astimezone(tz)
+
+        original_datetime = self.coordinator.datetime
+        original_build_config = self.coordinator.build_beestat_config
+        self.coordinator.datetime = FrozenDateTime
+        self.coordinator.build_beestat_config = lambda *_args, **_kwargs: (
+            self.config_model.BeestatConfig(thermostats=(), sensors=())
+        )
+        try:
+            result = asyncio.run(
+                self.coordinator.BeestatRuntimeDataCoordinator._async_fetch_runtime_data(
+                    coordinator,
+                    skip_sync=True,
+                    summary_window=True,
+                )
+            )
+        finally:
+            self.coordinator.datetime = original_datetime
+            self.coordinator.build_beestat_config = original_build_config
+
+        self.assertEqual(
+            summary_calls,
+            [("2026-06-30", "2026-06-30"), ("2026-07-01", "2026-07-01")],
+        )
+        self.assertEqual(result.summary_window_end, date(2026, 7, 1))
+        self.assertEqual(
+            built,
+            [(date(2026, 7, 1), ZoneInfo("Europe/London"), evaluated_at)],
+        )
 
     def test_runtime_hours_subtracts_click_baseline_only_from_change_day(self) -> None:
         rows = [
@@ -789,6 +888,16 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         CoordinatorHelpersTest._install_fake_homeassistant_modules
     )
 
+    def _attach_temporal_context(self, coordinator) -> None:
+        coordinator.capture_temporal_context = lambda: self.coordinator.TemporalContext(
+            datetime.now(UTC),
+            coordinator._local_tz,
+            coordinator._timezone_revision,
+        )
+        coordinator.temporal_context_is_current = lambda context: (
+            context.timezone_revision == coordinator._timezone_revision
+        )
+
     def _cached_coordinator(
         self,
         *,
@@ -806,6 +915,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         coordinator.config_entry = entry
         coordinator._beestat_config_entry = entry
         coordinator._local_tz = ZoneInfo("America/New_York")
+        coordinator._timezone_revision = 0
         coordinator._cancel_projection_boundary = None
         coordinator._client = types.SimpleNamespace(calls=[])
         coordinator.listener_updates = 0
@@ -1139,6 +1249,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 redact_error=lambda err: str(err),
             ),
             _local_tz=ZoneInfo("America/New_York"),
+            _timezone_revision=0,
             config_entry=entry,
             hass=types.SimpleNamespace(
                 config_entries=types.SimpleNamespace(async_update_entry=update_entry)
@@ -1150,6 +1261,8 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             async_schedule_filter_boundary_reconcile=lambda *_args: None,
             _async_cancel_filter_boundary_retry=lambda: None,
         )
+
+        self._attach_temporal_context(coordinator)
 
         await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
             coordinator,
@@ -1168,6 +1281,74 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry.options["concurrent_option"], "preserved")
         self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
         self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
+
+    async def test_timezone_change_prevents_stale_boundary_persistence(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T01:48:00+00:00")
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1001,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 7, 4),
+            filter_changed_at=changed_at,
+        )
+        entry = types.SimpleNamespace(
+            data={},
+            options={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_changed_date": "2026-07-04",
+                        "filter_changed_at": changed_at.isoformat(),
+                    }
+                ]
+            },
+        )
+
+        async def read_runtime(*_args):
+            coordinator._local_tz = ZoneInfo("Europe/London")
+            coordinator._timezone_revision += 1
+            return [
+                {"timestamp": "2026-07-05T01:45:00+00:00", "fan": 180},
+                {"timestamp": "2026-07-05T01:50:00+00:00", "fan": 0},
+            ]
+
+        updates: list[dict[str, object]] = []
+        coordinator = types.SimpleNamespace(
+            _client=types.SimpleNamespace(
+                async_read_runtime_thermostat=read_runtime,
+                redact_error=lambda err: str(err),
+            ),
+            _local_tz=ZoneInfo("America/New_York"),
+            _timezone_revision=0,
+            config_entry=entry,
+            hass=types.SimpleNamespace(
+                config_entries=types.SimpleNamespace(
+                    async_update_entry=lambda _entry, *, options: updates.append(
+                        options
+                    )
+                )
+            ),
+            last_filter_boundary_pending_count=0,
+            last_filter_boundary_reconciled_count=0,
+            last_filter_boundary_reconcile_error=None,
+            last_filter_boundary_reconcile_attempt_at=None,
+            async_schedule_filter_boundary_reconcile=lambda *_args: None,
+            _async_cancel_filter_boundary_retry=lambda: None,
+        )
+
+        self._attach_temporal_context(coordinator)
+
+        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
+            coordinator,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=(),
+            ),
+        )
+
+        self.assertEqual(updates, [])
+        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 0)
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
 
     async def test_slow_reconciliation_does_not_overwrite_newer_click(self) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
@@ -1218,6 +1399,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 redact_error=lambda err: str(err),
             ),
             _local_tz=ZoneInfo("America/New_York"),
+            _timezone_revision=0,
             config_entry=entry,
             hass=types.SimpleNamespace(
                 config_entries=types.SimpleNamespace(async_update_entry=update_entry)
@@ -1229,6 +1411,8 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             async_schedule_filter_boundary_reconcile=lambda *_args: None,
             _async_cancel_filter_boundary_retry=lambda: None,
         )
+
+        self._attach_temporal_context(coordinator)
 
         await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
             coordinator,
