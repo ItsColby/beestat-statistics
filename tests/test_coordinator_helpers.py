@@ -81,22 +81,23 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0.75,
         )
 
-    def test_projection_change_compares_old_and_new_local_dates(self) -> None:
+    def test_projection_change_ignores_local_date_without_sensitive_state(self) -> None:
         projected_at = datetime(2026, 7, 1, 1, tzinfo=UTC)
+        config = self.config_model.BeestatConfig(thermostats=(), sensors=())
         current = types.SimpleNamespace(
-            config=(),
+            config=config,
             thermostats={},
             thermostat_metadata={},
             projected_at=projected_at,
         )
         projected = types.SimpleNamespace(
-            config=(),
+            config=config,
             thermostats={},
             thermostat_metadata={},
             projected_at=projected_at,
         )
 
-        self.assertTrue(
+        self.assertFalse(
             self.coordinator._projection_changed(
                 current,
                 projected,
@@ -110,6 +111,46 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 projected,
                 ZoneInfo("Europe/London"),
                 ZoneInfo("Europe/Paris"),
+            )
+        )
+
+    def test_projection_change_compares_filter_forecasts_across_dates(self) -> None:
+        projected_at = datetime(2026, 7, 1, 1, tzinfo=UTC)
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_changed_date=date(2026, 6, 1),
+            filter_max_age_days=30,
+        )
+        config = self.config_model.BeestatConfig(
+            thermostats=(thermostat,),
+            sensors=(),
+        )
+        summary = self.coordinator.ThermostatRuntimeSummary(
+            thermostat_id=1,
+            slug="zone_a",
+            label="Zone A",
+            latest_date=None,
+            lag_days=None,
+            filter_changed_date=date(2026, 6, 1),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=0.0,
+            recent_runtime_hours_per_day=None,
+        )
+        current = types.SimpleNamespace(
+            config=config,
+            thermostats={1: summary},
+            thermostat_metadata={},
+            projected_at=projected_at,
+        )
+
+        self.assertTrue(
+            self.coordinator._projection_changed(
+                current,
+                current,
+                ZoneInfo("America/New_York"),
+                ZoneInfo("Europe/London"),
             )
         )
 
@@ -1079,6 +1120,22 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.data.projected_at, midnight)
         self.assertEqual(coordinator._client.calls, [])
         self.assertEqual(coordinator.listener_updates, 1)
+
+    async def test_local_date_boundary_without_sensitive_state_does_not_dispatch(
+        self,
+    ) -> None:
+        before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
+        midnight = datetime(2026, 7, 6, 4, 0, tzinfo=UTC)
+        coordinator = self._cached_coordinator(evaluated_at=before)
+
+        self.coordinator.BeestatRuntimeDataCoordinator._async_rebuild_projection_from_cached(
+            coordinator,
+            midnight,
+        )
+
+        self.assertEqual(coordinator.data.projected_at, before)
+        self.assertEqual(coordinator._client.calls, [])
+        self.assertEqual(coordinator.listener_updates, 0)
 
     async def test_unchanged_cached_projection_does_not_dispatch(self) -> None:
         before = datetime(2026, 7, 1, 13, 0, tzinfo=UTC)

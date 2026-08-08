@@ -236,13 +236,36 @@ async def test_unchanged_projection_does_not_dispatch_entity_updates(
     await entry._async_process_on_unload(hass)
 
 
+async def test_empty_local_midnight_projection_does_not_dispatch_entity_updates(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
+    midnight = datetime(2026, 7, 6, 4, tzinfo=UTC)
+    freezer.move_to(midnight)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    coordinator._async_rebuild_projection_from_cached(midnight)
+
+    assert coordinator.data.projected_at == before
+    assert client.calls == []
+    assert updates == []
+    await entry._async_process_on_unload(hass)
+
+
 async def test_core_time_zone_update_reprojects_without_io_and_unloads(
     hass: HomeAssistant,
     freezer: Any,
 ) -> None:
     now = datetime(2026, 7, 1, 1, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    entry, coordinator, client = _coordinator_data(
+        hass,
+        evaluated_at=now,
+        latest_date=date(2026, 6, 29),
+    )
     scheduled: list[tuple[datetime, Mock]] = []
 
     def track_projection(_hass, _action, deadline):
@@ -284,6 +307,42 @@ async def test_core_time_zone_update_reprojects_without_io_and_unloads(
 
     assert coordinator.local_tz == ZoneInfo("Europe/London")
     assert len(scheduled) == 2
+
+
+async def test_cross_date_time_zone_update_without_sensitive_state_only_reschedules(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    now = datetime(2026, 7, 1, 1, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    scheduled: list[tuple[datetime, Mock]] = []
+
+    def track_projection(_hass, _action, deadline):
+        cancel = Mock()
+        scheduled.append((deadline, cancel))
+        return cancel
+
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+
+    with patch(
+        "custom_components.beestat_statistics.coordinator."
+        "async_track_point_in_utc_time",
+        side_effect=track_projection,
+    ):
+        _async_track_time_zone_updates(hass, entry, coordinator)
+        coordinator._async_schedule_projection_boundary(coordinator.data)
+
+        await hass.config.async_update(time_zone="Europe/London")
+        await hass.async_block_till_done()
+
+    assert coordinator.local_tz == ZoneInfo("Europe/London")
+    assert client.calls == []
+    assert updates == []
+    assert len(scheduled) == 2
+    scheduled[0][1].assert_called_once_with()
+    await entry._async_process_on_unload(hass)
 
 
 async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(

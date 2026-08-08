@@ -39,6 +39,7 @@ from .const import (
     DOMAIN,
     FILTER_RECENT_RUNTIME_DAYS,
 )
+from .filter_forecast import build_filter_forecast
 
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
@@ -962,12 +963,30 @@ def _projection_changed(
 
     if projected_local_tz is None:
         projected_local_tz = current_local_tz
-    return (
+    if (
         current.config != projected.config
         or current.thermostats != projected.thermostats
         or current.thermostat_metadata != projected.thermostat_metadata
-        or current.projected_at.astimezone(current_local_tz).date()
-        != projected.projected_at.astimezone(projected_local_tz).date()
+    ):
+        return True
+
+    current_day = current.projected_at.astimezone(current_local_tz).date()
+    projected_day = projected.projected_at.astimezone(projected_local_tz).date()
+    if current_day == projected_day:
+        return False
+
+    return any(
+        build_filter_forecast(
+            thermostat,
+            current.thermostats.get(thermostat.thermostat_id),
+            today=current_day,
+        )
+        != build_filter_forecast(
+            thermostat,
+            projected.thermostats.get(thermostat.thermostat_id),
+            today=projected_day,
+        )
+        for thermostat in current.config.thermostats
     )
 
 
