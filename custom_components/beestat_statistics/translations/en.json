@@ -225,6 +225,10 @@
       "title": "Beestat override entities use the wrong domain",
       "description": "Beestat Statistics has advanced entity overrides assigned to the wrong Home Assistant domain: {entities}. Update or remove those overrides, then reload the integration."
     },
+    "mapping_device_conflicts": {
+      "title": "Beestat mappings select conflicting source devices",
+      "description": "Beestat Statistics found {conflict_count} explicit mapping conflict(s). Each thermostat or room-sensor mapping must use entities from one source device, and one source device cannot be assigned to multiple mappings of the same type. Open the integration options and correct or remove the conflicting mappings. Device linking remains disabled for the affected mappings until they are consistent."
+    },
     "missing_override_entities": {
       "title": "Beestat override entities are missing",
       "description": "Beestat Statistics has advanced entity overrides that no longer point to existing Home Assistant entities: {entities}. Update or remove those overrides, then reload the integration."
@@ -419,6 +423,8 @@
       }
     },
     "error": {
+      "mapping_device_conflict": "Choose entities from one HomeKit/Ecobee source device, and do not assign that source device to another mapping of the same type.",
+      "mapping_source_unavailable": "The selected Home Assistant entity has no available registry identity. Select a registered entity.",
       "no_discovered_items": "No Beestat thermostats or room sensors have been discovered yet. Refresh runtime data, then try again."
     }
   },

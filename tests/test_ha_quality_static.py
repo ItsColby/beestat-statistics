@@ -965,6 +965,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("_async_track_override_issue_updates(hass, entry)", init_text)
         self.assertIn("_MISSING_OVERRIDE_ENTITIES_ISSUE_ID", init_text)
         self.assertIn("_INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID", init_text)
+        self.assertIn("_MAPPING_DEVICE_CONFLICTS_ISSUE_ID", init_text)
         self.assertIn("entry_runtime_config_data", init_text)
         self.assertIn(
             "_missing_override_entity_ids(hass, entry_runtime_config_data(entry))",
@@ -982,6 +983,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             {
                 "missing_override_entities",
                 "invalid_override_entity_domains",
+                "mapping_device_conflicts",
                 "yaml_connection_change_requires_reconfigure",
             }
             <= set(strings["issues"])

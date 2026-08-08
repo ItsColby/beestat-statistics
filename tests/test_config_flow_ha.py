@@ -489,6 +489,69 @@ async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
     assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
 
 
+async def test_mapping_device_conflict_repair_follows_registry_moves(
+    hass: HomeAssistant,
+) -> None:
+    """Test duplicate explicit source claims raise and clear a Repair."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    source_device_a = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-a")},
+    )
+    source_device_b = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-b")},
+    )
+    entity_registry = er.async_get(hass)
+    first = entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "first-source-climate",
+        config_entry=source_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="first_source_climate",
+    )
+    second = entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "second-source-climate",
+        config_entry=source_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="second_source_climate",
+    )
+    helper_entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_CLIMATE_ENTITY_ID: first.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: _stable_reference(first),
+                },
+                {
+                    CONF_ID: 1002,
+                    CONF_CLIMATE_ENTITY_ID: second.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: _stable_reference(second),
+                },
+            ]
+        },
+    )
+    issue_registry = ir.async_get(hass)
+
+    _async_update_override_issues(hass, helper_entry)
+    _async_track_override_issue_updates(hass, helper_entry)
+    issue = issue_registry.async_get_issue(DOMAIN, "mapping_device_conflicts")
+    assert issue is not None
+    assert issue.translation_placeholders == {"conflict_count": "1"}
+
+    entity_registry.async_update_entity(second.entity_id, device_id=source_device_b.id)
+    await hass.async_block_till_done()
+    assert issue_registry.async_get_issue(DOMAIN, "mapping_device_conflicts") is None
+
+
 @pytest.fixture(autouse=True)
 def _skip_dependency_setup_for_config_flow_tests():
     """Keep config-flow tests focused on flow behavior, not integration setup."""
@@ -2011,7 +2074,122 @@ async def test_options_flow_returns_to_source_scope_after_discovery_drift(
     assert result["step_id"] == "source_scope"
     assert result["data_schema"]({})["included_thermostat_ids"] == ["1001", "1002"]
     reload.assert_not_called()
-    assert entry.options == {}
+    assert entry.options == {
+        CONF_POINT_LOOKBACK_DAYS: 30,
+        CONF_SCAN_INTERVAL_SECONDS: 900,
+    }
+
+
+async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
+    hass: HomeAssistant,
+) -> None:
+    """Test discovery changes are shown before the first scope submission."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+    assert result["data_schema"]({})["included_thermostat_ids"] == ["1001"]
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            ),
+            _configured_thermostat(
+                thermostat_id=1002,
+                name="Zone B",
+                slug="zone_b",
+            ),
+        ],
+        sensors=[],
+        thermostat_rows=[
+            {"id": 1001, "name": "Zone A"},
+            {"id": 1002, "name": "Zone B"},
+        ],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                "included_thermostat_ids": ["1001"],
+                "included_sensor_ids": [],
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope"
+    assert result["data_schema"]({})["included_thermostat_ids"] == ["1001", "1002"]
+    reload.assert_not_called()
+    assert entry.options == {
+        CONF_POINT_LOOKBACK_DAYS: 30,
+        CONF_SCAN_INTERVAL_SECONDS: 900,
+    }
+
+
+async def test_options_flow_reconfirms_changed_scope_removal_count(
+    hass: HomeAssistant,
+) -> None:
+    """Test a changed destructive count requires confirmation again."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
+            _configured_thermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
+        ],
+        sensors=[],
+        thermostat_rows=[
+            {"id": 1001, "name": "Zone A"},
+            {"id": 1002, "name": "Zone B"},
+        ],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"included_thermostat_ids": [], "included_sensor_ids": []},
+    )
+    assert result["description_placeholders"]["thermostat_count"] == "2"
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+        ],
+        sensors=[],
+        thermostat_rows=[
+            {"id": 1001, "name": "Zone A"},
+            {"id": 1002, "name": "Zone B"},
+        ],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope_confirm"
+    assert result["description_placeholders"]["thermostat_count"] == "1"
+    reload.assert_not_called()
 
 
 async def test_get_configuration_service_returns_exact_non_secret_response(
@@ -2325,6 +2503,151 @@ async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> N
                 "platform": "homekit_controller",
                 "unique_id": "source-climate",
             },
+        }
+    ]
+
+
+async def test_options_flow_rejects_cross_device_thermostat_mapping(
+    hass: HomeAssistant,
+) -> None:
+    """Test one explicit mapping cannot span multiple source devices."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    source_device_a = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-a")},
+    )
+    source_device_b = device_registry.async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device-b")},
+    )
+    registry = er.async_get(hass)
+    climate = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate-a",
+        config_entry=source_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="source_climate_a",
+    )
+    temperature = registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "source-temperature-b",
+        config_entry=source_entry,
+        device_id=source_device_b.id,
+        suggested_object_id="source_temperature_b",
+    )
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+        ],
+        sensors=[],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat_mapping"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ID: "1001"},
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                CONF_CLIMATE_ENTITY_ID: climate.entity_id,
+                CONF_TEMPERATURE_ENTITY_ID: temperature.entity_id,
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "thermostat_mapping_detail"
+    assert result["errors"] == {"base": "mapping_device_conflict"}
+    reload.assert_not_called()
+    assert entry.options == {
+        CONF_POINT_LOOKBACK_DAYS: 30,
+        CONF_SCAN_INTERVAL_SECONDS: 900,
+    }
+
+
+async def test_options_flow_rejects_duplicate_explicit_device_claim(
+    hass: HomeAssistant,
+) -> None:
+    """Test two explicit thermostat mappings cannot claim one source device."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    source_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("homekit_controller", "source-device")},
+    )
+    registry = er.async_get(hass)
+    first = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "first-source-climate",
+        config_entry=source_entry,
+        device_id=source_device.id,
+        suggested_object_id="first_source_climate",
+    )
+    second = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "second-source-climate",
+        config_entry=source_entry,
+        device_id=source_device.id,
+        suggested_object_id="second_source_climate",
+    )
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1002,
+                    CONF_CLIMATE_ENTITY_ID: second.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: _stable_reference(second),
+                }
+            ],
+        },
+    )
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
+            _configured_thermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
+        ],
+        sensors=[],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "thermostat_mapping"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_ID: "1001"},
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {CONF_CLIMATE_ENTITY_ID: first.entity_id},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "thermostat_mapping_detail"
+    assert result["errors"] == {"base": "mapping_device_conflict"}
+    reload.assert_not_called()
+    assert entry.options[CONF_THERMOSTATS] == [
+        {
+            CONF_ID: 1002,
+            CONF_CLIMATE_ENTITY_ID: second.entity_id,
+            CONF_CLIMATE_ENTITY_REF: _stable_reference(second),
         }
     ]
 

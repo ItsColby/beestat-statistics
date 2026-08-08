@@ -110,6 +110,15 @@ class _LocalMatchCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class MappingDeviceConflict:
+    """One explicit mapping that cannot safely own a source device."""
+
+    resource_type: str
+    resource_ids: tuple[int, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConfiguredThermostat:
     """One Beestat thermostat mapped to local HomeKit/Ecobee identity."""
 
@@ -185,6 +194,19 @@ def build_beestat_config(
     """Build the HomeKit-first runtime thermostat/sensor map."""
 
     local_devices = _local_ecobee_devices(hass)
+    mapping_conflicts = _mapping_device_conflicts_for_hass(hass, config_data)
+    conflicted_thermostat_ids = frozenset(
+        resource_id
+        for conflict in mapping_conflicts
+        if conflict.resource_type == "thermostat"
+        for resource_id in conflict.resource_ids
+    )
+    conflicted_sensor_ids = frozenset(
+        resource_id
+        for conflict in mapping_conflicts
+        if conflict.resource_type == "sensor"
+        for resource_id in conflict.resource_ids
+    )
     thermostat_overrides = _resolved_override_map(
         hass,
         config_data.get(CONF_THERMOSTATS),
@@ -200,12 +222,14 @@ def build_beestat_config(
         thermostat_rows,
         thermostat_overrides,
         local_devices,
+        conflicted_thermostat_ids,
     )
     sensors = _build_sensors(
         sensor_rows,
         sensor_overrides,
         thermostats,
         local_devices,
+        conflicted_sensor_ids,
     )
     return BeestatConfig(
         thermostats=thermostats,
@@ -345,6 +369,62 @@ def configured_unresolved_entity_ids(
     return tuple(dict.fromkeys(unresolved))
 
 
+def configured_mapping_device_conflicts(
+    config_data: Mapping[str, Any],
+    entity_registry: Any,
+) -> tuple[MappingDeviceConflict, ...]:
+    """Return cross-device and duplicate explicit source-device claims."""
+
+    conflicts: list[MappingDeviceConflict] = []
+    for key, fields, resource_type in (
+        (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS, "thermostat"),
+        (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS, "sensor"),
+    ):
+        claims_by_device: dict[str, list[int]] = {}
+        items = sorted(
+            _override_map(config_data.get(key)).values(),
+            key=lambda item: (
+                _row_int(item, CONF_ID, "sensor_id", "thermostat_id") or -1
+            ),
+        )
+        for item in items:
+            if _is_disabled(item):
+                continue
+            resource_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
+            if resource_id is None:
+                continue
+            device_ids = _explicit_registry_device_ids(
+                entity_registry,
+                item,
+                fields,
+            )
+            if len(device_ids) > 1:
+                conflicts.append(
+                    MappingDeviceConflict(
+                        resource_type=resource_type,
+                        resource_ids=(resource_id,),
+                        reason="cross_device",
+                    )
+                )
+            for device_id in device_ids:
+                claims_by_device.setdefault(device_id, []).append(resource_id)
+        conflicts.extend(
+            MappingDeviceConflict(
+                resource_type=resource_type,
+                resource_ids=tuple(sorted(resource_ids)),
+                reason="duplicate_device",
+            )
+            for resource_ids in claims_by_device.values()
+            if len(resource_ids) > 1
+        )
+    return tuple(
+        sorted(
+            set(conflicts),
+            key=lambda item: (item.resource_type, item.resource_ids, item.reason),
+        )
+    )
+
+
 def configured_override_entity_domain_errors(
     config_data: Mapping[str, Any],
 ) -> tuple[str, ...]:
@@ -395,6 +475,7 @@ def _build_thermostats(
     rows: tuple[dict[str, Any], ...],
     overrides: dict[int, dict[str, Any]],
     local_devices: tuple[LocalEcobeeDevice, ...],
+    conflicted_ids: frozenset[int],
 ) -> tuple[ConfiguredThermostat, ...]:
     items: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     seen: set[int] = set()
@@ -425,6 +506,7 @@ def _build_thermostats(
         tuple(
             candidate
             for thermostat_id, row, override in items
+            if thermostat_id not in conflicted_ids
             if (
                 candidate := _thermostat_match_candidate(
                     thermostat_id,
@@ -523,6 +605,7 @@ def _build_sensors(
     overrides: dict[int, dict[str, Any]],
     thermostats: tuple[ConfiguredThermostat, ...],
     local_devices: tuple[LocalEcobeeDevice, ...],
+    conflicted_ids: frozenset[int],
 ) -> tuple[ConfiguredSensor, ...]:
     items: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     seen: set[int] = set()
@@ -556,6 +639,7 @@ def _build_sensors(
         tuple(
             candidate
             for sensor_id, row, override in items
+            if sensor_id not in conflicted_ids
             if not (
                 _is_thermostat_sensor(row)
                 and (
@@ -586,6 +670,7 @@ def _build_sensors(
                 sensor_id,
                 thermostat_by_id,
                 local_by_id.get(sensor_id),
+                mapping_conflicted=sensor_id in conflicted_ids,
                 default_include_temperature=_sensor_supports(
                     row,
                     _TEMPERATURE_CAPABILITIES,
@@ -607,6 +692,7 @@ def _sensor_from_row(
     thermostat_by_id: dict[int, ConfiguredThermostat],
     local: LocalEcobeeDevice | None,
     *,
+    mapping_conflicted: bool,
     default_include_temperature: bool,
 ) -> ConfiguredSensor:
     thermostat_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
@@ -620,7 +706,7 @@ def _sensor_from_row(
         local = None
         fallback_name = thermostat.name
         fallback_slug = thermostat.slug
-        device_id = thermostat.device_id
+        device_id = None if mapping_conflicted else thermostat.device_id
         temperature_entity_id = thermostat.temperature_entity_id
         occupancy_entity_id = thermostat.occupancy_entity_id
         motion_entity_id = thermostat.motion_entity_id
@@ -692,10 +778,13 @@ def _thermostat_match_candidate(
     override: dict[str, Any],
     local_thermostats: tuple[LocalEcobeeDevice, ...],
 ) -> _LocalMatchCandidate | None:
-    for field in THERMOSTAT_STABLE_ENTITY_FIELDS:
-        entity_id = _string_or_none(override.get(field))
-        if entity_id and (local := _find_local_by_entity(local_thermostats, entity_id)):
-            return _LocalMatchCandidate(thermostat_id, local, True, 3)
+    explicit_devices = _explicit_local_devices(
+        override,
+        THERMOSTAT_STABLE_ENTITY_FIELDS,
+        local_thermostats,
+    )
+    if len(explicit_devices) == 1:
+        return _LocalMatchCandidate(thermostat_id, explicit_devices[0], True, 3)
     if has_explicit_entity_mapping(override, THERMOSTAT_STABLE_ENTITY_FIELDS):
         return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
@@ -719,14 +808,13 @@ def _sensor_match_candidate(
     override: dict[str, Any],
     local_sensors: tuple[LocalEcobeeDevice, ...],
 ) -> _LocalMatchCandidate | None:
-    for key in (
-        CONF_TEMPERATURE_ENTITY_ID,
-        CONF_OCCUPANCY_ENTITY_ID,
-        CONF_MOTION_ENTITY_ID,
-    ):
-        entity_id = _string_or_none(override.get(key))
-        if entity_id and (local := _find_local_by_entity(local_sensors, entity_id)):
-            return _LocalMatchCandidate(sensor_id, local, True, 3)
+    explicit_devices = _explicit_local_devices(
+        override,
+        SENSOR_STABLE_ENTITY_FIELDS,
+        local_sensors,
+    )
+    if len(explicit_devices) == 1:
+        return _LocalMatchCandidate(sensor_id, explicit_devices[0], True, 3)
     if has_explicit_entity_mapping(override, SENSOR_STABLE_ENTITY_FIELDS):
         return None
     row_key = _slugify(_string_or_none(row.get("name")) or "")
@@ -744,14 +832,18 @@ def _resolve_unique_local_matches(
 ) -> dict[int, LocalEcobeeDevice]:
     """Resolve automatic candidates without sharing one foreign source device."""
 
-    resolved = {
-        candidate.resource_id: candidate.device
-        for candidate in candidates
-        if candidate.explicit
-    }
-    explicitly_claimed = {
-        candidate.device.device_id for candidate in candidates if candidate.explicit
-    }
+    resolved: dict[int, LocalEcobeeDevice] = {}
+    explicit_by_device: dict[str, list[_LocalMatchCandidate]] = {}
+    for candidate in candidates:
+        if candidate.explicit:
+            explicit_by_device.setdefault(candidate.device.device_id, []).append(
+                candidate
+            )
+    explicitly_claimed = set(explicit_by_device)
+    for device_candidates in explicit_by_device.values():
+        if len(device_candidates) == 1:
+            candidate = device_candidates[0]
+            resolved[candidate.resource_id] = candidate.device
     automatic_by_device: dict[str, list[_LocalMatchCandidate]] = {}
     for candidate in candidates:
         if candidate.explicit:
@@ -801,6 +893,40 @@ def _find_local_by_entity(
         }:
             return device
     return None
+
+
+def _explicit_local_devices(
+    override: Mapping[str, Any],
+    fields: tuple[str, ...],
+    devices: tuple[LocalEcobeeDevice, ...],
+) -> tuple[LocalEcobeeDevice, ...]:
+    """Return every distinct local device selected by explicit entity fields."""
+
+    matched: dict[str, LocalEcobeeDevice] = {}
+    for field in fields:
+        entity_id = _string_or_none(override.get(field))
+        if entity_id and (local := _find_local_by_entity(devices, entity_id)):
+            matched[local.device_id] = local
+    return tuple(matched.values())
+
+
+def _explicit_registry_device_ids(
+    registry: Any,
+    override: Mapping[str, Any],
+    fields: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return distinct registry device IDs selected by explicit entity fields."""
+
+    device_ids: set[str] = set()
+    for field in fields:
+        entity_id = resolve_override_entity_id(registry, override, field)
+        if entity_id is None:
+            continue
+        entry = registry.async_get(entity_id)
+        device_id = getattr(entry, "device_id", None) if entry is not None else None
+        if device_id:
+            device_ids.add(str(device_id))
+    return tuple(sorted(device_ids))
 
 
 def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
@@ -1027,6 +1153,19 @@ def _override_map(value: Any) -> dict[int, dict[str, Any]]:
             continue
         overrides[item_id] = dict(item)
     return overrides
+
+
+def _mapping_device_conflicts_for_hass(
+    hass: Any,
+    config_data: Mapping[str, Any],
+) -> tuple[MappingDeviceConflict, ...]:
+    """Return mapping conflicts when the Home Assistant registry is available."""
+
+    try:
+        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+    except ImportError:
+        return ()
+    return configured_mapping_device_conflicts(config_data, er.async_get(hass))
 
 
 def _resolved_override_map(

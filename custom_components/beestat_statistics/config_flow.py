@@ -36,6 +36,7 @@ from .api import (
     BeestatClient,
     exception_fingerprint,
 )
+from .config_model import configured_mapping_device_conflicts
 from .config_payload import (
     connection_data_from_user_input,
     entry_runtime_config_data,
@@ -537,6 +538,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
+    _source_scope_form_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
     _pending_scope_selection: tuple[frozenset[int], frozenset[int]] | None = None
     _pending_scope_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
     _pending_scope_removed_thermostats = 0
@@ -585,7 +587,19 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         thermostat_options = _thermostat_options(self.config_entry)
         sensor_options = _sensor_options(self.config_entry)
         enabled_thermostats, enabled_sensors = _source_scope_defaults(self.config_entry)
+        known_ids = (
+            _option_ids(thermostat_options),
+            _option_ids(sensor_options),
+        )
         if user_input is not None:
+            if known_ids != self._source_scope_form_known_ids:
+                self._source_scope_form_known_ids = known_ids
+                return self._show_source_scope_form(
+                    thermostat_options,
+                    sensor_options,
+                    enabled_thermostats,
+                    enabled_sensors,
+                )
             selected_thermostats = frozenset(
                 int(value)
                 for value in user_input.get(_CONF_INCLUDED_THERMOSTAT_IDS, ())
@@ -606,6 +620,23 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 self._set_pending_scope_preview(candidate)
                 return await self.async_step_source_scope_confirm()
             return self.async_create_entry(data=candidate.options)
+
+        self._source_scope_form_known_ids = known_ids
+        return self._show_source_scope_form(
+            thermostat_options,
+            sensor_options,
+            enabled_thermostats,
+            enabled_sensors,
+        )
+
+    def _show_source_scope_form(
+        self,
+        thermostat_options: list[SelectOptionDict],
+        sensor_options: list[SelectOptionDict],
+        enabled_thermostats: set[int],
+        enabled_sensors: set[int],
+    ) -> ConfigFlowResult:
+        """Show source scope using one captured discovery signature."""
 
         return self.async_show_form(
             step_id="source_scope",
@@ -767,14 +798,20 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["base"] = "mapping_source_unavailable"
             else:
-                return self.async_create_entry(
-                    data=update_thermostat_override_options(
-                        self.config_entry.data,
-                        self.config_entry.options,
-                        self._thermostat_id,
-                        updates,
-                    )
+                candidate_options = update_thermostat_override_options(
+                    self.config_entry.data,
+                    self.config_entry.options,
+                    self._thermostat_id,
+                    updates,
                 )
+                if _has_new_mapping_device_conflicts(
+                    self.config_entry,
+                    er.async_get(self.hass),
+                    candidate_options,
+                ):
+                    errors["base"] = "mapping_device_conflict"
+                else:
+                    return self.async_create_entry(data=candidate_options)
 
         defaults = _override_defaults(
             self.config_entry,
@@ -864,14 +901,20 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
             except ValueError:
                 errors["base"] = "mapping_source_unavailable"
             else:
-                return self.async_create_entry(
-                    data=update_sensor_override_options(
-                        self.config_entry.data,
-                        self.config_entry.options,
-                        self._sensor_id,
-                        updates,
-                    )
+                candidate_options = update_sensor_override_options(
+                    self.config_entry.data,
+                    self.config_entry.options,
+                    self._sensor_id,
+                    updates,
                 )
+                if _has_new_mapping_device_conflicts(
+                    self.config_entry,
+                    er.async_get(self.hass),
+                    candidate_options,
+                ):
+                    errors["base"] = "mapping_device_conflict"
+                else:
+                    return self.async_create_entry(data=candidate_options)
 
         defaults = _override_defaults(
             self.config_entry,
@@ -1279,6 +1322,29 @@ def _source_scope_candidate(
         removed_thermostats=len(enabled_thermostats - selected_thermostats),
         removed_sensors=len(enabled_sensors - selected_sensors),
     )
+
+
+def _has_new_mapping_device_conflicts(
+    entry: config_entries.ConfigEntry,
+    entity_registry: Any,
+    candidate_options: Mapping[str, Any],
+) -> bool:
+    """Return whether an options update introduces a mapping-device conflict."""
+
+    current = set(
+        configured_mapping_device_conflicts(
+            entry_runtime_config_data(entry),
+            entity_registry,
+        )
+    )
+    candidate_config = dict(entry.data)
+    for key in (CONF_THERMOSTATS, CONF_SENSORS):
+        if key in candidate_options:
+            candidate_config[key] = candidate_options[key]
+    candidate = set(
+        configured_mapping_device_conflicts(candidate_config, entity_registry)
+    )
+    return not candidate.issubset(current)
 
 
 def _automatic_mapping_options(

@@ -6,6 +6,10 @@
   Competing equal-confidence rows now remain unresolved, unique name matches
   beat weaker single-device fallbacks, and explicit mappings reserve their
   local device from automatic reuse.
+- Require every explicit mapping to use entities from one source device and
+  prevent duplicate explicit claims within thermostat or room-sensor mappings.
+  Existing conflicts now raise a Repair and leave affected device links
+  unresolved instead of choosing the first configured field or row.
 - Show the exact cached entity candidates before bulk mapping confirmation.
   Recompute the candidate against current mappings and options immediately
   before saving, require confirmation again after target drift, and preserve
@@ -15,7 +19,8 @@
 
 - Rebase destructive source-scope confirmation onto current config-entry
   options instead of saving a stale whole-options snapshot. Discovery or
-  removal-count drift returns to review before any change is applied.
+  removal-count drift returns to review before any change is applied, including
+  discovery that occurs while the initial selection form is open.
 - Discover Home Assistant-dependent test modules from their imports for the
   dependency-light selector, while both hosted HA lanes run the complete test
   tree. A missing harness now fails collection, new HA test modules cannot
@@ -28,8 +33,8 @@
   dependency-closed with their exact harness pins and a clean `pip check` before
   running the complete test tree.
 - Add focused coverage for cross-row match conflicts, confidence precedence,
-  explicit reservations, exact mapping previews, preview drift, and concurrent
-  options updates.
+  explicit reservations and mapping conflicts, exact mapping previews, initial
+  form and confirmation drift, Repairs, and concurrent options updates.
 
 # Beestat Statistics v2026.8.8
 

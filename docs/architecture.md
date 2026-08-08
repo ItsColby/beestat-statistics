@@ -112,10 +112,15 @@
   config-entry reload. A local source device may be claimed by at most one
   automatic Beestat thermostat or room-sensor row; a higher-confidence unique
   name match wins over a weaker fallback, while explicit mappings reserve their
-  source device. Bulk confirmation shows the exact entity candidates and
-  recomputes them against current cached mappings and options before saving;
-  target drift requires confirmation again. It never silently persists name
-  matches without explicit confirmation.
+  source device. Every explicit mapping must resolve its selected entities to
+  one foreign source device, and one source device may be claimed by at most
+  one explicit mapping of the same resource type. Options reject newly
+  introduced conflicts; saved conflicts raise an actionable Repair and fail
+  device linking closed for every affected row instead of selecting the first
+  field or row by registry order. Bulk confirmation shows the exact entity
+  candidates and recomputes them against current cached mappings and options
+  before saving; target drift requires confirmation again. It never silently
+  persists name matches without explicit confirmation.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate
@@ -212,6 +217,10 @@
 - Source-scope changes may alter future entity exposure and import membership,
   but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
   units, statistic metadata, or previously imported Recorder history.
+- Capture the discovered source-ID set when the source-scope form is shown. If
+  discovery changes before the first submission, show the refreshed form; if
+  it changes after a destructive preview, show the refreshed source set or
+  removal count before accepting the change.
 - Updating source scope must preserve mapping, filter, and statistic-capability
   fields on known resources and preserve unknown saved overrides unchanged.
 - Disabled source overrides are ignored by mapping-domain and missing-entity
