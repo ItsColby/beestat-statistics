@@ -48,6 +48,7 @@ from .config_payload import (
     update_source_scope_options,
     update_thermostat_override_options,
 )
+from .config_rows import effective_override_items, override_id
 from .const import (
     API_BASE,
     CONF_ACCOUNT_FINGERPRINT,
@@ -84,6 +85,7 @@ from .const import (
     MAX_FILTER_MAX_AGE_DAYS,
     MAX_FILTER_NOTICE_DAYS,
     MAX_POINT_LOOKBACK_DAYS,
+    MAX_SCAN_INTERVAL_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
 from .entity_reference import (
@@ -118,6 +120,7 @@ POINT_LOOKBACK_SELECTOR = NumberSelector(
 SCAN_INTERVAL_SELECTOR = NumberSelector(
     NumberSelectorConfig(
         min=MIN_SCAN_INTERVAL_SECONDS,
+        max=MAX_SCAN_INTERVAL_SECONDS,
         mode=NumberSelectorMode.BOX,
         step=1,
     )
@@ -203,13 +206,13 @@ _MAPPING_FIELD_LABELS = {
 }
 
 type _AutomaticMappingSignature = tuple[tuple[str, int, str, str, str, str], ...]
+type _SourceScopeSignature = tuple[tuple[str, str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _SourceScopeCandidate:
     options: dict[str, Any]
-    known_thermostat_ids: tuple[int, ...]
-    known_sensor_ids: tuple[int, ...]
+    signature: _SourceScopeSignature
     removed_thermostats: int
     removed_sensors: int
 
@@ -615,9 +618,9 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
-    _source_scope_form_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+    _source_scope_form_signature: _SourceScopeSignature | None = None
     _pending_scope_selection: tuple[frozenset[int], frozenset[int]] | None = None
-    _pending_scope_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+    _pending_scope_signature: _SourceScopeSignature | None = None
     _pending_scope_removed_thermostats = 0
     _pending_scope_removed_sensors = 0
     _pending_automatic_mapping_signature: _AutomaticMappingSignature | None = None
@@ -664,13 +667,13 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         thermostat_options = _thermostat_options(self.config_entry)
         sensor_options = _sensor_options(self.config_entry)
         enabled_thermostats, enabled_sensors = _source_scope_defaults(self.config_entry)
-        known_ids = (
-            _option_ids(thermostat_options),
-            _option_ids(sensor_options),
+        signature = _source_scope_signature(
+            thermostat_options,
+            sensor_options,
         )
         if user_input is not None:
-            if known_ids != self._source_scope_form_known_ids:
-                self._source_scope_form_known_ids = known_ids
+            if signature != self._source_scope_form_signature:
+                self._source_scope_form_signature = signature
                 return self._show_source_scope_form(
                     thermostat_options,
                     sensor_options,
@@ -698,7 +701,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 return await self.async_step_source_scope_confirm()
             return self.async_create_entry(data=candidate.options)
 
-        self._source_scope_form_known_ids = known_ids
+        self._source_scope_form_signature = signature
         return self._show_source_scope_form(
             thermostat_options,
             sensor_options,
@@ -751,11 +754,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 selected_thermostats,
                 selected_sensors,
             )
-            known_ids = (
-                candidate.known_thermostat_ids,
-                candidate.known_sensor_ids,
-            )
-            if known_ids != self._pending_scope_known_ids:
+            if candidate.signature != self._pending_scope_signature:
                 self._clear_pending_scope_preview()
                 return await self.async_step_source_scope()
             removal_counts = (
@@ -787,10 +786,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
     def _set_pending_scope_preview(self, candidate: _SourceScopeCandidate) -> None:
         """Remember only the scope evidence needed to detect preview drift."""
 
-        self._pending_scope_known_ids = (
-            candidate.known_thermostat_ids,
-            candidate.known_sensor_ids,
-        )
+        self._pending_scope_signature = candidate.signature
         self._pending_scope_removed_thermostats = candidate.removed_thermostats
         self._pending_scope_removed_sensors = candidate.removed_sensors
 
@@ -798,7 +794,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         """Clear a completed or invalidated source-scope confirmation."""
 
         self._pending_scope_selection = None
-        self._pending_scope_known_ids = None
+        self._pending_scope_signature = None
         self._pending_scope_removed_thermostats = 0
         self._pending_scope_removed_sensors = 0
 
@@ -1296,7 +1292,7 @@ def _resource_options(
             continue
         try:
             item_id = int(raw_item_id)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
         labels.setdefault(item_id, f"Saved {fallback_label.lower()} {item_id}")
 
@@ -1323,13 +1319,29 @@ def _resource_row_id(row: Mapping[str, Any]) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
 
 
 def _option_ids(options: list[SelectOptionDict]) -> tuple[int, ...]:
     return tuple(int(option["value"]) for option in options)
+
+
+def _source_scope_signature(
+    thermostat_options: list[SelectOptionDict],
+    sensor_options: list[SelectOptionDict],
+) -> _SourceScopeSignature:
+    """Return the complete source choices and labels accepted by the user."""
+
+    return tuple(
+        (kind, str(option["value"]), str(option["label"]))
+        for kind, options in (
+            ("thermostat", thermostat_options),
+            ("sensor", sensor_options),
+        )
+        for option in options
+    )
 
 
 def _inactive_resource_ids(
@@ -1407,8 +1419,7 @@ def _source_scope_candidate(
     )
     return _SourceScopeCandidate(
         options=options,
-        known_thermostat_ids=known_thermostat_ids,
-        known_sensor_ids=known_sensor_ids,
+        signature=_source_scope_signature(thermostat_options, sensor_options),
         removed_thermostats=len(enabled_thermostats - selected_thermostats),
         removed_sensors=len(enabled_sensors - selected_sensors),
     )
@@ -1530,14 +1541,11 @@ def _effective_override(
     key: str,
     item_id: int,
 ) -> Mapping[str, Any]:
-    value = config_data.get(key)
-    if not isinstance(value, list):
-        return {}
     return next(
         (
             item
-            for item in value
-            if isinstance(item, Mapping) and _resource_row_id(item) == item_id
+            for item in effective_override_items(config_data.get(key))
+            if _resource_row_id(item) == item_id
         ),
         {},
     )
@@ -1667,7 +1675,7 @@ def _override_defaults(
         THERMOSTAT_STABLE_ENTITY_FIELDS if thermostats else SENSOR_STABLE_ENTITY_FIELDS
     )
     config_data = entry_runtime_config_data(entry)
-    for item in config_data.get(key, ()):
-        if isinstance(item, Mapping) and int(item.get(CONF_ID, -1)) == item_id:
+    for item in effective_override_items(config_data.get(key)):
+        if override_id(item) == item_id:
             return mapping_form_defaults(entity_registry, item, fields)
     return {}

@@ -582,6 +582,32 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(thermostat.filter_max_age_days, 120)
         self.assertEqual(thermostat.filter_notice_days, 14)
 
+    def test_nonfinite_filter_values_fall_back_safely(self) -> None:
+        """Non-finite persisted values must not poison filter projections."""
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=(),
+            config_data={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "filter_change_day_runtime_baseline_seconds": "Infinity",
+                        "filter_lifetime_runtime_hours": "NaN",
+                        "filter_max_age_days": "Infinity",
+                        "filter_notice_days": float("nan"),
+                    }
+                ]
+            },
+        )
+
+        thermostat = config.thermostats[0]
+        self.assertIsNone(thermostat.filter_change_day_runtime_baseline_seconds)
+        self.assertEqual(thermostat.filter_lifetime_runtime_hours, 250.0)
+        self.assertEqual(thermostat.filter_max_age_days, 90)
+        self.assertEqual(thermostat.filter_notice_days, 7)
+
     def test_maps_homekit_entities_with_enum_like_device_classes(self) -> None:
         self._install_fake_homeassistant_modules(
             devices={
@@ -1243,6 +1269,29 @@ class ConfigModelTest(unittest.TestCase):
         )
 
         self.assertEqual(conflicts, ())
+
+    def test_repeated_override_id_uses_effective_last_row_for_repairs(self) -> None:
+        config_data = {
+            "thermostats": [
+                {
+                    "id": 1001,
+                    "climate_entity_id": "sensor.shadowed_wrong_domain",
+                },
+                {
+                    "id": 1001,
+                    "climate_entity_id": "climate.effective",
+                },
+            ]
+        }
+
+        self.assertEqual(
+            config_model.configured_override_entity_ids(config_data),
+            ("climate.effective",),
+        )
+        self.assertEqual(
+            config_model.configured_override_entity_domain_errors(config_data),
+            (),
+        )
 
     def test_duplicate_explicit_sensor_device_claims_fail_linking_closed(self) -> None:
         entries = [

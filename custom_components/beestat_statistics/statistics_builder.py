@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
+from math import isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -382,16 +383,21 @@ def _parse_summary_day(row: dict[str, Any]) -> date:
 def _summary_rows_by_thermostat(
     summary_rows: list[dict[str, Any]],
 ) -> dict[int, list[tuple[date, dict[str, Any]]]]:
-    rows_by_thermostat: dict[int, list[tuple[date, dict[str, Any]]]] = {}
+    rows_by_thermostat: dict[int, dict[date, dict[str, Any]]] = {}
     for row in summary_rows:
         thermostat_id = _as_int(row.get("thermostat_id"))
         local_day = _parse_summary_day_or_none(row)
         if thermostat_id is None or local_day is None:
             continue
-        rows_by_thermostat.setdefault(thermostat_id, []).append((local_day, row))
-    for rows in rows_by_thermostat.values():
-        rows.sort(key=lambda item: item[0].isoformat())
-    return rows_by_thermostat
+        rows_by_thermostat.setdefault(thermostat_id, {})[local_day] = row
+    return {
+        thermostat_id: sorted(
+            (local_day, row)
+            for local_day, row in rows.items()
+            if not row.get("deleted")
+        )
+        for thermostat_id, rows in rows_by_thermostat.items()
+    }
 
 
 def _parse_summary_day_or_none(row: dict[str, Any]) -> date | None:
@@ -429,9 +435,10 @@ def _as_float(value: Any) -> float | None:
     if value in (None, "", "unknown", "unavailable"):
         return None
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return None
+    return parsed if isfinite(parsed) else None
 
 
 def _as_int(value: Any) -> int | None:
@@ -439,5 +446,5 @@ def _as_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except TypeError, ValueError:
+    except OverflowError, TypeError, ValueError:
         return None

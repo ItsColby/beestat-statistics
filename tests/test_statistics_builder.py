@@ -64,6 +64,11 @@ class StatisticsBuilderTest(unittest.TestCase):
     def test_runtime_statistics_are_cumulative_by_local_day(self) -> None:
         rows = [
             {
+                "thermostat_id": float("inf"),
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 9999,
+            },
+            {
                 "thermostat_id": 1,
                 "date": "2026-07-01",
                 "sum_compressor_cool_1": 3600,
@@ -109,6 +114,69 @@ class StatisticsBuilderTest(unittest.TestCase):
             ],
         )
 
+    def test_summary_statistics_use_last_daily_row_and_reject_nonfinite_values(
+        self,
+    ) -> None:
+        """Duplicate starts and non-finite numbers must not reach Recorder."""
+
+        rows = [
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 3600,
+                "heating_degree_days": 1,
+                "avg_indoor_humidity": 45,
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 7200,
+                "heating_degree_days": "Infinity",
+                "avg_indoor_humidity": "NaN",
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-02",
+                "sum_compressor_cool_1": 3600,
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-02",
+                "deleted": True,
+            },
+        ]
+
+        runtime = statistics_builder.build_runtime_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+        summary_sum = statistics_builder.build_summary_sum_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+        summary_mean = statistics_builder.build_summary_mean_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+
+        cool = _series(runtime, "beestat:zone_a_cool_runtime_hours")
+        heating_degree_days = _series(
+            summary_sum,
+            "beestat:zone_a_heating_degree_days",
+        )
+        self.assertEqual(len(cool.statistics), 1)
+        self.assertEqual(cool.statistics[0]["state"], 2.0)
+        self.assertEqual(heating_degree_days.statistics[0]["state"], 0.0)
+        self.assertFalse(
+            any(
+                item.statistic_id == "beestat:zone_a_indoor_humidity"
+                for item in summary_mean
+            )
+        )
+
     def test_sensor_statistics_group_points_by_local_day(self) -> None:
         rows_by_id = {
             10: [
@@ -128,6 +196,16 @@ class StatisticsBuilderTest(unittest.TestCase):
                     "temperature": 68,
                 },
                 {"sensor_id": 10, "timestamp": "not-a-timestamp", "temperature": 120},
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-02T05:30:00Z",
+                    "temperature": "NaN",
+                },
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-02T06:30:00Z",
+                    "temperature": "Infinity",
+                },
             ]
         }
 
@@ -226,6 +304,53 @@ class StatisticsBuilderTest(unittest.TestCase):
                 "beestat:zone_a_cooling_degree_days",
             ),
         )
+
+    def test_complete_output_has_unique_series_and_starts(self) -> None:
+        """Every Recorder write identity is unique after normalized construction."""
+
+        series = statistics_builder.build_statistics(
+            [
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-01",
+                    "sum_compressor_cool_1": 3600,
+                    "sum_compressor_heat_1": 1800,
+                    "sum_fan": 3600,
+                    "sum_heating_degree_days": 1,
+                    "sum_cooling_degree_days": 2,
+                    "avg_indoor_humidity": 45,
+                    "avg_outdoor_temperature": 80,
+                    "avg_outdoor_humidity": 55,
+                }
+            ],
+            {
+                1: [
+                    {
+                        "thermostat_id": 1,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "setpoint_heat": 68,
+                        "setpoint_cool": 74,
+                    }
+                ]
+            },
+            {
+                10: [
+                    {
+                        "sensor_id": 10,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "temperature": 72,
+                    }
+                ]
+            },
+            self.local_tz,
+            self.config,
+        )
+
+        statistic_ids = [item.statistic_id for item in series]
+        self.assertEqual(len(statistic_ids), len(set(statistic_ids)))
+        for item in series:
+            starts = [row["start"] for row in item.statistics]
+            self.assertEqual(len(starts), len(set(starts)))
 
     def test_apply_cumulative_seeds_offsets_partial_window_series(self) -> None:
         series = statistics_builder.build_runtime_statistics(

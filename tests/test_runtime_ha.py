@@ -27,6 +27,9 @@ from custom_components.beestat_statistics import (
     PreparedImport,
     SummaryImportPlan,
     _async_track_time_zone_updates,
+    _dedupe_rows,
+    _row_float,
+    _row_start_datetime,
 )
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
@@ -36,6 +39,48 @@ from custom_components.beestat_statistics.import_evidence import SkippedWindowEv
 from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
+    """Malformed Recorder seeds must not poison cumulative imports."""
+
+    assert _row_float(42.5) == 42.5
+    assert _row_float("NaN") is None
+    assert _row_float("Infinity") is None
+
+
+async def test_recorder_seed_starts_reject_nonfinite_and_unrepresentable_values() -> (
+    None
+):
+    """Malformed Recorder starts must not enter cumulative seed selection."""
+
+    assert _row_start_datetime({"start": 0}) == datetime(1970, 1, 1, tzinfo=UTC)
+    assert _row_start_datetime({"start": "NaN"}) is None
+    assert _row_start_datetime({"start": "Infinity"}) is None
+    assert _row_start_datetime({"start": 1e300}) is None
+
+
+async def test_point_rows_collapse_duplicate_identities_before_aggregation() -> None:
+    """Last source rows own point identities and winning deletions are omitted."""
+
+    assert _dedupe_rows(
+        [
+            {"runtime_sensor_id": 1, "timestamp": "2026-07-01T00:00:00Z", "v": 1},
+            {"runtime_sensor_id": 1, "timestamp": "2026-07-01T00:00:00Z", "v": 2},
+            {"sensor_id": 10, "timestamp": "2026-07-01T00:05:00Z", "v": 3},
+            {"sensor_id": 10, "timestamp": "2026-07-01T00:05:00Z", "v": 4},
+            {"runtime_sensor_id": 2, "timestamp": "2026-07-01T00:10:00Z", "v": 5},
+            {
+                "runtime_sensor_id": 2,
+                "timestamp": "2026-07-01T00:10:00Z",
+                "deleted": True,
+            },
+        ],
+        id_field="sensor_id",
+    ) == [
+        {"runtime_sensor_id": 1, "timestamp": "2026-07-01T00:00:00Z", "v": 2},
+        {"sensor_id": 10, "timestamp": "2026-07-01T00:05:00Z", "v": 4},
+    ]
 
 
 def _entry(hass: HomeAssistant) -> MockConfigEntry:

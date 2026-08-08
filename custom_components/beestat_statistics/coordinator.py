@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from math import isfinite
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -613,11 +614,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 metadata_sync_success_at = now
             thermostat_rows = await self._client.async_read_id("thermostat")
             sensor_rows = await self._client.async_read_id("sensor")
-            thermostat_rows_tuple = tuple(
-                row for row in thermostat_rows if not row.get("deleted")
+            thermostat_rows_tuple = _effective_resource_rows(
+                thermostat_rows,
+                "thermostat_id",
+                "id",
             )
-            sensor_rows_tuple = tuple(
-                row for row in sensor_rows if not row.get("deleted")
+            sensor_rows_tuple = _effective_resource_rows(
+                sensor_rows,
+                "sensor_id",
+                "id",
             )
             config = build_beestat_config(
                 self.hass,
@@ -855,11 +860,17 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         local_tz = temporal_context.local_tz
         source_fetched_at = fetched_at or projected_at
         today = projected_at.astimezone(local_tz).date()
-        rows_tuple = tuple(row for row in rows if not row.get("deleted"))
-        thermostat_rows_tuple = tuple(
-            row for row in thermostat_rows if not row.get("deleted")
+        rows_tuple = _effective_summary_rows(rows)
+        thermostat_rows_tuple = _effective_resource_rows(
+            thermostat_rows,
+            "thermostat_id",
+            "id",
         )
-        sensor_rows_tuple = tuple(row for row in sensor_rows if not row.get("deleted"))
+        sensor_rows_tuple = _effective_resource_rows(
+            sensor_rows,
+            "sensor_id",
+            "id",
+        )
         config = build_beestat_config(
             self.hass,
             thermostat_rows_tuple,
@@ -1586,9 +1597,37 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
+
+
+def _effective_resource_rows(
+    rows: list[dict[str, Any]],
+    *id_fields: str,
+) -> tuple[dict[str, Any], ...]:
+    """Return one usable resource row per ID, with the last source row effective."""
+
+    effective: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        row_id = _row_int(row, *id_fields)
+        if row_id is not None:
+            effective[row_id] = row
+    return tuple(row for row in effective.values() if not row.get("deleted"))
+
+
+def _effective_summary_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Return one usable daily summary per identity, with the last row effective."""
+
+    effective: dict[tuple[int, date], dict[str, Any]] = {}
+    for row in rows:
+        thermostat_id = _row_int(row, "thermostat_id")
+        local_day = _parse_date(row.get("date"))
+        if thermostat_id is not None and local_day is not None:
+            effective[(thermostat_id, local_day)] = row
+    return tuple(row for row in effective.values() if not row.get("deleted"))
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -1613,6 +1652,7 @@ def _optional_bool(value: Any) -> bool | None:
 
 def _float_or_zero(value: Any) -> float:
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return 0.0
+    return parsed if isfinite(parsed) else 0.0

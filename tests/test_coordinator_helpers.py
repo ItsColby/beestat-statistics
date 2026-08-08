@@ -97,6 +97,57 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ),
             0.75,
         )
+        self.assertEqual(
+            self.coordinator._sum_fan_seconds(
+                [
+                    {"sum_fan": 3600},
+                    {"sum_fan": "NaN"},
+                    {"sum_fan": "Infinity"},
+                ]
+            ),
+            3600,
+        )
+
+    def test_cached_rows_use_one_last_effective_identity(self) -> None:
+        """Duplicate cloud identities cannot create duplicate entities or totals."""
+
+        thermostat_rows = self.coordinator._effective_resource_rows(
+            [
+                {"id": 1, "name": "Old"},
+                {"id": "invalid", "name": "Ignored"},
+                {"id": float("inf"), "name": "Unrepresentable"},
+                {"id": 1, "name": "Current"},
+                {"id": 2, "name": "Removed"},
+                {"id": 2, "deleted": True},
+                {"id": 3, "deleted": True},
+                {"id": 3, "name": "Restored"},
+            ],
+            "thermostat_id",
+            "id",
+        )
+        summary_rows = self.coordinator._effective_summary_rows(
+            [
+                {"thermostat_id": 1, "date": "2026-07-01", "sum_fan": 3600},
+                {"thermostat_id": 1, "date": "2026-07-01", "sum_fan": 7200},
+                {"thermostat_id": 2, "date": "2026-07-01", "sum_fan": 3600},
+                {"thermostat_id": 2, "date": "2026-07-01", "deleted": True},
+                {"thermostat_id": 3, "date": "2026-07-01", "deleted": True},
+                {"thermostat_id": 3, "date": "2026-07-01", "sum_fan": 1800},
+                {"thermostat_id": 1, "date": "invalid", "sum_fan": 9999},
+            ]
+        )
+
+        self.assertEqual(
+            thermostat_rows,
+            ({"id": 1, "name": "Current"}, {"id": 3, "name": "Restored"}),
+        )
+        self.assertEqual(
+            summary_rows,
+            (
+                {"thermostat_id": 1, "date": "2026-07-01", "sum_fan": 7200},
+                {"thermostat_id": 3, "date": "2026-07-01", "sum_fan": 1800},
+            ),
+        )
 
     def test_projection_change_ignores_local_date_without_sensitive_state(self) -> None:
         projected_at = datetime(2026, 7, 1, 1, tzinfo=UTC)

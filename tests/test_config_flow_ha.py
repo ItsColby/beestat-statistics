@@ -845,7 +845,10 @@ async def test_reauth_preserves_entry_when_account_identity_is_unavailable(
 ) -> None:
     """Test reauth cannot carry a stale fingerprint onto an unproven account."""
 
-    entry = _add_mock_entry(hass)
+    entry = _add_mock_entry(
+        hass,
+        data={**_add_mock_entry_data(), "future_data": {"preserve": True}},
+    )
     original_data = dict(entry.data)
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -1435,7 +1438,10 @@ async def test_reconfigure_flow_allows_blank_key_to_keep_current(
 ) -> None:
     """Test reconfigure can update connection data without retyping the key."""
 
-    entry = _add_mock_entry(hass)
+    entry = _add_mock_entry(
+        hass,
+        data={**_add_mock_entry_data(), "future_data": {"preserve": True}},
+    )
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
@@ -1469,6 +1475,7 @@ async def test_reconfigure_flow_allows_blank_key_to_keep_current(
     assert entry.data[CONF_API_KEY] == "old-key"
     assert entry.data[CONF_API_BASE] == "https://api.example.test/"
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
+    assert entry.data["future_data"] == {"preserve": True}
 
 
 async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(
@@ -1508,6 +1515,7 @@ async def test_reconfigure_flow_confirms_different_account(
             CONF_API_BASE: API_BASE,
             CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
             CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
+            "future_data": {"preserve": True},
         },
         options={
             CONF_POINT_LOOKBACK_DAYS: 30,
@@ -1518,6 +1526,7 @@ async def test_reconfigure_flow_confirms_different_account(
                     CONF_TEMPERATURE_ENTITY_ID: ("sensor.room_sensor_a_temperature"),
                 }
             ],
+            "future_option": {"preserve": True},
         },
     )
     result = await hass.config_entries.flow.async_init(
@@ -1549,11 +1558,13 @@ async def test_reconfigure_flow_confirms_different_account(
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_API_KEY] == "different-account-key"
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
+    assert entry.data["future_data"] == {"preserve": True}
     assert CONF_THERMOSTATS not in entry.data
     assert CONF_SENSORS not in entry.options
     assert entry.options == {
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
+        "future_option": {"preserve": True},
     }
 
 
@@ -2355,6 +2366,57 @@ async def test_options_flow_returns_to_source_scope_after_discovery_drift(
     }
 
 
+async def test_options_flow_returns_to_source_scope_after_inactive_drift(
+    hass: HomeAssistant,
+) -> None:
+    """Test a destructive preview expires when source activity changes."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "included_thermostat_ids": [],
+            "included_sensor_ids": [],
+        },
+    )
+    assert result["step_id"] == "source_scope_confirm"
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A", "inactive": True}],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope"
+    reload.assert_not_called()
+    assert entry.options == {
+        CONF_POINT_LOOKBACK_DAYS: 30,
+        CONF_SCAN_INTERVAL_SECONDS: 900,
+    }
+
+
 async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
     hass: HomeAssistant,
 ) -> None:
@@ -2415,6 +2477,57 @@ async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
     }
+
+
+async def test_options_flow_refreshes_source_scope_after_initial_inactive_drift(
+    hass: HomeAssistant,
+) -> None:
+    """Test activity-label changes are shown before scope submission."""
+
+    entry = _add_mock_entry(hass)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "source_scope"},
+    )
+
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            _configured_thermostat(
+                thermostat_id=1001,
+                name="Zone A",
+                slug="zone_a",
+            )
+        ],
+        sensors=[],
+        thermostat_rows=[{"id": 1001, "name": "Zone A", "inactive": True}],
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {
+                "included_thermostat_ids": ["1001"],
+                "included_sensor_ids": [],
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "source_scope"
+    thermostat_selector = next(iter(result["data_schema"].schema))
+    assert thermostat_selector.schema == "included_thermostat_ids"
+    assert "inactive" in str(result["data_schema"].schema[thermostat_selector].config)
+    reload.assert_not_called()
 
 
 async def test_options_flow_reconfirms_changed_scope_removal_count(

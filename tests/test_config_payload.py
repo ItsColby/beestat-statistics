@@ -73,6 +73,56 @@ class ConfigPayloadTest(unittest.TestCase):
             {"id": 1, "filter_changed_at": "new"},
         )
 
+    def test_repeated_override_id_uses_last_row_consistently(self) -> None:
+        options = {
+            "thermostats": [
+                {"id": 1, "filter_changed_at": "shadowed", "future": "keep"},
+                {"id": 1, "filter_changed_at": "effective"},
+            ]
+        }
+
+        self.assertEqual(
+            config_payload.effective_thermostat_override({}, options, 1),
+            {"id": 1, "filter_changed_at": "effective"},
+        )
+
+        updated = config_payload.update_thermostat_override_options(
+            {},
+            options,
+            1,
+            {"filter_changed_date": "2026-08-08"},
+        )
+
+        self.assertEqual(updated["thermostats"][0], options["thermostats"][0])
+        self.assertEqual(
+            updated["thermostats"][1],
+            {
+                "id": 1,
+                "filter_changed_at": "effective",
+                "filter_changed_date": "2026-08-08",
+            },
+        )
+
+    def test_invalid_legacy_row_does_not_block_targeted_override_update(self) -> None:
+        """Malformed unrelated rows remain stored but cannot crash an edit."""
+
+        options = {
+            "thermostats": [
+                {"id": 1, "filter_notice_days": 7},
+                {"id": "invalid", "future": {"preserve": True}},
+            ]
+        }
+
+        updated = config_payload.update_thermostat_override_options(
+            {},
+            options,
+            1,
+            {"filter_notice_days": 14},
+        )
+
+        self.assertEqual(updated["thermostats"][0]["filter_notice_days"], 14)
+        self.assertEqual(updated["thermostats"][1], options["thermostats"][1])
+
     def test_split_entry_payload_normalizes_filter_changed_date(self) -> None:
         data, _options = config_payload.split_entry_payload(
             {
@@ -188,6 +238,15 @@ class ConfigPayloadTest(unittest.TestCase):
                 "scan_interval_seconds": 300,
             },
         )
+        self.assertEqual(
+            config_payload.entry_options_from_yaml(
+                {
+                    "point_lookback_days": 45,
+                    "scan_interval": timedelta(days=1000),
+                }
+            )["scan_interval_seconds"],
+            31_536_000,
+        )
 
     def test_merge_import_options_preserves_ui_mapping_options(self) -> None:
         self.assertEqual(
@@ -273,6 +332,31 @@ class ConfigPayloadTest(unittest.TestCase):
                         "filter_changed_date": "2026-06-18",
                     },
                 ],
+            },
+        )
+
+    def test_merge_import_options_ignores_invalid_saved_override_id(self) -> None:
+        """A malformed unrelated saved row cannot block a valid YAML import."""
+
+        self.assertEqual(
+            config_payload.merge_import_options(
+                {
+                    "thermostats": [
+                        {"id": "invalid", "future": {"preserve": True}},
+                        {"id": 1, "filter_changed_date": "2026-07-05"},
+                    ]
+                },
+                {"thermostats": [{"id": 1, "climate_entity_id": "climate.main"}]},
+                {},
+            ),
+            {
+                "thermostats": [
+                    {
+                        "id": 1,
+                        "climate_entity_id": "climate.main",
+                        "filter_changed_date": "2026-07-05",
+                    }
+                ]
             },
         )
 
@@ -374,6 +458,26 @@ class ConfigPayloadTest(unittest.TestCase):
                 "point_lookback_days": 30,
                 "scan_interval_seconds": 600,
             },
+        )
+
+    def test_migrate_entry_payload_bounds_malformed_timing_options(self) -> None:
+        """Persisted timing corruption degrades to supported bounded values."""
+
+        _data, options = config_payload.migrate_entry_payload(
+            {"api_key": "key"},
+            {
+                "point_lookback_days": 1000000,
+                "scan_interval_seconds": "invalid",
+            },
+        )
+
+        self.assertEqual(options["point_lookback_days"], 366)
+        self.assertEqual(options["scan_interval_seconds"], 21600)
+        self.assertEqual(config_payload.normalize_point_lookback_days("invalid"), 45)
+        self.assertEqual(config_payload.normalize_scan_interval_seconds(120), 300)
+        self.assertEqual(
+            config_payload.normalize_scan_interval_seconds(10**100),
+            31_536_000,
         )
 
     def test_runtime_config_data_prefers_ui_mapping_options(self) -> None:

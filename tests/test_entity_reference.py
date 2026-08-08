@@ -246,6 +246,32 @@ class EntityReferenceTest(unittest.TestCase):
             "climate.zone_a",
         )
 
+    def test_configured_references_use_effective_last_override_row(self) -> None:
+        shadowed = {
+            "registry_entry_id": "registry-a",
+            "domain": "climate",
+            "platform": "homekit_controller",
+            "unique_id": "shadowed-source",
+        }
+        effective = {
+            "registry_entry_id": "registry-b",
+            "domain": "climate",
+            "platform": "homekit_controller",
+            "unique_id": "effective-source",
+        }
+
+        self.assertEqual(
+            entity_reference.configured_entity_references(
+                {
+                    "thermostats": [
+                        {"id": 1001, "climate_entity_ref": shadowed},
+                        {"id": 1001, "climate_entity_ref": effective},
+                    ]
+                }
+            ),
+            (effective,),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
