@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from math import fsum, isfinite
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -613,11 +614,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 metadata_sync_success_at = now
             thermostat_rows = await self._client.async_read_id("thermostat")
             sensor_rows = await self._client.async_read_id("sensor")
-            thermostat_rows_tuple = tuple(
-                row for row in thermostat_rows if not row.get("deleted")
+            thermostat_rows_tuple = _effective_resource_rows(
+                thermostat_rows,
+                "thermostat_id",
+                "id",
             )
-            sensor_rows_tuple = tuple(
-                row for row in sensor_rows if not row.get("deleted")
+            sensor_rows_tuple = _effective_resource_rows(
+                sensor_rows,
+                "sensor_id",
+                "id",
             )
             config = build_beestat_config(
                 self.hass,
@@ -855,11 +860,17 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         local_tz = temporal_context.local_tz
         source_fetched_at = fetched_at or projected_at
         today = projected_at.astimezone(local_tz).date()
-        rows_tuple = tuple(row for row in rows if not row.get("deleted"))
-        thermostat_rows_tuple = tuple(
-            row for row in thermostat_rows if not row.get("deleted")
+        rows_tuple = _effective_summary_rows(rows)
+        thermostat_rows_tuple = _effective_resource_rows(
+            thermostat_rows,
+            "thermostat_id",
+            "id",
         )
-        sensor_rows_tuple = tuple(row for row in sensor_rows if not row.get("deleted"))
+        sensor_rows_tuple = _effective_resource_rows(
+            sensor_rows,
+            "sensor_id",
+            "id",
+        )
         config = build_beestat_config(
             self.hass,
             thermostat_rows_tuple,
@@ -1058,7 +1069,8 @@ def _runtime_hours_since(
     if not matched_rows:
         return 0.0
     if change_day_baseline_seconds is None:
-        return round(_sum_fan_seconds(matched_rows) / 3600, 1)
+        total_seconds = _sum_fan_seconds(matched_rows)
+        return round(total_seconds / 3600, 1) if total_seconds is not None else None
     changed_day_rows = [
         row for row in matched_rows if _parse_date(row.get("date")) == changed_date
     ]
@@ -1068,11 +1080,14 @@ def _runtime_hours_since(
         if (row_date := _parse_date(row.get("date"))) is not None
         and row_date > changed_date
     ]
-    changed_day_seconds = max(
-        _sum_fan_seconds(changed_day_rows) - change_day_baseline_seconds,
-        0.0,
-    )
-    total_seconds = changed_day_seconds + _sum_fan_seconds(later_rows)
+    changed_day_total = _sum_fan_seconds(changed_day_rows)
+    later_total = _sum_fan_seconds(later_rows)
+    if changed_day_total is None or later_total is None:
+        return None
+    changed_day_seconds = max(changed_day_total - change_day_baseline_seconds, 0.0)
+    total_seconds = _finite_sum((changed_day_seconds, later_total))
+    if total_seconds is None:
+        return None
     return round(total_seconds / 3600, 1)
 
 
@@ -1142,11 +1157,13 @@ def _raw_filter_boundary(
     if source_data_end < click_bucket:
         return None
     effective_at = _nearest_five_minutes(changed_at)
-    baseline_seconds = sum(
+    baseline_seconds = _finite_sum(
         _float_or_zero(row.get("fan"))
         for timestamp, row in parsed_rows
         if timestamp < effective_at
     )
+    if baseline_seconds is None:
+        return None
     return RawFilterBoundary(
         baseline_seconds=baseline_seconds,
         effective_at=effective_at,
@@ -1188,11 +1205,22 @@ def _recent_runtime_hours_per_day(
     ]
     if not matched_rows:
         return None
-    return round((_sum_fan_seconds(matched_rows) / 3600) / len(matched_rows), 2)
+    total_seconds = _sum_fan_seconds(matched_rows)
+    if total_seconds is None:
+        return None
+    return round((total_seconds / 3600) / len(matched_rows), 2)
 
 
-def _sum_fan_seconds(rows: list[dict[str, Any]]) -> float:
-    return sum(_float_or_zero(row.get("sum_fan")) for row in rows)
+def _sum_fan_seconds(rows: list[dict[str, Any]]) -> float | None:
+    return _finite_sum(_float_or_zero(row.get("sum_fan")) for row in rows)
+
+
+def _finite_sum(values: Iterable[float]) -> float | None:
+    try:
+        total = fsum(values)
+    except OverflowError:
+        return None
+    return total if isfinite(total) else None
 
 
 def _thermostat_row(
@@ -1586,9 +1614,37 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
+
+
+def _effective_resource_rows(
+    rows: list[dict[str, Any]],
+    *id_fields: str,
+) -> tuple[dict[str, Any], ...]:
+    """Return one usable resource row per ID, with the last source row effective."""
+
+    effective: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        row_id = _row_int(row, *id_fields)
+        if row_id is not None:
+            effective[row_id] = row
+    return tuple(row for row in effective.values() if not row.get("deleted"))
+
+
+def _effective_summary_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Return one usable daily summary per identity, with the last row effective."""
+
+    effective: dict[tuple[int, date], dict[str, Any]] = {}
+    for row in rows:
+        thermostat_id = _row_int(row, "thermostat_id")
+        local_day = _parse_date(row.get("date"))
+        if thermostat_id is not None and local_day is not None:
+            effective[(thermostat_id, local_day)] = row
+    return tuple(row for row in effective.values() if not row.get("deleted"))
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -1613,6 +1669,7 @@ def _optional_bool(value: Any) -> bool | None:
 
 def _float_or_zero(value: Any) -> float:
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return 0.0
+    return parsed if isfinite(parsed) else 0.0

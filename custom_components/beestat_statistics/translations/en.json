@@ -182,6 +182,7 @@
     "abort": {
       "already_configured": "Beestat Statistics is already configured.",
       "account_identity_unavailable": "Beestat returned no identifiable thermostats, so the account could not be configured.",
+      "configuration_changed": "The Beestat configuration changed while this flow was open. Start the update again so the newer configuration is preserved.",
       "reauth_successful": "Beestat Statistics was reauthenticated.",
       "reconfigure_successful": "Beestat Statistics was reconfigured.",
       "yaml_connection_unavailable": "The Beestat YAML connection could not be validated. Check the HTTPS API URL and API key.",

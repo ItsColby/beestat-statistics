@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 import types
 import unittest
@@ -64,6 +65,11 @@ class StatisticsBuilderTest(unittest.TestCase):
     def test_runtime_statistics_are_cumulative_by_local_day(self) -> None:
         rows = [
             {
+                "thermostat_id": float("inf"),
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 9999,
+            },
+            {
                 "thermostat_id": 1,
                 "date": "2026-07-01",
                 "sum_compressor_cool_1": 3600,
@@ -109,6 +115,69 @@ class StatisticsBuilderTest(unittest.TestCase):
             ],
         )
 
+    def test_summary_statistics_use_last_daily_row_and_reject_nonfinite_values(
+        self,
+    ) -> None:
+        """Duplicate starts and non-finite numbers must not reach Recorder."""
+
+        rows = [
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 3600,
+                "heating_degree_days": 1,
+                "avg_indoor_humidity": 45,
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 7200,
+                "heating_degree_days": "Infinity",
+                "avg_indoor_humidity": "NaN",
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-02",
+                "sum_compressor_cool_1": 3600,
+            },
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-02",
+                "deleted": True,
+            },
+        ]
+
+        runtime = statistics_builder.build_runtime_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+        summary_sum = statistics_builder.build_summary_sum_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+        summary_mean = statistics_builder.build_summary_mean_statistics(
+            rows,
+            self.local_tz,
+            self.config,
+        )
+
+        cool = _series(runtime, "beestat:zone_a_cool_runtime_hours")
+        heating_degree_days = _series(
+            summary_sum,
+            "beestat:zone_a_heating_degree_days",
+        )
+        self.assertEqual(len(cool.statistics), 1)
+        self.assertEqual(cool.statistics[0]["state"], 2.0)
+        self.assertEqual(heating_degree_days.statistics[0]["state"], 0.0)
+        self.assertFalse(
+            any(
+                item.statistic_id == "beestat:zone_a_indoor_humidity"
+                for item in summary_mean
+            )
+        )
+
     def test_sensor_statistics_group_points_by_local_day(self) -> None:
         rows_by_id = {
             10: [
@@ -128,6 +197,16 @@ class StatisticsBuilderTest(unittest.TestCase):
                     "temperature": 68,
                 },
                 {"sensor_id": 10, "timestamp": "not-a-timestamp", "temperature": 120},
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-02T05:30:00Z",
+                    "temperature": "NaN",
+                },
+                {
+                    "sensor_id": 10,
+                    "timestamp": "2026-07-02T06:30:00Z",
+                    "temperature": "Infinity",
+                },
             ]
         }
 
@@ -225,6 +304,145 @@ class StatisticsBuilderTest(unittest.TestCase):
                 "beestat:zone_a_heating_degree_days",
                 "beestat:zone_a_cooling_degree_days",
             ),
+        )
+
+    def test_complete_output_has_unique_series_and_starts(self) -> None:
+        """Every Recorder write identity is unique after normalized construction."""
+
+        series = statistics_builder.build_statistics(
+            [
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-01",
+                    "sum_compressor_cool_1": 3600,
+                    "sum_compressor_heat_1": 1800,
+                    "sum_fan": 3600,
+                    "sum_heating_degree_days": 1,
+                    "sum_cooling_degree_days": 2,
+                    "avg_indoor_humidity": 45,
+                    "avg_outdoor_temperature": 80,
+                    "avg_outdoor_humidity": 55,
+                }
+            ],
+            {
+                1: [
+                    {
+                        "thermostat_id": 1,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "setpoint_heat": 68,
+                        "setpoint_cool": 74,
+                    }
+                ]
+            },
+            {
+                10: [
+                    {
+                        "sensor_id": 10,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "temperature": 72,
+                    }
+                ]
+            },
+            self.local_tz,
+            self.config,
+        )
+
+        statistic_ids = [item.statistic_id for item in series]
+        self.assertEqual(len(statistic_ids), len(set(statistic_ids)))
+        for item in series:
+            starts = [row["start"] for row in item.statistics]
+            self.assertEqual(len(starts), len(set(starts)))
+
+    def test_derived_arithmetic_never_emits_nonfinite_values(self) -> None:
+        """Finite source values cannot overflow into invalid Recorder rows."""
+
+        series = statistics_builder.build_statistics(
+            [
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-01",
+                    "sum_compressor_cool_1": 1e308,
+                    "sum_compressor_cool_2": 1e308,
+                    "sum_heating_degree_days": 1e308,
+                },
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-02",
+                    "sum_compressor_cool_1": 3600,
+                    "sum_heating_degree_days": 1e308,
+                },
+            ],
+            {
+                1: [
+                    {
+                        "thermostat_id": 1,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "setpoint_heat": 1e308,
+                    },
+                    {
+                        "thermostat_id": 1,
+                        "timestamp": "2026-07-01T12:05:00Z",
+                        "setpoint_heat": 1e308,
+                    },
+                ]
+            },
+            {
+                10: [
+                    {
+                        "sensor_id": 10,
+                        "timestamp": "2026-07-01T12:00:00Z",
+                        "temperature": 1e308,
+                    },
+                    {
+                        "sensor_id": 10,
+                        "timestamp": "2026-07-01T12:05:00Z",
+                        "temperature": 1e308,
+                    },
+                ]
+            },
+            self.local_tz,
+            self.config,
+        )
+
+        cool_runtime = _series(series, "beestat:zone_a_cool_runtime_hours")
+        heat_setpoint = _series(series, "beestat:zone_a_heat_setpoint")
+        room_temperature = _series(series, "beestat:room_sensor_a_temperature")
+        self.assertEqual(len(cool_runtime.statistics), 2)
+        self.assertEqual(heat_setpoint.statistics[0]["mean"], 1e308)
+        self.assertEqual(room_temperature.statistics[0]["mean"], 1e308)
+        for item in series:
+            for row in item.statistics:
+                for key in ("state", "sum", "mean", "min", "max"):
+                    if key in row:
+                        self.assertTrue(math.isfinite(row[key]))
+
+    def test_cumulative_seed_overflow_truncates_the_invalid_tail(self) -> None:
+        """A seed offset must stop before an unrepresentable Recorder value."""
+
+        start = datetime(2026, 7, 1, tzinfo=self.local_tz)
+        series = [
+            statistics_builder.StatisticsSeries(
+                metadata={"statistic_id": "beestat:test", "has_sum": True},
+                statistics=[
+                    {"start": start, "state": 1e307, "sum": 1e307},
+                    {"start": start.replace(day=2), "state": 1.7e308, "sum": 1.7e308},
+                ],
+                source_rows=2,
+            )
+        ]
+        seeds = {
+            "beestat:test": statistics_builder.CumulativeStatisticSeed(
+                start=start.replace(day=30),
+                state=1e307,
+                sum=1e307,
+            )
+        }
+
+        adjusted = statistics_builder.apply_cumulative_seeds(series, seeds)
+
+        self.assertEqual(
+            adjusted[0].statistics,
+            [{"start": start, "state": 2e307, "sum": 2e307}],
         )
 
     def test_apply_cumulative_seeds_offsets_partial_window_series(self) -> None:

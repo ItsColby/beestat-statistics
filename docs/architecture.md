@@ -50,7 +50,14 @@
   per-source overrides before reload so numeric resource IDs cannot silently
   cross the account boundary; timing options remain intact. Previously imported
   Recorder statistics remain, so the confirmation must also explain the possible
-  stable-slug history overlap.
+  stable-slug history overlap. Reconfigure and reauthentication snapshot the
+  config-entry owners they retain across validation or confirmation. If another
+  flow or external update changes data that the flow would write—or options that
+  an account replacement would write—the stale flow aborts without saving or
+  scheduling a reload; same-account connection updates leave concurrent options
+  untouched. Awaited YAML connection validation applies the same data-owner
+  guard, then reconciles its declared option fields with current saved options
+  immediately before saving.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client
   or exposing the API key to transport. A legacy invalid or insecure entry
@@ -63,6 +70,10 @@
   than maintaining a second list of IDs: missing flags preserve open-world
   discovery, `enabled: false` is an explicit exclusion, and `enabled: true`
   deliberately includes a source Beestat reports inactive.
+- Setup and migration normalize persisted point-history and acquisition timing
+  through the same bounds as the options UI. Malformed current-version storage
+  therefore falls back safely without requiring a schema bump; valid cadence,
+  including the six-hour default, is preserved.
 - When YAML remains the declarative thermostat-mapping owner, later imports
   rebuild the effective option rows from YAML while preserving a native filter
   date and click-time runtime boundary by Beestat source ID. An explicit YAML
@@ -74,7 +85,14 @@
 - Source selectors combine current raw API discovery, the effective runtime
   model, and saved overrides. This keeps excluded and temporarily missing
   resources recoverable while preserving unknown saved rows across discovery
-  drift. Excluding a currently active source requires a confirmation.
+  drift. Excluding a currently active source requires a confirmation. Both the
+  initial form and destructive confirmation retain the complete displayed
+  source signature, including labels and inactive state, and return to the
+  source form if that evidence changes before save.
+- Legacy repeated override IDs follow one contract everywhere: the last row is
+  effective. Runtime construction, forms, Repairs, device-conflict checks, and
+  targeted option mutations all inspect or update that same row while retaining
+  unknown fields and untouched legacy rows.
 - The integration remains one config entry and one account-wide coordinator.
   Config subentries or multiple account entries are not justified by the
   current API/runtime ownership model and must not be introduced without a
@@ -189,10 +207,10 @@
   listeners, and cumulative Recorder seed logic.
 - `coordinator.py`: runtime sync/readback, Beestat metadata derivation, cloud
   profile/alert/filter runtime status, and coordinator diagnostic fields.
-- `config_flow.py`, `config_payload.py`, `entry_options.py`,
+- `config_flow.py`, `config_payload.py`, `config_rows.py`, `entry_options.py`,
   `config_model.py`, `issues.py`: UI setup, reconfigure, reauth, options, YAML
-  import conversion, validation, actionable configuration Repairs, and runtime
-  config modeling.
+  import conversion, effective-row identity, validation, actionable
+  configuration Repairs, and runtime config modeling.
 - `sensor.py`, `binary_sensor.py`, `button.py`, `date.py`, `entity.py`: Home
   Assistant entities and device attachment behavior.
 - `statistics_builder.py`: conversion of Beestat rows into Home Assistant
@@ -211,16 +229,30 @@
 - API parsing, authentication mechanics, request safety limits, normalization,
   diagnostics redaction, unique-ID composition, statistics metadata, and
   cumulative Recorder math are implementation invariants, not preferences.
+- Recorder normalization admits only finite numeric values. Derived means,
+  cumulative totals, and Recorder seed offsets must also remain representable;
+  an invalid cumulative contribution ends that series before any invalid row is
+  written. Normalization produces at most one summary row per thermostat and
+  local date. If a response repeats that
+  identity, its last row is effective; a winning deletion omits it. Runtime
+  points use their source row ID, or resource ID plus timestamp fallback, under
+  the same rule before daily aggregation. Globally unique configured slugs and
+  disjoint statistic suffixes then keep every Recorder series/start identity
+  unique and prevent double-counted daily contributions.
+- Cached thermostat and room-sensor metadata likewise gives the last source row
+  ownership of each Beestat ID. A winning deletion omits that identity; a later
+  active row restores it. Runtime models, mapping, diagnostics, and entity
+  unique IDs therefore consume one shared source identity.
 - Remote response bodies and arbitrary API error payload details must not enter
   exceptions, logs, entity attributes, diagnostics, or exception chains. Keep
   HA-visible failures bounded to the operation, HTTP status, and safe category.
 - Source-scope changes may alter future entity exposure and import membership,
   but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
   units, statistic metadata, or previously imported Recorder history.
-- Capture the discovered source-ID set when the source-scope form is shown. If
-  discovery changes before the first submission, show the refreshed form; if
-  it changes after a destructive preview, show the refreshed source set or
-  removal count before accepting the change.
+- Capture the complete displayed source signature when the source-scope form is
+  shown. If an ID, label, or inactive state changes before the first submission,
+  show the refreshed form; if it changes after a destructive preview, show the
+  refreshed source set or removal count before accepting the change.
 - Updating source scope must preserve mapping, filter, and statistic-capability
   fields on known resources and preserve unknown saved overrides unchanged.
 - Disabled source overrides are ignored by mapping-domain and missing-entity

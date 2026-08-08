@@ -6,8 +6,10 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from math import isfinite
 from typing import Any
 
+from .config_rows import effective_override_items
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
@@ -36,6 +38,9 @@ from .const import (
     DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
     DEFAULT_FILTER_MAX_AGE_DAYS,
     DEFAULT_FILTER_NOTICE_DAYS,
+    MAX_FILTER_LIFETIME_RUNTIME_HOURS,
+    MAX_FILTER_MAX_AGE_DAYS,
+    MAX_FILTER_NOTICE_DAYS,
     STATISTIC_UNIT_CLASS_TEMPERATURE,
     STATISTIC_UNIT_CLASS_UNITLESS,
     UNIT_FAHRENHEIT,
@@ -303,7 +308,7 @@ def configured_override_entity_ids(
     """Return entity IDs explicitly referenced by advanced override config."""
 
     references: list[str] = []
-    for item in _override_items(config_data.get(CONF_THERMOSTATS)):
+    for item in effective_override_items(config_data.get(CONF_THERMOSTATS)):
         if _is_disabled(item):
             continue
         references.extend(
@@ -323,7 +328,7 @@ def configured_override_entity_ids(
                 )
             )
         )
-    for item in _override_items(config_data.get(CONF_SENSORS)):
+    for item in effective_override_items(config_data.get(CONF_SENSORS)):
         if _is_disabled(item):
             continue
         references.extend(
@@ -355,7 +360,7 @@ def configured_unresolved_entity_ids(
         (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS),
         (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS),
     ):
-        for item in _override_items(config_data.get(key)):
+        for item in effective_override_items(config_data.get(key)):
             if _is_disabled(item):
                 continue
             for field in fields:
@@ -455,7 +460,7 @@ def _override_entity_domain_errors(
     item_type: str,
 ) -> tuple[str, ...]:
     errors: list[str] = []
-    for item in _override_items(overrides):
+    for item in effective_override_items(overrides):
         if _is_disabled(item):
             continue
         item_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
@@ -576,17 +581,23 @@ def _thermostat_from_row(
         filter_change_boundary_source_data_end=_aware_datetime_or_none(
             override.get(CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END)
         ),
-        filter_lifetime_runtime_hours=_float_or_default(
+        filter_lifetime_runtime_hours=_bounded_float_or_default(
             override.get(CONF_FILTER_LIFETIME_RUNTIME_HOURS),
             DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
+            minimum=1,
+            maximum=MAX_FILTER_LIFETIME_RUNTIME_HOURS,
         ),
-        filter_max_age_days=_int_or_default(
+        filter_max_age_days=_bounded_int_or_default(
             override.get(CONF_FILTER_MAX_AGE_DAYS),
             DEFAULT_FILTER_MAX_AGE_DAYS,
+            minimum=1,
+            maximum=MAX_FILTER_MAX_AGE_DAYS,
         ),
-        filter_notice_days=_int_or_default(
+        filter_notice_days=_bounded_int_or_default(
             override.get(CONF_FILTER_NOTICE_DAYS),
             DEFAULT_FILTER_NOTICE_DAYS,
+            minimum=0,
+            maximum=MAX_FILTER_NOTICE_DAYS,
         ),
         climate_entity_id=_string_or_none(override.get(CONF_CLIMATE_ENTITY_ID))
         or (local.climate_entity_id if local else None),
@@ -1147,7 +1158,7 @@ def _filter_changed_entity_id(
 
 def _override_map(value: Any) -> dict[int, dict[str, Any]]:
     overrides: dict[int, dict[str, Any]] = {}
-    for item in _override_items(value):
+    for item in effective_override_items(value):
         item_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
         if item_id is None:
             continue
@@ -1205,12 +1216,6 @@ def _configured_entity_id(
         if entity_reference_field(field) in item:
             return _string_or_none(item.get(field))
     return _string_or_none(item.get(field))
-
-
-def _override_items(value: Any) -> tuple[dict[str, Any], ...]:
-    if not isinstance(value, list):
-        return ()
-    return tuple(item for item in value if isinstance(item, dict))
 
 
 def _sensor_supports(
@@ -1318,7 +1323,7 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
 
@@ -1340,19 +1345,26 @@ def _date_or_none(value: Any) -> date | None:
         return None
 
 
-def _float_or_default(value: Any, default: float) -> float:
+def _bounded_float_or_default(
+    value: Any,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return default
+    return parsed if isfinite(parsed) and minimum <= parsed <= maximum else default
 
 
 def _nonnegative_float_or_none(value: Any) -> float | None:
     try:
         parsed = float(value)
-    except TypeError, ValueError:
+    except OverflowError, TypeError, ValueError:
         return None
-    return parsed if parsed >= 0 else None
+    return parsed if isfinite(parsed) and parsed >= 0 else None
 
 
 def _aware_datetime_or_none(value: Any) -> datetime | None:
@@ -1370,11 +1382,18 @@ def _aware_datetime_or_none(value: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _int_or_default(value: Any, default: int) -> int:
+def _bounded_int_or_default(
+    value: Any,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
     try:
-        return int(value)
-    except TypeError, ValueError:
+        parsed = int(value)
+    except OverflowError, TypeError, ValueError:
         return default
+    return parsed if minimum <= parsed <= maximum else default
 
 
 def _override_bool(

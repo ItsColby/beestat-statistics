@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
 from functools import partial
+from math import isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -75,6 +76,8 @@ from .config_payload import (
     entry_options_from_yaml,
     entry_runtime_config_data,
     migrate_entry_payload,
+    normalize_point_lookback_days,
+    normalize_scan_interval_seconds,
 )
 from .configuration import configuration_response
 from .const import (
@@ -114,7 +117,6 @@ from .const import (
     DEFAULT_FILTER_NOTICE_DAYS,
     DEFAULT_POINT_LOOKBACK_DAYS,
     DEFAULT_SCAN_INTERVAL,
-    DEFAULT_SCAN_INTERVAL_SECONDS,
     DEFAULT_SUMMARY_OVERLAP_DAYS,
     DOMAIN,
     MAX_FILTER_LIFETIME_RUNTIME_HOURS,
@@ -122,7 +124,6 @@ from .const import (
     MAX_FILTER_NOTICE_DAYS,
     MAX_POINT_LOOKBACK_DAYS,
     MAX_WINDOW_DAYS,
-    MIN_SCAN_INTERVAL_SECONDS,
     SERVICE_GET_CONFIGURATION,
     SERVICE_IMPORT_STATISTICS,
     SERVICE_REBUILD_STATISTICS,
@@ -2125,22 +2126,29 @@ def _row_start_datetime(row: Mapping[str, Any]) -> datetime | None:
     elif value is None:
         return None
     else:
-        try:
-            parsed = datetime.fromtimestamp(float(value), UTC)
-        except TypeError, ValueError, OSError:
+        timestamp = _row_float(value)
+        if timestamp is None:
             return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+        try:
+            parsed = datetime.fromtimestamp(timestamp, UTC)
+        except OverflowError, OSError, ValueError:
+            return None
+    try:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except OverflowError, OSError, ValueError:
+        return None
 
 
 def _row_float(value: Any) -> float | None:
     if value is None or value in ("", "unknown", "unavailable"):
         return None
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return None
+    return parsed if isfinite(parsed) else None
 
 
 def _format_day(value: dt_date | None) -> str | None:
@@ -2148,23 +2156,12 @@ def _format_day(value: dt_date | None) -> str | None:
 
 
 def _entry_point_lookback_days(entry: BeestatStatisticsConfigEntry) -> int:
-    return int(
-        entry.options.get(
-            CONF_POINT_LOOKBACK_DAYS,
-            DEFAULT_POINT_LOOKBACK_DAYS,
-        )
-    )
+    return normalize_point_lookback_days(entry.options.get(CONF_POINT_LOOKBACK_DAYS))
 
 
 def _entry_scan_interval_seconds(entry: BeestatStatisticsConfigEntry) -> int:
-    return max(
-        int(
-            entry.options.get(
-                CONF_SCAN_INTERVAL_SECONDS,
-                DEFAULT_SCAN_INTERVAL_SECONDS,
-            )
-        ),
-        MIN_SCAN_INTERVAL_SECONDS,
+    return normalize_scan_interval_seconds(
+        entry.options.get(CONF_SCAN_INTERVAL_SECONDS)
     )
 
 
@@ -2211,7 +2208,7 @@ def _row_int(row: dict[str, Any], *fields: str) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
 
@@ -2249,7 +2246,7 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
             )
         deduped[key] = row
     return sorted(
-        deduped.values(),
+        (row for row in deduped.values() if not row.get("deleted")),
         key=lambda row: (str(row.get("timestamp", "")), str(row.get(id_field, ""))),
     )
 

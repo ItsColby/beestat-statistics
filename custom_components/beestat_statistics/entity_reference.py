@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .config_rows import effective_override_items
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_CLIMATE_ENTITY_REF,
@@ -205,11 +206,8 @@ def configured_entity_references(
         (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS),
         (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS),
     ):
-        value = config_data.get(key)
-        if not isinstance(value, list):
-            continue
-        for item in value:
-            if not isinstance(item, Mapping) or item.get("enabled") is False:
+        for item in effective_override_items(config_data.get(key)):
+            if item.get("enabled") is False:
                 continue
             for field in fields:
                 reference = item.get(entity_reference_field(field))

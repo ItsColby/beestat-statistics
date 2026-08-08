@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
+from math import fsum, isfinite
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -85,10 +86,14 @@ def apply_cumulative_seeds(
         stats: list[dict[str, Any]] = []
         for row in item.statistics:
             updated = dict(row)
-            if (state := _as_float(updated.get("state"))) is not None:
-                updated["state"] = round(seed.state + state, 6)
-            if (sum_value := _as_float(updated.get("sum"))) is not None:
-                updated["sum"] = round(seed.sum + sum_value, 6)
+            state = _as_float(updated.get("state"))
+            sum_value = _as_float(updated.get("sum"))
+            seeded_state = _finite_add(seed.state, state)
+            seeded_sum = _finite_add(seed.sum, sum_value)
+            if seeded_state is None or seeded_sum is None:
+                break
+            updated["state"] = round(seeded_state, 6)
+            updated["sum"] = round(seeded_sum, 6)
             stats.append(updated)
 
         adjusted.append(
@@ -136,7 +141,11 @@ def build_runtime_statistics(
             total_hours = 0.0
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
-                total_hours += _seconds_for_fields(row, fields) / 3600
+                daily_hours = _hours_for_fields(row, fields)
+                next_total = _finite_add(total_hours, daily_hours)
+                if next_total is None:
+                    break
+                total_hours = next_total
                 stats.append(
                     {
                         "start": _local_midnight(local_day, local_tz),
@@ -183,7 +192,10 @@ def build_summary_sum_statistics(
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
                 value = _as_float(row.get(spec.field)) or 0.0
-                total += value
+                next_total = _finite_add(total, value)
+                if next_total is None:
+                    break
+                total = next_total
                 stats.append(
                     {
                         "start": _local_midnight(local_day, local_tz),
@@ -292,10 +304,13 @@ def build_thermostat_point_statistics(
             stats: list[dict[str, Any]] = []
             for local_day in sorted(grouped):
                 values = grouped[local_day]
+                mean = _finite_mean(values)
+                if mean is None:
+                    continue
                 stats.append(
                     {
                         "start": _local_midnight(local_day, local_tz),
-                        "mean": round(sum(values) / len(values), 2),
+                        "mean": round(mean, 2),
                         "min": round(min(values), 2),
                         "max": round(max(values), 2),
                     }
@@ -344,10 +359,13 @@ def build_sensor_statistics(
         stats: list[dict[str, Any]] = []
         for local_day in sorted(grouped):
             values = grouped[local_day]
+            mean = _finite_mean(values)
+            if mean is None:
+                continue
             stats.append(
                 {
                     "start": _local_midnight(local_day, local_tz),
-                    "mean": round(sum(values) / len(values), 2),
+                    "mean": round(mean, 2),
                     "min": round(min(values), 2),
                     "max": round(max(values), 2),
                 }
@@ -382,16 +400,21 @@ def _parse_summary_day(row: dict[str, Any]) -> date:
 def _summary_rows_by_thermostat(
     summary_rows: list[dict[str, Any]],
 ) -> dict[int, list[tuple[date, dict[str, Any]]]]:
-    rows_by_thermostat: dict[int, list[tuple[date, dict[str, Any]]]] = {}
+    rows_by_thermostat: dict[int, dict[date, dict[str, Any]]] = {}
     for row in summary_rows:
         thermostat_id = _as_int(row.get("thermostat_id"))
         local_day = _parse_summary_day_or_none(row)
         if thermostat_id is None or local_day is None:
             continue
-        rows_by_thermostat.setdefault(thermostat_id, []).append((local_day, row))
-    for rows in rows_by_thermostat.values():
-        rows.sort(key=lambda item: item[0].isoformat())
-    return rows_by_thermostat
+        rows_by_thermostat.setdefault(thermostat_id, {})[local_day] = row
+    return {
+        thermostat_id: sorted(
+            (local_day, row)
+            for local_day, row in rows.items()
+            if not row.get("deleted")
+        )
+        for thermostat_id, rows in rows_by_thermostat.items()
+    }
 
 
 def _parse_summary_day_or_none(row: dict[str, Any]) -> date | None:
@@ -421,17 +444,40 @@ def _local_midnight(local_day: date, local_tz: ZoneInfo) -> datetime:
     return datetime.combine(local_day, time.min, local_tz)
 
 
-def _seconds_for_fields(row: dict[str, Any], fields: tuple[str, ...]) -> float:
-    return sum(_as_float(row.get(field)) or 0.0 for field in fields)
+def _hours_for_fields(
+    row: dict[str, Any],
+    fields: tuple[str, ...],
+) -> float | None:
+    try:
+        hours = fsum((_as_float(row.get(field)) or 0.0) / 3600 for field in fields)
+    except OverflowError:
+        return None
+    return hours if isfinite(hours) else None
+
+
+def _finite_mean(values: list[float]) -> float | None:
+    try:
+        mean = fsum(value / len(values) for value in values)
+    except OverflowError:
+        return None
+    return mean if isfinite(mean) else None
+
+
+def _finite_add(left: float, right: float | None) -> float | None:
+    if right is None or not isfinite(left):
+        return None
+    total = left + right
+    return total if isfinite(total) else None
 
 
 def _as_float(value: Any) -> float | None:
     if value in (None, "", "unknown", "unavailable"):
         return None
     try:
-        return float(value)
-    except TypeError, ValueError:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
         return None
+    return parsed if isfinite(parsed) else None
 
 
 def _as_int(value: Any) -> int | None:
@@ -439,5 +485,5 @@ def _as_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except TypeError, ValueError:
+    except OverflowError, TypeError, ValueError:
         return None

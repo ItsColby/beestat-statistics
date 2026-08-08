@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +48,7 @@ from .config_payload import (
     update_source_scope_options,
     update_thermostat_override_options,
 )
+from .config_rows import effective_override_items, override_id
 from .const import (
     API_BASE,
     CONF_ACCOUNT_FINGERPRINT,
@@ -83,6 +85,7 @@ from .const import (
     MAX_FILTER_MAX_AGE_DAYS,
     MAX_FILTER_NOTICE_DAYS,
     MAX_POINT_LOOKBACK_DAYS,
+    MAX_SCAN_INTERVAL_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
 from .entity_reference import (
@@ -117,6 +120,7 @@ POINT_LOOKBACK_SELECTOR = NumberSelector(
 SCAN_INTERVAL_SELECTOR = NumberSelector(
     NumberSelectorConfig(
         min=MIN_SCAN_INTERVAL_SECONDS,
+        max=MAX_SCAN_INTERVAL_SECONDS,
         mode=NumberSelectorMode.BOX,
         step=1,
     )
@@ -202,13 +206,13 @@ _MAPPING_FIELD_LABELS = {
 }
 
 type _AutomaticMappingSignature = tuple[tuple[str, int, str, str, str, str], ...]
+type _SourceScopeSignature = tuple[tuple[str, str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _SourceScopeCandidate:
     options: dict[str, Any]
-    known_thermostat_ids: tuple[int, ...]
-    known_sensor_ids: tuple[int, ...]
+    signature: _SourceScopeSignature
     removed_thermostats: int
     removed_sensors: int
 
@@ -231,6 +235,8 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _pending_entry: config_entries.ConfigEntry | None = None
     _pending_data: dict[str, Any] | None = None
     _pending_options: dict[str, Any] | None = None
+    _pending_entry_data_snapshot: dict[str, Any] | None = None
+    _pending_entry_options_snapshot: dict[str, Any] | None = None
 
     @staticmethod
     @callback
@@ -339,7 +345,13 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Confirm an intentional switch to a different Beestat account."""
 
-        if self._pending_entry is None or self._pending_data is None:
+        if (
+            self._pending_entry is None
+            or self._pending_data is None
+            or self._pending_options is None
+            or self._pending_entry_data_snapshot is None
+            or self._pending_entry_options_snapshot is None
+        ):
             if self.source == config_entries.SOURCE_RECONFIGURE:
                 return await self.async_step_reconfigure()
             return await self.async_step_reauth_confirm()
@@ -347,12 +359,18 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             entry = self._pending_entry
             data = self._pending_data
-            options = self._pending_options or {}
-            self._pending_entry = None
-            self._pending_data = None
-            self._pending_options = None
+            options = self._pending_options
+            entry_data_snapshot = self._pending_entry_data_snapshot
+            entry_options_snapshot = self._pending_entry_options_snapshot
+            self._clear_pending_account_change()
             await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
             self._abort_if_unique_id_mismatch()
+            if _entry_owner_changed(
+                entry,
+                data_snapshot=entry_data_snapshot,
+                options_snapshot=entry_options_snapshot,
+            ):
+                return self.async_abort(reason="configuration_changed")
             return self.async_update_reload_and_abort(
                 entry,
                 data=data,
@@ -384,6 +402,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if entry is None:
             entries = self.hass.config_entries.async_entries(DOMAIN)
             entry = entries[0] if entries else None
+        entry_data_snapshot = deepcopy(dict(entry.data)) if entry is not None else None
         if entry is None:
             async_set_yaml_connection_change_issue(self.hass, active=False)
             account_fingerprint, abort_reason = await _async_validate_initial_import(
@@ -395,13 +414,14 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             assert account_fingerprint is not None
             data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
         if entry is not None:
-            if _same_connection_data(entry.data, data):
+            assert entry_data_snapshot is not None
+            if _same_connection_data(entry_data_snapshot, data):
                 (
                     account_fingerprint,
                     abort_reason,
                 ) = await _async_existing_import_fingerprint(
                     self.hass,
-                    entry.data,
+                    entry_data_snapshot,
                     data,
                 )
                 if abort_reason is not None:
@@ -423,26 +443,46 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     async_set_yaml_connection_change_issue(self.hass, active=True)
                     return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
                 if not _validated_connection_change_is_safe(
-                    entry.data,
+                    entry_data_snapshot,
                     account_fingerprint,
                 ):
                     async_set_yaml_connection_change_issue(self.hass, active=True)
                     return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
                 data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-            async_set_yaml_connection_change_issue(self.hass, active=False)
-            options = merge_import_options(entry.options, data, options)
-            return self.async_update_reload_and_abort(
+            return self._finish_existing_import(
                 entry,
                 data=data,
                 options=options,
-                reason="already_configured",
-                reload_even_if_entry_is_unchanged=False,
+                entry_data_snapshot=entry_data_snapshot,
             )
         async_set_yaml_connection_change_issue(self.hass, active=False)
         return self.async_create_entry(
             title=CONFIG_TITLE,
             data=data,
             options=options,
+        )
+
+    @callback
+    def _finish_existing_import(
+        self,
+        entry: config_entries.ConfigEntry,
+        *,
+        data: dict[str, Any],
+        options: dict[str, Any],
+        entry_data_snapshot: Mapping[str, Any],
+    ) -> ConfigFlowResult:
+        """Reconcile an existing import immediately before its entry write."""
+
+        if _entry_owner_changed(entry, data_snapshot=entry_data_snapshot):
+            return self.async_abort(reason="configuration_changed")
+        async_set_yaml_connection_change_issue(self.hass, active=False)
+        options = merge_import_options(entry.options, data, options)
+        return self.async_update_reload_and_abort(
+            entry,
+            data=data,
+            options=options,
+            reason="already_configured",
+            reload_even_if_entry_is_unchanged=False,
         )
 
     async def _async_update_entry_data_flow(
@@ -457,12 +497,14 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         errors: dict[str, str] = {}
         if user_input is not None:
+            data_snapshot = deepcopy(dict(entry.data))
+            options_snapshot = deepcopy(dict(entry.options))
             if require_api_key and not str(user_input.get(CONF_API_KEY, "")).strip():
                 errors[CONF_API_KEY] = "api_key_required"
             else:
                 try:
                     data_updates = connection_data_from_user_input(
-                        entry.data,
+                        data_snapshot,
                         user_input,
                     )
                 except ValueError:
@@ -495,32 +537,13 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     if account_fingerprint is None:
                         errors["base"] = "account_identity_unavailable"
-                    elif _wrong_account(entry.data, account_fingerprint):
-                        data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-                        self._pending_entry = entry
-                        self._pending_data = {
-                            key: value
-                            for key, value in entry.data.items()
-                            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
-                        }
-                        self._pending_data.update(data_updates)
-                        self._pending_options = {
-                            key: value
-                            for key, value in entry.options.items()
-                            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
-                        }
-                        return await self.async_step_account_change_confirm()
                     else:
-                        data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-                        self._pending_entry = None
-                        self._pending_data = None
-                        self._pending_options = None
-                        await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
-                        self._abort_if_unique_id_mismatch()
-                        return self.async_update_reload_and_abort(
+                        return await self._async_apply_validated_connection(
                             entry,
+                            account_fingerprint=account_fingerprint,
                             data_updates=data_updates,
-                            reload_even_if_entry_is_unchanged=False,
+                            data_snapshot=data_snapshot,
+                            options_snapshot=options_snapshot,
                         )
 
         return self.async_show_form(
@@ -532,15 +555,72 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def _async_apply_validated_connection(
+        self,
+        entry: config_entries.ConfigEntry,
+        *,
+        account_fingerprint: Any,
+        data_updates: dict[str, Any],
+        data_snapshot: dict[str, Any],
+        options_snapshot: dict[str, Any],
+    ) -> ConfigFlowResult:
+        """Stage an account replacement or save a same-account connection."""
+
+        if _wrong_account(data_snapshot, account_fingerprint):
+            if _entry_owner_changed(
+                entry,
+                data_snapshot=data_snapshot,
+                options_snapshot=options_snapshot,
+            ):
+                self._clear_pending_account_change()
+                return self.async_abort(reason="configuration_changed")
+            data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+            self._pending_entry = entry
+            self._pending_data = {
+                key: value
+                for key, value in data_snapshot.items()
+                if key not in (CONF_THERMOSTATS, CONF_SENSORS)
+            }
+            self._pending_data.update(data_updates)
+            self._pending_options = {
+                key: value
+                for key, value in options_snapshot.items()
+                if key not in (CONF_THERMOSTATS, CONF_SENSORS)
+            }
+            self._pending_entry_data_snapshot = data_snapshot
+            self._pending_entry_options_snapshot = options_snapshot
+            return await self.async_step_account_change_confirm()
+
+        data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+        self._clear_pending_account_change()
+        await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
+        self._abort_if_unique_id_mismatch()
+        if _entry_owner_changed(entry, data_snapshot=data_snapshot):
+            return self.async_abort(reason="configuration_changed")
+        return self.async_update_reload_and_abort(
+            entry,
+            data_updates=data_updates,
+            reload_even_if_entry_is_unchanged=False,
+        )
+
+    def _clear_pending_account_change(self) -> None:
+        """Clear a retained account-change replacement and its owner snapshots."""
+
+        self._pending_entry = None
+        self._pending_data = None
+        self._pending_options = None
+        self._pending_entry_data_snapshot = None
+        self._pending_entry_options_snapshot = None
+
 
 class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
     """Handle Beestat Statistics options."""
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
-    _source_scope_form_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+    _source_scope_form_signature: _SourceScopeSignature | None = None
     _pending_scope_selection: tuple[frozenset[int], frozenset[int]] | None = None
-    _pending_scope_known_ids: tuple[tuple[int, ...], tuple[int, ...]] | None = None
+    _pending_scope_signature: _SourceScopeSignature | None = None
     _pending_scope_removed_thermostats = 0
     _pending_scope_removed_sensors = 0
     _pending_automatic_mapping_signature: _AutomaticMappingSignature | None = None
@@ -587,13 +667,13 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         thermostat_options = _thermostat_options(self.config_entry)
         sensor_options = _sensor_options(self.config_entry)
         enabled_thermostats, enabled_sensors = _source_scope_defaults(self.config_entry)
-        known_ids = (
-            _option_ids(thermostat_options),
-            _option_ids(sensor_options),
+        signature = _source_scope_signature(
+            thermostat_options,
+            sensor_options,
         )
         if user_input is not None:
-            if known_ids != self._source_scope_form_known_ids:
-                self._source_scope_form_known_ids = known_ids
+            if signature != self._source_scope_form_signature:
+                self._source_scope_form_signature = signature
                 return self._show_source_scope_form(
                     thermostat_options,
                     sensor_options,
@@ -621,7 +701,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 return await self.async_step_source_scope_confirm()
             return self.async_create_entry(data=candidate.options)
 
-        self._source_scope_form_known_ids = known_ids
+        self._source_scope_form_signature = signature
         return self._show_source_scope_form(
             thermostat_options,
             sensor_options,
@@ -674,11 +754,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 selected_thermostats,
                 selected_sensors,
             )
-            known_ids = (
-                candidate.known_thermostat_ids,
-                candidate.known_sensor_ids,
-            )
-            if known_ids != self._pending_scope_known_ids:
+            if candidate.signature != self._pending_scope_signature:
                 self._clear_pending_scope_preview()
                 return await self.async_step_source_scope()
             removal_counts = (
@@ -710,10 +786,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
     def _set_pending_scope_preview(self, candidate: _SourceScopeCandidate) -> None:
         """Remember only the scope evidence needed to detect preview drift."""
 
-        self._pending_scope_known_ids = (
-            candidate.known_thermostat_ids,
-            candidate.known_sensor_ids,
-        )
+        self._pending_scope_signature = candidate.signature
         self._pending_scope_removed_thermostats = candidate.removed_thermostats
         self._pending_scope_removed_sensors = candidate.removed_sensors
 
@@ -721,7 +794,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         """Clear a completed or invalidated source-scope confirmation."""
 
         self._pending_scope_selection = None
-        self._pending_scope_known_ids = None
+        self._pending_scope_signature = None
         self._pending_scope_removed_thermostats = 0
         self._pending_scope_removed_sensors = 0
 
@@ -1047,6 +1120,19 @@ def _same_connection_data(
     )
 
 
+def _entry_owner_changed(
+    entry: config_entries.ConfigEntry,
+    *,
+    data_snapshot: Mapping[str, Any],
+    options_snapshot: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return whether an entry owner changed after a flow retained its state."""
+
+    return dict(entry.data) != data_snapshot or (
+        options_snapshot is not None and dict(entry.options) != options_snapshot
+    )
+
+
 def _wrong_account(
     current_data: Mapping[str, Any],
     account_fingerprint: Any | None,
@@ -1206,7 +1292,7 @@ def _resource_options(
             continue
         try:
             item_id = int(raw_item_id)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
         labels.setdefault(item_id, f"Saved {fallback_label.lower()} {item_id}")
 
@@ -1233,13 +1319,29 @@ def _resource_row_id(row: Mapping[str, Any]) -> int | None:
             continue
         try:
             return int(value)
-        except TypeError, ValueError:
+        except OverflowError, TypeError, ValueError:
             continue
     return None
 
 
 def _option_ids(options: list[SelectOptionDict]) -> tuple[int, ...]:
     return tuple(int(option["value"]) for option in options)
+
+
+def _source_scope_signature(
+    thermostat_options: list[SelectOptionDict],
+    sensor_options: list[SelectOptionDict],
+) -> _SourceScopeSignature:
+    """Return the complete source choices and labels accepted by the user."""
+
+    return tuple(
+        (kind, str(option["value"]), str(option["label"]))
+        for kind, options in (
+            ("thermostat", thermostat_options),
+            ("sensor", sensor_options),
+        )
+        for option in options
+    )
 
 
 def _inactive_resource_ids(
@@ -1317,8 +1419,7 @@ def _source_scope_candidate(
     )
     return _SourceScopeCandidate(
         options=options,
-        known_thermostat_ids=known_thermostat_ids,
-        known_sensor_ids=known_sensor_ids,
+        signature=_source_scope_signature(thermostat_options, sensor_options),
         removed_thermostats=len(enabled_thermostats - selected_thermostats),
         removed_sensors=len(enabled_sensors - selected_sensors),
     )
@@ -1440,14 +1541,11 @@ def _effective_override(
     key: str,
     item_id: int,
 ) -> Mapping[str, Any]:
-    value = config_data.get(key)
-    if not isinstance(value, list):
-        return {}
     return next(
         (
             item
-            for item in value
-            if isinstance(item, Mapping) and _resource_row_id(item) == item_id
+            for item in effective_override_items(config_data.get(key))
+            if _resource_row_id(item) == item_id
         ),
         {},
     )
@@ -1577,7 +1675,7 @@ def _override_defaults(
         THERMOSTAT_STABLE_ENTITY_FIELDS if thermostats else SENSOR_STABLE_ENTITY_FIELDS
     )
     config_data = entry_runtime_config_data(entry)
-    for item in config_data.get(key, ()):
-        if isinstance(item, Mapping) and int(item.get(CONF_ID, -1)) == item_id:
+    for item in effective_override_items(config_data.get(key)):
+        if override_id(item) == item_id:
             return mapping_form_defaults(entity_registry, item, fields)
     return {}

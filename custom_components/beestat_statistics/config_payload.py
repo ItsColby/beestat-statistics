@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+from .config_rows import effective_override_items, override_id
 from .const import (
     API_BASE,
     CONF_API_BASE,
@@ -39,6 +40,8 @@ from .const import (
     CONF_THERMOSTATS,
     DEFAULT_POINT_LOOKBACK_DAYS,
     DEFAULT_SCAN_INTERVAL_SECONDS,
+    MAX_POINT_LOOKBACK_DAYS,
+    MAX_SCAN_INTERVAL_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
 from .entity_reference import migrate_option_entity_references
@@ -72,14 +75,35 @@ def options_from_user_input(payload: Mapping[str, Any]) -> dict[str, int]:
     """Return normalized options from a config or options flow payload."""
 
     return {
-        CONF_POINT_LOOKBACK_DAYS: int(
-            payload.get(CONF_POINT_LOOKBACK_DAYS, DEFAULT_POINT_LOOKBACK_DAYS)
+        CONF_POINT_LOOKBACK_DAYS: normalize_point_lookback_days(
+            payload.get(CONF_POINT_LOOKBACK_DAYS)
         ),
-        CONF_SCAN_INTERVAL_SECONDS: max(
-            int(payload.get(CONF_SCAN_INTERVAL_SECONDS, DEFAULT_SCAN_INTERVAL_SECONDS)),
-            MIN_SCAN_INTERVAL_SECONDS,
+        CONF_SCAN_INTERVAL_SECONDS: normalize_scan_interval_seconds(
+            payload.get(CONF_SCAN_INTERVAL_SECONDS)
         ),
     }
+
+
+def normalize_point_lookback_days(value: Any) -> int:
+    """Return a supported point-history window from persisted or submitted data."""
+
+    return _bounded_int(
+        value,
+        default=DEFAULT_POINT_LOOKBACK_DAYS,
+        minimum=1,
+        maximum=MAX_POINT_LOOKBACK_DAYS,
+    )
+
+
+def normalize_scan_interval_seconds(value: Any) -> int:
+    """Return a supported acquisition cadence from persisted or submitted data."""
+
+    return _bounded_int(
+        value,
+        default=DEFAULT_SCAN_INTERVAL_SECONDS,
+        minimum=MIN_SCAN_INTERVAL_SECONDS,
+        maximum=MAX_SCAN_INTERVAL_SECONDS,
+    )
 
 
 def connection_data_from_user_input(
@@ -118,10 +142,11 @@ def entry_options_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
     """Return config-entry option fields from YAML/import config."""
 
     return {
-        CONF_POINT_LOOKBACK_DAYS: conf[CONF_POINT_LOOKBACK_DAYS],
-        CONF_SCAN_INTERVAL_SECONDS: max(
-            int(conf[CONF_SCAN_INTERVAL].total_seconds()),
-            MIN_SCAN_INTERVAL_SECONDS,
+        CONF_POINT_LOOKBACK_DAYS: normalize_point_lookback_days(
+            conf[CONF_POINT_LOOKBACK_DAYS]
+        ),
+        CONF_SCAN_INTERVAL_SECONDS: normalize_scan_interval_seconds(
+            conf[CONF_SCAN_INTERVAL].total_seconds()
         ),
     }
 
@@ -156,16 +181,17 @@ def _yaml_thermostats_with_filter_boundaries(
     """Overlay saved click boundaries on YAML-owned thermostat rows."""
 
     existing_by_id = {
-        int(item[CONF_ID]): item
+        item_id: item
         for item in _override_items(existing_value)
-        if CONF_ID in item
+        if (item_id := override_id(item)) is not None
     }
     imported = [dict(item) for item in _override_items(import_value)]
     preserved_boundary = False
     for item in imported:
-        if CONF_FILTER_CHANGED_DATE in item or CONF_ID not in item:
+        item_id = override_id(item)
+        if CONF_FILTER_CHANGED_DATE in item or item_id is None:
             continue
-        existing = existing_by_id.get(int(item[CONF_ID]))
+        existing = existing_by_id.get(item_id)
         if existing is None or CONF_FILTER_CHANGED_DATE not in existing:
             continue
         item[CONF_FILTER_CHANGED_DATE] = existing[CONF_FILTER_CHANGED_DATE]
@@ -199,21 +225,24 @@ def migrate_entry_payload(
         )
 
     legacy_lookback = migrated_data.pop(CONF_POINT_LOOKBACK_DAYS, None)
-    if legacy_lookback is not None and CONF_POINT_LOOKBACK_DAYS not in migrated_options:
-        migrated_options[CONF_POINT_LOOKBACK_DAYS] = int(legacy_lookback)
+    saved_lookback = migrated_options.get(CONF_POINT_LOOKBACK_DAYS, legacy_lookback)
+    if saved_lookback is not None:
+        migrated_options[CONF_POINT_LOOKBACK_DAYS] = normalize_point_lookback_days(
+            saved_lookback
+        )
 
     legacy_scan_seconds = migrated_data.pop(CONF_SCAN_INTERVAL_SECONDS, None)
     legacy_scan_interval = migrated_data.pop(CONF_SCAN_INTERVAL, None)
     if legacy_scan_seconds is None:
         legacy_scan_seconds = _scan_interval_seconds(legacy_scan_interval)
 
-    if (
-        legacy_scan_seconds is not None
-        and CONF_SCAN_INTERVAL_SECONDS not in migrated_options
-    ):
-        migrated_options[CONF_SCAN_INTERVAL_SECONDS] = max(
-            int(legacy_scan_seconds),
-            MIN_SCAN_INTERVAL_SECONDS,
+    saved_scan_seconds = migrated_options.get(
+        CONF_SCAN_INTERVAL_SECONDS,
+        legacy_scan_seconds,
+    )
+    if saved_scan_seconds is not None:
+        migrated_options[CONF_SCAN_INTERVAL_SECONDS] = normalize_scan_interval_seconds(
+            saved_scan_seconds
         )
 
     return migrated_data, migrated_options
@@ -244,8 +273,8 @@ def effective_thermostat_override(
     return next(
         (
             dict(item)
-            for item in _override_items(source)
-            if _override_id(item) == thermostat_id
+            for item in effective_override_items(source)
+            if override_id(item) == thermostat_id
         ),
         None,
     )
@@ -410,20 +439,13 @@ def _update_override_options(
 
 
 def _find_override_item(items: list[dict[str, Any]], item_id: int) -> dict[str, Any]:
-    for item in items:
-        if int(item.get(CONF_ID, -1)) == item_id:
+    for item in reversed(items):
+        if override_id(item) == item_id:
             item[CONF_ID] = item_id
             return item
     item = {CONF_ID: item_id}
     items.append(item)
     return item
-
-
-def _override_id(item: Mapping[str, Any]) -> int | None:
-    try:
-        return int(item.get(CONF_ID, -1))
-    except TypeError, ValueError:
-        return None
 
 
 def _override_items(value: Any) -> tuple[dict[str, Any], ...]:
@@ -447,9 +469,29 @@ def _normalize_thermostat_overrides(value: Any) -> list[dict[str, Any]]:
 def _scan_interval_seconds(value: Any) -> int | None:
     if value is None:
         return None
-    if hasattr(value, "total_seconds"):
-        return int(value.total_seconds())
-    return int(value)
+    try:
+        if hasattr(value, "total_seconds"):
+            return int(value.total_seconds())
+        return int(value)
+    except TypeError, ValueError, OverflowError:
+        return None
+
+
+def _bounded_int(
+    value: Any,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    """Return one integer constrained to the persisted option contract."""
+
+    try:
+        parsed = int(value)
+    except TypeError, ValueError, OverflowError:
+        return default
+    parsed = max(parsed, minimum)
+    return min(parsed, maximum) if maximum is not None else parsed
 
 
 def _clean_string(value: Any) -> str:

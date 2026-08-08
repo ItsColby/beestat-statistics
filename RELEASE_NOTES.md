@@ -1,3 +1,26 @@
+# Beestat Statistics v2026.8.10
+
+## Fixed
+
+- Fail closed when a reconfigure, reauthentication, source-scope, or mapping
+  flow becomes stale while awaiting validation or confirmation. The winning
+  config-entry update is preserved without a stale write, reload, or implicit
+  merge, while unchanged flows retain unknown future fields.
+- Normalize duplicate thermostat, room-sensor, summary, and point-history
+  identities once using the last effective source row. Deletions and later
+  restorations now produce the same effective resource across runtime models,
+  mappings, diagnostics, entities, and Recorder imports.
+- Reject non-finite or unrepresentable derived values before cached runtime
+  projection or Recorder writes. Daily means preserve representable extreme
+  inputs, while cumulative totals and seed offsets stop before an invalid row.
+
+## Quality
+
+- Add concurrency coverage for second-flow and external config-entry changes,
+  including same-account validation and account-change confirmation.
+- Add duplicate-row, deletion/restoration, timestamp-boundary, numeric-overflow,
+  and no-invalid-Recorder-row regression coverage.
+
 # Beestat Statistics v2026.8.9
 
 ## Changed

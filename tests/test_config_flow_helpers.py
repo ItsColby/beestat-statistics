@@ -175,6 +175,20 @@ class ConfigFlowHelpersTest(unittest.TestCase):
             self.config_flow._validated_connection_change_is_safe(current, None)
         )
 
+    def test_source_scope_signature_includes_labels_and_activity_context(self) -> None:
+        """Source drift evidence covers more than the discovered IDs."""
+
+        self.assertEqual(
+            self.config_flow._source_scope_signature(
+                [{"value": "1", "label": "Zone A (1, inactive)"}],
+                [{"value": "2", "label": "Room B (2)"}],
+            ),
+            (
+                ("thermostat", "1", "Zone A (1, inactive)"),
+                ("sensor", "2", "Room B (2)"),
+            ),
+        )
+
     def _install_fake_modules(self) -> None:
         aiohttp = types.ModuleType("aiohttp")
         homeassistant = types.ModuleType("homeassistant")
