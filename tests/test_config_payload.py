@@ -124,6 +124,26 @@ class ConfigPayloadTest(unittest.TestCase):
                 "api_base": "https://example.test/",
             },
         )
+
+    def test_connection_payloads_reject_insecure_api_base(self) -> None:
+        with self.assertRaises(ValueError):
+            config_payload.split_entry_payload(
+                {
+                    "api_key": "key",
+                    "api_base": "http://api.example.test/",
+                }
+            )
+        with self.assertRaises(ValueError):
+            config_payload.connection_data_from_user_input(
+                {
+                    "api_key": "old-key",
+                    "api_base": "https://api.example.test/",
+                },
+                {
+                    "api_key": "replacement-key",
+                    "api_base": "https://user@example.test/",
+                },
+            )
         self.assertEqual(
             config_payload.connection_data_from_user_input(
                 {

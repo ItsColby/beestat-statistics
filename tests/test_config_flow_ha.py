@@ -34,7 +34,7 @@ try:
     from homeassistant.const import CONF_API_KEY
     from homeassistant.core import HomeAssistant
     from homeassistant.data_entry_flow import FlowResultType
-    from homeassistant.exceptions import ServiceValidationError
+    from homeassistant.exceptions import ConfigEntryError, ServiceValidationError
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
     from homeassistant.helpers import issue_registry as ir
@@ -50,6 +50,9 @@ from custom_components.beestat_statistics import (
     _async_update_override_issues,
     async_migrate_entry,
     async_setup,
+)
+from custom_components.beestat_statistics import (
+    async_setup_entry as async_setup_entry_impl,
 )
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
@@ -68,6 +71,7 @@ from custom_components.beestat_statistics.const import (
     CONF_ACCOUNT_FINGERPRINT,
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_CLIMATE_ENTITY_REF,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
     CONF_ID,
@@ -75,6 +79,7 @@ from custom_components.beestat_statistics.const import (
     CONF_SCAN_INTERVAL_SECONDS,
     CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
+    CONF_TEMPERATURE_ENTITY_REF,
     CONF_THERMOSTATS,
     CONFIG_ENTRY_MINOR_VERSION,
     CONFIG_ENTRY_UNIQUE_ID,
@@ -91,6 +96,9 @@ from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entity import (
     async_remove_cross_integration_device_ownership,
     link_entity_to_device,
+)
+from custom_components.beestat_statistics.entity_reference import (
+    resolve_entity_reference,
 )
 from custom_components.beestat_statistics.issues import (
     YAML_CONNECTION_CHANGE_ISSUE_ID,
@@ -165,6 +173,25 @@ async def test_mapped_entities_link_without_shared_device_ownership(
     assert current_entity.device_id == source_device.id
 
 
+async def test_legacy_http_entry_fails_before_transport_and_creates_repair(
+    hass: HomeAssistant,
+) -> None:
+    """Test an existing HTTP entry is blocked before its API key can be sent."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            CONF_API_KEY: "synthetic-key",
+            CONF_API_BASE: "http://api.example.test/",
+        },
+    )
+
+    with pytest.raises(ConfigEntryError, match="must use HTTPS"):
+        await async_setup_entry_impl(hass, entry)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "insecure_api_base")
+
+
 async def test_mapped_entities_relink_across_source_registry_lifecycle(
     hass: HomeAssistant,
 ) -> None:
@@ -191,6 +218,24 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
         config_entry=source_entry,
         device_id=source_device_a.id,
         suggested_object_id="zone_a",
+    )
+    source_reference = {
+        "registry_entry_id": source_entity.id,
+        "domain": "climate",
+        "platform": "homekit_controller",
+        "unique_id": "source-climate",
+    }
+    hass.config_entries.async_update_entry(
+        helper_entry,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1001,
+                    CONF_CLIMATE_ENTITY_ID: source_entity.entity_id,
+                    CONF_CLIMATE_ENTITY_REF: source_reference,
+                }
+            ]
+        },
     )
     helper_entity = entity_registry.async_get_or_create(
         "sensor",
@@ -220,7 +265,15 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
             return remove_listener
 
         def async_rebuild_runtime_from_cached_rows(self) -> None:
-            current_source = entity_registry.async_get(source_entity.entity_id)
+            current_entity_id = resolve_entity_reference(
+                entity_registry,
+                source_reference,
+            )
+            current_source = (
+                entity_registry.async_get(current_entity_id)
+                if current_entity_id is not None
+                else None
+            )
             self.data = types.SimpleNamespace(
                 config=BeestatConfig(
                     thermostats=(
@@ -228,7 +281,7 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
                             thermostat_id=1001,
                             slug="zone_a",
                             name="Zone A",
-                            climate_entity_id=source_entity.entity_id,
+                            climate_entity_id=current_entity_id,
                             device_id=(
                                 current_source.device_id
                                 if current_source is not None
@@ -255,8 +308,27 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
         == source_device_a.id
     )
 
+    original_registry_id = source_entity.id
+    original_entity_id = source_entity.entity_id
+    renamed_entity_id = "climate.zone_a_renamed"
     entity_registry.async_update_entity(
-        source_entity.entity_id,
+        original_entity_id,
+        new_entity_id=renamed_entity_id,
+    )
+    await hass.async_block_till_done()
+    assert (
+        resolve_entity_reference(entity_registry, source_reference) == renamed_entity_id
+    )
+    assert helper_entry.options[CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_ID] == (
+        original_entity_id
+    )
+    assert (
+        entity_registry.async_get(helper_entity.entity_id).device_id
+        == source_device_a.id
+    )
+
+    entity_registry.async_update_entity(
+        renamed_entity_id,
         device_id=source_device_b.id,
     )
     await hass.async_block_till_done()
@@ -265,24 +337,36 @@ async def test_mapped_entities_relink_across_source_registry_lifecycle(
         == source_device_b.id
     )
 
-    entity_registry.async_update_entity(source_entity.entity_id, device_id=None)
+    entity_registry.async_update_entity(renamed_entity_id, device_id=None)
     await hass.async_block_till_done()
     assert entity_registry.async_get(helper_entity.entity_id).device_id is None
 
-    entity_registry.async_remove(source_entity.entity_id)
+    entity_registry.async_remove(renamed_entity_id)
     await hass.async_block_till_done()
     assert entity_registry.async_get(helper_entity.entity_id).device_id is None
 
+    entity_registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "unrelated-source",
+        config_entry=source_entry,
+        device_id=source_device_a.id,
+        suggested_object_id="zone_a_renamed",
+    )
     restored_source = entity_registry.async_get_or_create(
         "climate",
         "homekit_controller",
-        "source-climate-restored",
+        "source-climate",
         config_entry=source_entry,
         device_id=source_device_b.id,
-        suggested_object_id="zone_a",
+        suggested_object_id="zone_a_renamed",
     )
     await hass.async_block_till_done()
-    assert restored_source.entity_id == source_entity.entity_id
+    assert restored_source.id != original_registry_id
+    assert restored_source.entity_id != original_entity_id
+    assert resolve_entity_reference(entity_registry, source_reference) == (
+        restored_source.entity_id
+    )
     assert (
         entity_registry.async_get(helper_entity.entity_id).device_id
         == source_device_b.id
@@ -317,6 +401,12 @@ async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
         config_entry=source_entry,
         suggested_object_id="room_sensor_a_temperature",
     )
+    source_reference = {
+        "registry_entry_id": source_entity.id,
+        "domain": "sensor",
+        "platform": "homekit_controller",
+        "unique_id": "room-sensor-a-temperature",
+    }
     helper_entry = _add_mock_entry(
         hass,
         options={
@@ -326,6 +416,7 @@ async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
                 {
                     CONF_ID: 2002,
                     CONF_TEMPERATURE_ENTITY_ID: source_entity.entity_id,
+                    CONF_TEMPERATURE_ENTITY_REF: source_reference,
                 }
             ],
         },
@@ -336,19 +427,39 @@ async def test_mapping_repairs_follow_referenced_entity_registry_lifecycle(
     _async_track_override_issue_updates(hass, helper_entry)
     assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
 
-    entity_registry.async_remove(source_entity.entity_id)
+    original_entity_id = source_entity.entity_id
+    renamed_entity_id = "sensor.room_sensor_a_temperature_renamed"
+    entity_registry.async_update_entity(
+        original_entity_id,
+        new_entity_id=renamed_entity_id,
+    )
+    await hass.async_block_till_done()
+    assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
+    assert helper_entry.options[CONF_SENSORS][0][CONF_TEMPERATURE_ENTITY_ID] == (
+        original_entity_id
+    )
+
+    entity_registry.async_remove(renamed_entity_id)
     await hass.async_block_till_done()
     assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities")
 
+    entity_registry.async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "unrelated-room-temperature",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_a_temperature",
+    )
     restored_entity = entity_registry.async_get_or_create(
         "sensor",
         "homekit_controller",
-        "room-sensor-a-temperature-restored",
+        "room-sensor-a-temperature",
         config_entry=source_entry,
         suggested_object_id="room_sensor_a_temperature",
     )
     await hass.async_block_till_done()
-    assert restored_entity.entity_id == source_entity.entity_id
+    assert restored_entity.id != source_entity.id
+    assert restored_entity.entity_id != source_entity.entity_id
     assert issue_registry.async_get_issue(DOMAIN, "missing_override_entities") is None
 
 
@@ -439,6 +550,53 @@ async def test_migrate_entry_preserves_legacy_scope_and_moves_timing(
     assert entry.options[CONF_SCAN_INTERVAL_SECONDS] == 600
 
 
+async def test_migrate_entry_backfills_stable_refs_for_options_only(
+    hass: HomeAssistant,
+) -> None:
+    """Test UI mappings gain stable refs without rewriting YAML-owned data."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    source = registry.async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate",
+        config_entry=source_entry,
+        suggested_object_id="zone_a",
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=CONFIG_TITLE,
+        unique_id=CONFIG_ENTRY_UNIQUE_ID,
+        version=CONFIG_ENTRY_VERSION,
+        minor_version=4,
+        data={
+            CONF_API_KEY: "synthetic-key",
+            CONF_API_BASE: API_BASE,
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1002, CONF_CLIMATE_ENTITY_ID: "climate.yaml_zone"}
+            ],
+        },
+        options={
+            CONF_THERMOSTATS: [
+                {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: source.entity_id}
+            ]
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert CONF_CLIMATE_ENTITY_REF not in entry.data[CONF_THERMOSTATS][0]
+    assert entry.options[CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_REF] == {
+        "registry_entry_id": source.id,
+        "domain": "climate",
+        "platform": "homekit_controller",
+        "unique_id": "source-climate",
+    }
+
+
 async def test_user_flow_normalizes_copy_paste_whitespace(
     hass: HomeAssistant,
 ) -> None:
@@ -467,6 +625,49 @@ async def test_user_flow_normalizes_copy_paste_whitespace(
     assert "\n" not in validated_input[CONF_API_KEY]
     assert result["data"][CONF_API_KEY] == "test-api-key"
     assert result["data"][CONF_API_BASE] == API_BASE
+
+
+async def test_user_flow_requires_identifiable_account_anchor(
+    hass: HomeAssistant,
+) -> None:
+    """Test setup cannot create an entry when account identity is unproven."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    with _mock_validate_input(return_value=None):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            USER_INPUT,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "account_identity_unavailable"}
+    assert not hass.config_entries.async_entries(DOMAIN)
+
+
+async def test_user_flow_rejects_insecure_api_base_before_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Test an API key cannot be validated against a plaintext endpoint."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "test-api-key",
+                CONF_API_BASE: "http://api.example.test/",
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_API_BASE: "invalid_api_base"}
+    validate.assert_not_awaited()
 
 
 async def test_user_flow_recovers_from_auth_error(hass: HomeAssistant) -> None:
@@ -549,6 +750,32 @@ async def test_user_flow_rejects_blank_api_key(hass: HomeAssistant) -> None:
     validate.assert_not_awaited()
 
 
+async def test_reauth_preserves_entry_when_account_identity_is_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """Test reauth cannot carry a stale fingerprint onto an unproven account."""
+
+    entry = _add_mock_entry(hass)
+    original_data = dict(entry.data)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    with _mock_validate_input(return_value=None):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "replacement-key",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "account_identity_unavailable"}
+    assert dict(entry.data) == original_data
+
+
 async def test_user_flow_rejects_duplicate_entry(hass: HomeAssistant) -> None:
     """Test the integration remains single-entry."""
 
@@ -570,28 +797,30 @@ async def test_user_flow_rejects_duplicate_entry(hass: HomeAssistant) -> None:
 async def test_import_flow_creates_config_entry(hass: HomeAssistant) -> None:
     """Test YAML import creates a config entry with options split out."""
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_IMPORT},
-        data={
-            CONF_API_KEY: "yaml-key",
-            CONF_API_BASE: API_BASE,
-            CONF_POINT_LOOKBACK_DAYS: 75,
-            CONF_SCAN_INTERVAL_SECONDS: 3600,
-            CONF_THERMOSTATS: [
-                {
-                    "id": 1001,
-                    CONF_CLIMATE_ENTITY_ID: "climate.zone_a",
-                }
-            ],
-        },
-    )
+    with _mock_validate_input():
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 75,
+                CONF_SCAN_INTERVAL_SECONDS: 3600,
+                CONF_THERMOSTATS: [
+                    {
+                        "id": 1001,
+                        CONF_CLIMATE_ENTITY_ID: "climate.zone_a",
+                    }
+                ],
+            },
+        )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == CONFIG_TITLE
     assert result["data"] == {
         CONF_API_KEY: "yaml-key",
         CONF_API_BASE: API_BASE,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
         CONF_THERMOSTATS: [
             {
                 "id": 1001,
@@ -610,6 +839,42 @@ async def test_yaml_schema_rejects_whitespace_only_api_key() -> None:
 
     with pytest.raises(vol.Invalid):
         CONFIG_SCHEMA({DOMAIN: {CONF_API_KEY: "   "}})
+
+
+async def test_yaml_schema_rejects_insecure_api_base() -> None:
+    """Test YAML cannot configure credential transport over plaintext HTTP."""
+
+    with pytest.raises(vol.Invalid):
+        CONFIG_SCHEMA(
+            {
+                DOMAIN: {
+                    CONF_API_KEY: "synthetic-key",
+                    CONF_API_BASE: "http://api.example.test/",
+                }
+            }
+        )
+
+
+async def test_initial_import_requires_identifiable_account_anchor(
+    hass: HomeAssistant,
+) -> None:
+    """Test YAML import cannot create an account with no stable thermostat anchor."""
+
+    with _mock_validate_input(return_value=None):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 75,
+                CONF_SCAN_INTERVAL_SECONDS: 3600,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "account_identity_unavailable"
+    assert not hass.config_entries.async_entries(DOMAIN)
 
 
 async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
@@ -648,6 +913,36 @@ async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
         )
         is None
     )
+
+
+async def test_same_connection_yaml_import_backfills_missing_fingerprint(
+    hass: HomeAssistant,
+) -> None:
+    """Test a legacy entry proves continuity before gaining a fingerprint."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            CONF_API_KEY: "yaml-key",
+            CONF_API_BASE: API_BASE,
+        },
+    )
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 75,
+                CONF_SCAN_INTERVAL_SECONDS: 3600,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    validate.assert_awaited_once()
+    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
 async def test_import_flow_preserves_ui_mapping_options(
@@ -995,6 +1290,31 @@ async def test_reconfigure_flow_allows_blank_key_to_keep_current(
     assert entry.data[CONF_API_KEY] == "old-key"
     assert entry.data[CONF_API_BASE] == "https://api.example.test/"
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
+
+
+async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """Test reconfigure fails closed when continuity cannot be proven."""
+
+    entry = _add_mock_entry(hass)
+    original_data = dict(entry.data)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    with _mock_validate_input(return_value=None):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "different-key",
+                CONF_API_BASE: "https://api.example.test/",
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "account_identity_unavailable"}
+    assert dict(entry.data) == original_data
 
 
 async def test_reconfigure_flow_confirms_different_account(
@@ -1487,6 +1807,15 @@ async def test_native_filter_date_exposes_and_updates_click_boundary(
 async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> None:
     """Test the options flow stores native thermostat mapping overrides."""
 
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    source = er.async_get(hass).async_get_or_create(
+        "climate",
+        "homekit_controller",
+        "source-climate",
+        config_entry=source_entry,
+        suggested_object_id="zone_a",
+    )
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
@@ -1518,18 +1847,36 @@ async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> N
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {CONF_CLIMATE_ENTITY_ID: "climate.zone_a"},
+        {CONF_CLIMATE_ENTITY_ID: source.entity_id},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_THERMOSTATS] == [
-        {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: "climate.zone_a"}
+        {
+            CONF_ID: 1001,
+            CONF_CLIMATE_ENTITY_ID: source.entity_id,
+            CONF_CLIMATE_ENTITY_REF: {
+                "registry_entry_id": source.id,
+                "domain": "climate",
+                "platform": "homekit_controller",
+                "unique_id": "source-climate",
+            },
+        }
     ]
 
 
 async def test_options_flow_updates_room_sensor_mapping(hass: HomeAssistant) -> None:
     """Test the options flow identifies the selected room-sensor override."""
 
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    source = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "room-sensor-b-temperature",
+        config_entry=source_entry,
+        suggested_object_id="room_sensor_b_temperature",
+    )
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[],
@@ -1561,12 +1908,21 @@ async def test_options_flow_updates_room_sensor_mapping(hass: HomeAssistant) -> 
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_b_temperature"},
+        {CONF_TEMPERATURE_ENTITY_ID: source.entity_id},
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_SENSORS] == [
-        {CONF_ID: 2002, CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_b_temperature"}
+        {
+            CONF_ID: 2002,
+            CONF_TEMPERATURE_ENTITY_ID: source.entity_id,
+            CONF_TEMPERATURE_ENTITY_REF: {
+                "registry_entry_id": source.id,
+                "domain": "sensor",
+                "platform": "homekit_controller",
+                "unique_id": "room-sensor-b-temperature",
+            },
+        }
     ]
 
 

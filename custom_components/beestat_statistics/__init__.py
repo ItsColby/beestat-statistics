@@ -37,7 +37,11 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    ConfigEntryError,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -60,6 +64,7 @@ from .config_model import (
     ConfiguredThermostat,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
+    configured_unresolved_entity_ids,
 )
 from .config_model import (
     build_sensor_statistics as build_sensor_specs,
@@ -134,9 +139,16 @@ from .entity import (
     async_remove_cross_integration_device_ownership,
     is_beestat_only_device,
 )
+from .entity_reference import (
+    configured_entity_references,
+    entity_reference_matches_entry,
+)
 from .entry_options import async_mark_filter_changed, resolve_filter_change_timestamp
 from .import_evidence import SkippedWindowEvidence
-from .issues import async_set_yaml_connection_change_issue
+from .issues import (
+    async_set_insecure_api_base_issue,
+    async_set_yaml_connection_change_issue,
+)
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .statistics_builder import (
     CumulativeStatisticSeed,
@@ -146,6 +158,7 @@ from .statistics_builder import (
     cumulative_statistic_ids,
 )
 from .task_coalescer import CoalescingTaskScheduler
+from .url_validation import normalize_api_base
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -269,7 +282,10 @@ CONFIG_SCHEMA = vol.Schema(
                     str.strip,
                     vol.Length(min=1),
                 ),
-                vol.Optional(CONF_API_BASE, default=API_BASE): cv.url,
+                vol.Optional(CONF_API_BASE, default=API_BASE): vol.All(
+                    cv.url,
+                    normalize_api_base,
+                ),
                 vol.Optional(
                     CONF_POINT_LOOKBACK_DAYS,
                     default=DEFAULT_POINT_LOOKBACK_DAYS,
@@ -1175,10 +1191,11 @@ async def async_setup_entry(
     """Set up Beestat Statistics from a config entry."""
 
     local_tz = ZoneInfo(str(hass.config.time_zone))
+    api_base = _validated_entry_api_base(hass, entry)
     client = BeestatClient(
         async_get_clientsession(hass),
         entry.data[CONF_API_KEY],
-        entry.data[CONF_API_BASE],
+        api_base,
     )
     coordinator = BeestatRuntimeDataCoordinator(
         hass,
@@ -1288,6 +1305,23 @@ async def async_setup_entry(
     return True
 
 
+def _validated_entry_api_base(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> str:
+    """Return a secure stored API base before any credential-bearing transport."""
+
+    try:
+        api_base = normalize_api_base(entry.data[CONF_API_BASE])
+    except ValueError as err:
+        async_set_insecure_api_base_issue(hass, active=True)
+        raise ConfigEntryError(
+            "Beestat API URL must use HTTPS; use Reconfigure to correct it"
+        ) from err
+    async_set_insecure_api_base_issue(hass, active=False)
+    return api_base
+
+
 @callback
 def _async_track_time_zone_updates(
     hass: HomeAssistant,
@@ -1316,7 +1350,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return False
 
-    migrated_data, migrated_options = migrate_entry_payload(entry.data, entry.options)
+    migrated_data, migrated_options = migrate_entry_payload(
+        entry.data,
+        entry.options,
+        entity_registry=er.async_get(hass),
+    )
     if (
         entry.version != CONFIG_ENTRY_VERSION
         or entry.minor_version != CONFIG_ENTRY_MINOR_VERSION
@@ -1623,12 +1661,26 @@ def _async_track_source_device_relinks(
 
     coordinator = entry.runtime_data.coordinator
     watched_entity_ids = _mapped_source_entity_ids(coordinator.data)
+    entity_registry = er.async_get(hass)
+    stable_references = configured_entity_references(entry_runtime_config_data(entry))
+    watched_entity_ids.update(
+        configured_override_entity_ids(
+            entry_runtime_config_data(entry),
+            entity_registry=entity_registry,
+        )
+    )
     watched_device_ids = _mapped_source_device_ids(coordinator.data)
 
     @callback
     def handle_coordinator_update() -> None:
         data = coordinator.data
         watched_entity_ids.update(_mapped_source_entity_ids(data))
+        watched_entity_ids.update(
+            configured_override_entity_ids(
+                entry_runtime_config_data(entry),
+                entity_registry=entity_registry,
+            )
+        )
         watched_device_ids.update(_mapped_source_device_ids(data))
         _async_migrate_homekit_device_assignments(hass, entry, data)
 
@@ -1643,7 +1695,13 @@ def _async_track_source_device_relinks(
             for key in ("entity_id", "old_entity_id")
             if (value := event.data.get(key)) is not None
         }
-        if watched_entity_ids.isdisjoint(changed_entity_ids):
+        if watched_entity_ids.isdisjoint(
+            changed_entity_ids
+        ) and not _entity_registry_event_matches_references(
+            entity_registry,
+            changed_entity_ids,
+            stable_references,
+        ):
             return
         reconcile_assignments()
 
@@ -1727,10 +1785,16 @@ def _async_track_override_issue_updates(
 ) -> None:
     """Refresh mapping Repairs when a referenced registry entity changes."""
 
-    watched_entity_ids = frozenset(
-        configured_override_entity_ids(entry_runtime_config_data(entry))
+    entity_registry = er.async_get(hass)
+    config_data = entry_runtime_config_data(entry)
+    watched_entity_ids = set(
+        configured_override_entity_ids(
+            config_data,
+            entity_registry=entity_registry,
+        )
     )
-    if not watched_entity_ids:
+    stable_references = configured_entity_references(config_data)
+    if not watched_entity_ids and not stable_references:
         return
 
     @callback
@@ -1740,9 +1804,21 @@ def _async_track_override_issue_updates(
             for key in ("entity_id", "old_entity_id")
             if (value := event.data.get(key)) is not None
         }
-        if watched_entity_ids.isdisjoint(changed_entity_ids):
+        if watched_entity_ids.isdisjoint(
+            changed_entity_ids
+        ) and not _entity_registry_event_matches_references(
+            entity_registry,
+            changed_entity_ids,
+            stable_references,
+        ):
             return
         _async_update_override_issues(hass, entry)
+        watched_entity_ids.update(
+            configured_override_entity_ids(
+                config_data,
+                entity_registry=entity_registry,
+            )
+        )
 
     entry.async_on_unload(
         hass.bus.async_listen(
@@ -1805,11 +1881,34 @@ def _missing_override_entity_ids(
     config_data: Mapping[str, Any],
 ) -> tuple[str, ...]:
     registry = er.async_get(hass)
+    unresolved = frozenset(configured_unresolved_entity_ids(config_data, registry))
     return tuple(
         entity_id
-        for entity_id in configured_override_entity_ids(config_data)
-        if hass.states.get(entity_id) is None and registry.async_get(entity_id) is None
+        for entity_id in configured_override_entity_ids(
+            config_data,
+            entity_registry=registry,
+        )
+        if entity_id in unresolved
+        or (
+            hass.states.get(entity_id) is None and registry.async_get(entity_id) is None
+        )
     )
+
+
+def _entity_registry_event_matches_references(
+    registry: er.EntityRegistry,
+    changed_entity_ids: set[str],
+    references: tuple[Mapping[str, Any], ...],
+) -> bool:
+    """Return whether a current registry event restores a stable source identity."""
+
+    for entity_id in changed_entity_ids:
+        entry = registry.async_get(entity_id)
+        if entry is not None and any(
+            entity_reference_matches_entry(reference, entry) for reference in references
+        ):
+            return True
+    return False
 
 
 def _first_runtime(hass: HomeAssistant) -> BeestatStatisticsRuntime | None:

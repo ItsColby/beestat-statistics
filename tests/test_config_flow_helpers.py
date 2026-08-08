@@ -40,6 +40,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
                 "homeassistant.core",
                 "homeassistant.helpers",
                 "homeassistant.helpers.aiohttp_client",
+                "homeassistant.helpers.entity_registry",
                 "homeassistant.helpers.issue_registry",
                 "homeassistant.helpers.selector",
                 "voluptuous",
@@ -183,6 +184,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         helpers = types.ModuleType("homeassistant.helpers")
         aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
         issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
+        entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
         selector = types.ModuleType("homeassistant.helpers.selector")
         voluptuous = types.ModuleType("voluptuous")
 
@@ -200,6 +202,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         issue_registry.IssueSeverity = types.SimpleNamespace(WARNING="warning")
         issue_registry.async_create_issue = lambda *args, **kwargs: None
         issue_registry.async_delete_issue = lambda *args, **kwargs: None
+        entity_registry.async_get = lambda _hass: None
         selector.BooleanSelector = _NoopInit
         selector.EntitySelector = _NoopInit
         selector.EntitySelectorConfig = _NoopInit
@@ -224,6 +227,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         homeassistant.core = core
         helpers.aiohttp_client = aiohttp_client
         helpers.issue_registry = issue_registry
+        helpers.entity_registry = entity_registry
         helpers.selector = selector
         homeassistant.helpers = helpers
 
@@ -235,6 +239,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         sys.modules["homeassistant.helpers"] = helpers
         sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client
         sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
+        sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
         sys.modules["homeassistant.helpers.selector"] = selector
         sys.modules["voluptuous"] = voluptuous
 

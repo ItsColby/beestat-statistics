@@ -31,13 +31,22 @@
   support exists for import/backward compatibility; do not make YAML the
   preferred routine configuration path.
 - Config-entry `data` owns required connection identity: API key, API base URL,
-  and the non-reversible account fingerprint. Initial setup is connection-only;
-  reconfigure and reauthentication validate replacements before saving them and
-  require an explicit confirmation before changing accounts. A confirmed
-  account replacement clears saved source scope and per-source overrides before
-  reload so numeric resource IDs cannot silently cross the account boundary;
-  timing options remain intact. Previously imported Recorder statistics remain,
-  so the confirmation must also explain the possible stable-slug history overlap.
+  and the non-reversible account fingerprint. Initial UI/YAML setup,
+  reconfigure, and reauthentication require at least one identifiable
+  thermostat anchor before saving a connection. A successful but empty
+  thermostat response leaves the entry unchanged because account continuity is
+  unproven. Reconfigure and reauthentication validate replacements before
+  saving them and require an explicit confirmation before changing accounts. A
+  confirmed account replacement clears saved source scope and per-source
+  overrides before reload so numeric resource IDs cannot silently cross the
+  account boundary; timing options remain intact. Previously imported Recorder
+  statistics remain, so the confirmation must also explain the possible
+  stable-slug history overlap.
+- The API base URL must use HTTPS and must not contain user information, a
+  query, or a fragment. Validate this boundary before constructing the client
+  or exposing the API key to transport. A legacy insecure entry fails setup,
+  creates an actionable Repair, and remains uncontacted until Reconfigure saves
+  a secure URL.
 - Config-entry `options` owns persistent behavior: import timing, selected
   Beestat source scope, and local mapping/filter/statistic overrides. Options
   save through native Home Assistant flows and reload the entry. Source scope
@@ -72,6 +81,16 @@
   preserves entity assignments. Fallback devices remain Beestat-owned and do
   not use the deprecated `via_device` identifier contract. This is required for
   Home Assistant Core 2026.8's one-config-entry-per-device model.
+- User-confirmed UI mappings store a stable foreign-source reference containing
+  the entity-registry UUID plus `(domain, platform, unique_id)`, while retaining
+  the selection-time entity ID for safe downgrade and local diagnostics. Resolve
+  the UUID first and the source tuple second so renames and registry recreation
+  do not require a Beestat config-entry recreation. An unresolved stable
+  reference is authoritative and must not fall back to mutable name matching.
+  Existing UI mappings gain references through the versioned minor migration
+  only when their current registry entry can be proven. YAML remains the
+  portable entity-ID owner and is never silently rewritten; an unresolved YAML
+  or unmigratable legacy mapping raises the existing mapping Repair.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate

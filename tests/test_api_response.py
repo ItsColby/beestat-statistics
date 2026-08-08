@@ -114,6 +114,14 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             "Unexpected integration error (KeyError)",
         )
 
+    def test_client_rejects_insecure_api_base_before_transport_setup(self) -> None:
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            self.api.BeestatClient(
+                object(),
+                "secret-token",
+                "http://api.test/",
+            )
+
     def test_exception_fingerprint_is_useful_without_exception_content(self) -> None:
         err = RuntimeError("private-response-secret")
         frame = traceback.FrameSummary(str(ROOT / "synthetic.py"), 17, "fail")

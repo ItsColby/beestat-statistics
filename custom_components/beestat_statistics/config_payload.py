@@ -10,6 +10,7 @@ from .const import (
     API_BASE,
     CONF_API_BASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_CLIMATE_ENTITY_REF,
     CONF_ENABLED,
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
@@ -26,17 +27,22 @@ from .const import (
     CONF_INCLUDE_TEMPERATURE,
     CONF_INCLUDE_VOC,
     CONF_MOTION_ENTITY_ID,
+    CONF_MOTION_ENTITY_REF,
     CONF_OCCUPANCY_ENTITY_ID,
+    CONF_OCCUPANCY_ENTITY_REF,
     CONF_POINT_LOOKBACK_DAYS,
     CONF_SCAN_INTERVAL_SECONDS,
     CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
+    CONF_TEMPERATURE_ENTITY_REF,
     CONF_THERMOSTAT_ID,
     CONF_THERMOSTATS,
     DEFAULT_POINT_LOOKBACK_DAYS,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
+from .entity_reference import migrate_option_entity_references
+from .url_validation import normalize_api_base
 
 CONF_API_KEY = "api_key"
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -49,7 +55,9 @@ def split_entry_payload(
 
     data: dict[str, Any] = {
         CONF_API_KEY: _clean_string(payload[CONF_API_KEY]),
-        CONF_API_BASE: _clean_string(payload.get(CONF_API_BASE, API_BASE)) or API_BASE,
+        CONF_API_BASE: normalize_api_base(
+            _clean_string(payload.get(CONF_API_BASE, API_BASE)) or API_BASE
+        ),
     }
     if payload.get(CONF_THERMOSTATS):
         data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(
@@ -84,7 +92,9 @@ def connection_data_from_user_input(
     api_base = _clean_string(user_input.get(CONF_API_BASE))
     return {
         CONF_API_KEY: api_key or current_data[CONF_API_KEY],
-        CONF_API_BASE: api_base or current_data.get(CONF_API_BASE, API_BASE),
+        CONF_API_BASE: normalize_api_base(
+            api_base or current_data.get(CONF_API_BASE, API_BASE)
+        ),
     }
 
 
@@ -93,7 +103,9 @@ def entry_data_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
 
     data: dict[str, Any] = {
         CONF_API_KEY: _clean_string(conf[CONF_API_KEY]),
-        CONF_API_BASE: _clean_string(conf[CONF_API_BASE]) or API_BASE,
+        CONF_API_BASE: normalize_api_base(
+            _clean_string(conf[CONF_API_BASE]) or API_BASE
+        ),
     }
     if conf.get(CONF_THERMOSTATS):
         data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(conf[CONF_THERMOSTATS])
@@ -172,12 +184,19 @@ def _yaml_thermostats_with_filter_boundaries(
 def migrate_entry_payload(
     data: Mapping[str, Any],
     options: Mapping[str, Any],
+    *,
+    entity_registry: Any | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return config-entry data/options normalized to the current storage shape."""
 
     migrated_data = dict(data)
     migrated_options = dict(options)
     migrated_data.setdefault(CONF_API_BASE, API_BASE)
+    if entity_registry is not None:
+        migrated_options = migrate_option_entity_references(
+            entity_registry,
+            migrated_options,
+        )
 
     legacy_lookback = migrated_data.pop(CONF_POINT_LOOKBACK_DAYS, None)
     if legacy_lookback is not None and CONF_POINT_LOOKBACK_DAYS not in migrated_options:
@@ -248,9 +267,13 @@ def update_thermostat_override_options(
         updates,
         managed_fields=(
             CONF_CLIMATE_ENTITY_ID,
+            CONF_CLIMATE_ENTITY_REF,
             CONF_TEMPERATURE_ENTITY_ID,
+            CONF_TEMPERATURE_ENTITY_REF,
             CONF_OCCUPANCY_ENTITY_ID,
+            CONF_OCCUPANCY_ENTITY_REF,
             CONF_MOTION_ENTITY_ID,
+            CONF_MOTION_ENTITY_REF,
             CONF_FILTER_CHANGED_AT,
             CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
             CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
@@ -281,8 +304,11 @@ def update_sensor_override_options(
         managed_fields=(
             CONF_THERMOSTAT_ID,
             CONF_TEMPERATURE_ENTITY_ID,
+            CONF_TEMPERATURE_ENTITY_REF,
             CONF_OCCUPANCY_ENTITY_ID,
+            CONF_OCCUPANCY_ENTITY_REF,
             CONF_MOTION_ENTITY_ID,
+            CONF_MOTION_ENTITY_REF,
             CONF_INCLUDE_TEMPERATURE,
             CONF_INCLUDE_AIR_QUALITY,
             CONF_INCLUDE_CO2,

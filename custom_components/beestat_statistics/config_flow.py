@@ -12,6 +12,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -81,6 +82,11 @@ from .const import (
     MAX_FILTER_NOTICE_DAYS,
     MAX_POINT_LOOKBACK_DAYS,
     MIN_SCAN_INTERVAL_SECONDS,
+)
+from .entity_reference import (
+    SENSOR_STABLE_ENTITY_FIELDS,
+    THERMOSTAT_STABLE_ENTITY_FIELDS,
+    mapping_updates_with_entity_references,
 )
 from .issues import (
     YAML_CONNECTION_CHANGE_ISSUE_ID,
@@ -215,7 +221,18 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not str(user_input.get(CONF_API_KEY, "")).strip():
                 errors[CONF_API_KEY] = "api_key_required"
             else:
-                data, options = split_entry_payload(user_input)
+                try:
+                    data, options = split_entry_payload(user_input)
+                except ValueError:
+                    errors[CONF_API_BASE] = "invalid_api_base"
+                    data = None
+                    options = None
+                if data is None or options is None:
+                    return self.async_show_form(
+                        step_id="user",
+                        data_schema=DATA_SCHEMA,
+                        errors=errors,
+                    )
                 try:
                     account_fingerprint = await _async_validate_input(
                         self.hass,
@@ -232,13 +249,15 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "unknown"
                 else:
-                    if account_fingerprint is not None:
+                    if account_fingerprint is None:
+                        errors["base"] = "account_identity_unavailable"
+                    else:
                         data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-                    return self.async_create_entry(
-                        title=CONFIG_TITLE,
-                        data=data,
-                        options=options,
-                    )
+                        return self.async_create_entry(
+                            title=CONFIG_TITLE,
+                            data=data,
+                            options=options,
+                        )
 
         return self.async_show_form(
             step_id="user",
@@ -320,7 +339,11 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Import YAML configuration."""
 
         await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
-        data, options = split_entry_payload(import_config)
+        try:
+            data, options = split_entry_payload(import_config)
+        except ValueError:
+            async_set_yaml_connection_change_issue(self.hass, active=True)
+            return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
         entry = self.hass.config_entries.async_entry_for_domain_unique_id(
             DOMAIN,
             CONFIG_ENTRY_UNIQUE_ID,
@@ -328,10 +351,31 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if entry is None:
             entries = self.hass.config_entries.async_entries(DOMAIN)
             entry = entries[0] if entries else None
+        if entry is None:
+            async_set_yaml_connection_change_issue(self.hass, active=False)
+            account_fingerprint, abort_reason = await _async_validate_initial_import(
+                self.hass,
+                data,
+            )
+            if abort_reason is not None:
+                return self.async_abort(reason=abort_reason)
+            assert account_fingerprint is not None
+            data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
         if entry is not None:
             if _same_connection_data(entry.data, data):
-                if account_fingerprint := entry.data.get(CONF_ACCOUNT_FINGERPRINT):
-                    data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+                (
+                    account_fingerprint,
+                    abort_reason,
+                ) = await _async_existing_import_fingerprint(
+                    self.hass,
+                    entry.data,
+                    data,
+                )
+                if abort_reason is not None:
+                    async_set_yaml_connection_change_issue(self.hass, active=True)
+                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
+                assert account_fingerprint is not None
+                data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
             else:
                 try:
                     account_fingerprint = await _async_validate_input(self.hass, data)
@@ -383,7 +427,23 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if require_api_key and not str(user_input.get(CONF_API_KEY, "")).strip():
                 errors[CONF_API_KEY] = "api_key_required"
             else:
-                data_updates = connection_data_from_user_input(entry.data, user_input)
+                try:
+                    data_updates = connection_data_from_user_input(
+                        entry.data,
+                        user_input,
+                    )
+                except ValueError:
+                    errors[CONF_API_BASE] = "invalid_api_base"
+                    data_updates = None
+                if data_updates is None:
+                    return self.async_show_form(
+                        step_id=step_id,
+                        data_schema=_connection_data_schema(
+                            entry.data,
+                            allow_blank_api_key=not require_api_key,
+                        ),
+                        errors=errors,
+                    )
                 try:
                     account_fingerprint = await _async_validate_input(
                         self.hass,
@@ -400,13 +460,10 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "unknown"
                 else:
-                    if account_fingerprint is not None:
+                    if account_fingerprint is None:
+                        errors["base"] = "account_identity_unavailable"
+                    elif _wrong_account(entry.data, account_fingerprint):
                         data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-                    elif CONF_ACCOUNT_FINGERPRINT in entry.data:
-                        data_updates[CONF_ACCOUNT_FINGERPRINT] = entry.data[
-                            CONF_ACCOUNT_FINGERPRINT
-                        ]
-                    if _wrong_account(entry.data, account_fingerprint):
                         self._pending_entry = entry
                         self._pending_data = {
                             key: value
@@ -420,16 +477,18 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             if key not in (CONF_THERMOSTATS, CONF_SENSORS)
                         }
                         return await self.async_step_account_change_confirm()
-                    self._pending_entry = None
-                    self._pending_data = None
-                    self._pending_options = None
-                    await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
-                    self._abort_if_unique_id_mismatch()
-                    return self.async_update_reload_and_abort(
-                        entry,
-                        data_updates=data_updates,
-                        reload_even_if_entry_is_unchanged=False,
-                    )
+                    else:
+                        data_updates[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+                        self._pending_entry = None
+                        self._pending_data = None
+                        self._pending_options = None
+                        await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
+                        self._abort_if_unique_id_mismatch()
+                        return self.async_update_reload_and_abort(
+                            entry,
+                            data_updates=data_updates,
+                            reload_even_if_entry_is_unchanged=False,
+                        )
 
         return self.async_show_form(
             step_id=step_id,
@@ -608,15 +667,25 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._thermostat_id is None:
             return await self.async_step_thermostat_mapping()
 
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                data=update_thermostat_override_options(
-                    self.config_entry.data,
-                    self.config_entry.options,
-                    self._thermostat_id,
+            try:
+                updates = mapping_updates_with_entity_references(
+                    er.async_get(self.hass),
                     user_input,
+                    THERMOSTAT_STABLE_ENTITY_FIELDS,
                 )
-            )
+            except ValueError:
+                errors["base"] = "mapping_source_unavailable"
+            else:
+                return self.async_create_entry(
+                    data=update_thermostat_override_options(
+                        self.config_entry.data,
+                        self.config_entry.options,
+                        self._thermostat_id,
+                        updates,
+                    )
+                )
 
         defaults = _override_defaults(
             self.config_entry,
@@ -660,6 +729,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 ),
                 defaults,
             ),
+            errors=errors,
         )
 
     async def async_step_sensor_mapping(
@@ -693,15 +763,25 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._sensor_id is None:
             return await self.async_step_sensor_mapping()
 
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(
-                data=update_sensor_override_options(
-                    self.config_entry.data,
-                    self.config_entry.options,
-                    self._sensor_id,
+            try:
+                updates = mapping_updates_with_entity_references(
+                    er.async_get(self.hass),
                     user_input,
+                    SENSOR_STABLE_ENTITY_FIELDS,
                 )
-            )
+            except ValueError:
+                errors["base"] = "mapping_source_unavailable"
+            else:
+                return self.async_create_entry(
+                    data=update_sensor_override_options(
+                        self.config_entry.data,
+                        self.config_entry.options,
+                        self._sensor_id,
+                        updates,
+                    )
+                )
 
         defaults = _override_defaults(
             self.config_entry,
@@ -736,6 +816,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 ),
                 defaults,
             ),
+            errors=errors,
         )
 
 
@@ -754,6 +835,40 @@ async def _async_validate_input(
     )
     thermostat_rows = await client.async_read_id("thermostat")
     return _account_fingerprint(thermostat_rows)
+
+
+async def _async_validate_initial_import(
+    hass: HomeAssistant,
+    data: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate a first YAML connection and return an abort reason when unsafe."""
+
+    try:
+        account_fingerprint = await _async_validate_input(hass, data)
+    except BeestatAuthError, BeestatApiError:
+        return None, "yaml_connection_unavailable"
+    except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
+        _LOGGER.error(
+            "Unexpected exception validating initial Beestat YAML import (%s)",
+            exception_fingerprint(err),
+        )
+        return None, "yaml_connection_unavailable"
+    if account_fingerprint is None:
+        return None, "account_identity_unavailable"
+    return account_fingerprint, None
+
+
+async def _async_existing_import_fingerprint(
+    hass: HomeAssistant,
+    current_data: Mapping[str, Any],
+    new_data: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Reuse or safely backfill account identity for an existing YAML entry."""
+
+    account_fingerprint = current_data.get(CONF_ACCOUNT_FINGERPRINT)
+    if account_fingerprint is not None:
+        return account_fingerprint, None
+    return await _async_validate_initial_import(hass, new_data)
 
 
 def _account_fingerprint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

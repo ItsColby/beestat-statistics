@@ -10,6 +10,8 @@ from typing import Any
 
 import aiohttp
 
+from .url_validation import normalize_api_base
+
 _FINGERPRINT_COMPONENT_MAX = 48
 _FINGERPRINT_MAX = 160
 _DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
@@ -174,7 +176,7 @@ class BeestatClient:
             raise ValueError("max_response_bytes must be positive")
         self._session = session
         self._api_key = api_key
-        self._api_base = api_base.rstrip("/") + "/"
+        self._api_base = normalize_api_base(api_base).rstrip("/") + "/"
         self._redactions = _redaction_replacements(
             api_key=api_key,
             api_base=self._api_base,
