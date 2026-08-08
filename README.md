@@ -367,12 +367,23 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. The formal dependency-coherent lane remains at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. When a maintained runtime advances beyond the harness-supported Core, bounded direct validation against that newer Core is partial evidence only and does not prove hosted dependency closure. Keep the exact runtime target and partial evidence in the private release owner; the installed-Core audit and release gate remain blocked until a compatible harness is published. Advance the HACS and blueprint minima, Core requirement, harness, CI label, documentation, and assertions together at that point. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches:
+Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. A second hosted lane targets exact current same-month patch Core `2026.8.1`. Its bounded checker verifies installed package metadata and the real `pip check` result, permits no conflict or exactly the single proven harness/Core pin mismatch, and then runs the complete Home Assistant tests. That lane proves patch compatibility, not dependency closure. It fails for a cross-month or prerelease target, another dependency conflict, skipped collection, or a test failure. When the harness catches up, the same checker accepts a clean environment. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+
+Supported-minimum lane:
 
 ```powershell
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pip check
+pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+```
+
+Current same-month patch lane:
+
+```powershell
+python -m pip install pytest-homeassistant-custom-component==0.13.354
+python -m pip install --upgrade -r requirements-ha-current.txt
+python scripts/check_ha_patch_compatibility.py --minimum requirements-ha-test.txt --current requirements-ha-current.txt
 pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
 ```
 
@@ -387,8 +398,8 @@ actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
 Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
-unit, the supported Home Assistant harness lane, Hassfest, and HACS validation
-all succeed.
+unit, the dependency-closed supported-minimum lane, the current same-month
+patch lane, Hassfest, and HACS validation all succeed.
 
 ## Release Publishing
 

@@ -44,7 +44,8 @@
 - Add focused no-new-source-event, local-midnight/DST, refresh-reschedule,
   unload-cleanup, no-I/O, no-Recorder-churn, stable-mapping, bounded-response,
   and concurrency tests.
-- Keep the formal Home Assistant test lane dependency-coherent and require a
-  successful `pip check` before exact-Core runtime tests.
+- Keep the Core `2026.8.0` supported-minimum lane dependency-closed, and add a
+  hosted Core `2026.8.1` same-month patch lane that permits only the
+  metadata-proven harness pin mismatch before running the complete HA tests.
 - Extend public-safety, strict typing, workflow, exception-translation, and API
   surface checks for the new lifecycle and transport contracts.

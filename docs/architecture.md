@@ -9,17 +9,19 @@
   manages one integration per repository, and all runtime files required by Home
   Assistant must live under that integration directory.
 - Keep GitHub/HACS support at the repository root: `README.md`, `hacs.json`,
-  `.github/`, `requirements-ha-test.txt`, `pytest.ini`, `docs/`, `scripts/`,
-  `tests/`, and `blueprints/`.
+  `.github/`, `requirements-ha-test.txt`, `requirements-ha-current.txt`,
+  `pytest.ini`, `docs/`, `scripts/`, `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
-  Assistant baseline, currently Core `2026.8.0`, which matches published test
-  harness `0.13.354`. If a maintained runtime advances beyond that pair, keep
-  the formal lane dependency-coherent until a compatible harness is published.
-  Direct newer-Core validation is partial evidence only and cannot substitute
-  for the formal lane or clear the installed-Core/public-release gate. Keep the
-  exact runtime target and partial evidence in the private release owner.
-  Advance the HACS and blueprint minima, Core requirement, harness, CI label,
-  documentation, and assertions together.
+  Assistant floor, currently Core `2026.8.0`, and its dependency-closed harness
+  lane. `requirements-ha-current.txt` owns exact same-month patch compatibility,
+  currently Core `2026.8.1`. That hosted lane verifies installed package
+  metadata, runs `pip check`, accepts no conflict or exactly the single proven
+  harness/Core pin mismatch, and then runs the complete HA tests. It proves
+  patch compatibility, not dependency closure. Cross-month, prerelease,
+  extra-conflict, skipped, or failing-test cases remain unsupported. Advance
+  each requirements owner, CI label, documentation, and assertion with the
+  support contract it represents; advance the HACS and blueprint minima only
+  when the distribution floor changes.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
   working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live

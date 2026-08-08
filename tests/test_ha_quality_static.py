@@ -429,6 +429,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             encoding="utf-8"
         )
         requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
+        current_requirements = (ROOT / "requirements-ha-current.txt").read_text(
+            encoding="utf-8"
+        )
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
             encoding="utf-8"
@@ -439,10 +442,16 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("asyncio_mode = auto", pytest_ini)
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn(
-            "name: Home Assistant integration tests (Core 2026.8.0)", workflow
+            "name: Home Assistant minimum integration tests (Core 2026.8.0)",
+            workflow,
+        )
+        self.assertIn(
+            "name: Home Assistant current-patch integration tests (Core 2026.8.1)",
+            workflow,
         )
         self.assertIn("Python `3.14.2` or newer", readme)
         self.assertTrue(required_pins <= set(requirements.splitlines()))
+        self.assertEqual(["homeassistant==2026.8.1"], current_requirements.splitlines())
         self.assertNotIn("pytest==", requirements)
         harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
@@ -451,7 +460,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install --upgrade -r requirements-ha-test.txt"
         )
         self.assertNotIn("matrix:", workflow)
-        self.assertNotIn("requirements-ha-test-current.txt", workflow)
         self.assertIn(harness_install, workflow)
         self.assertIn(requirements_install, workflow)
         self.assertLess(
@@ -467,6 +475,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertLess(workflow.index(pip_check), workflow.index(ha_pytest))
         self.assertNotIn("check_ha_test_dependencies.py", workflow)
         self.assertIn("requirements-ha-test.txt", readme)
+        self.assertIn("requirements-ha-current.txt", readme)
+        current_install = (
+            "python -m pip install --upgrade -r requirements-ha-current.txt"
+        )
+        patch_check = (
+            "python scripts/check_ha_patch_compatibility.py --minimum "
+            "requirements-ha-test.txt --current requirements-ha-current.txt"
+        )
+        current_job = workflow.index("  home_assistant_current:")
+        current_install_position = workflow.index(current_install, current_job)
+        patch_check_position = workflow.index(patch_check, current_install_position)
+        current_pytest_position = workflow.index(ha_pytest, patch_check_position)
+        self.assertLess(current_install_position, patch_check_position)
+        self.assertLess(patch_check_position, current_pytest_position)
         self.assertIn(
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q",
             workflow,
@@ -574,7 +596,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(config["tool"]["mypy"]["strict"])
         self.assertNotIn("overrides", config["tool"]["mypy"])
 
-    def test_readme_home_assistant_commands_require_clean_dependency_closure(
+    def test_readme_documents_minimum_closure_and_current_patch_compatibility(
         self,
     ) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -593,17 +615,23 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip check && "
             "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
         )
+        current_commands = (
+            "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
+            "python -m pip install --upgrade -r requirements-ha-current.txt\n"
+            "python scripts/check_ha_patch_compatibility.py --minimum "
+            "requirements-ha-test.txt --current requirements-ha-current.txt\n"
+            "pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+        )
 
         self.assertIn(local_commands, readme)
         self.assertIn(docker_commands, readme)
+        self.assertIn(current_commands, readme)
         self.assertIn(
-            "formal dependency-coherent lane remains at Core `2026.8.0`", readme
+            "supported-minimum lane is dependency-closed at Core `2026.8.0`", readme
         )
-        self.assertIn(
-            "When a maintained runtime advances beyond the harness-supported Core",
-            readme,
-        )
-        self.assertIn("private release owner", readme)
+        self.assertIn("current same-month patch Core `2026.8.1`", readme)
+        self.assertIn("proves patch compatibility, not dependency closure", readme)
+        self.assertIn("another dependency conflict", readme)
         for owner_name, owner_text in (
             ("README", readme),
             ("architecture", architecture),
@@ -613,11 +641,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     owner_text,
                     r"maintained (?:instance|installation) runs Core",
                 )
-        self.assertIn("installed-Core audit and release gate remain blocked", readme)
-        self.assertIn("partial evidence", readme)
-        self.assertIn("Advance the HACS and blueprint minima", readme)
         self.assertNotIn("check_ha_test_dependencies.py", readme)
-        self.assertNotIn("requirements-ha-test-current.txt", readme)
 
     def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
         text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
@@ -1145,13 +1169,19 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertNotIn("matrix:", validate)
         self.assertIn("requirements-ha-test.txt", validate)
-        self.assertNotIn("requirements-ha-test-current.txt", validate)
+        self.assertIn("requirements-ha-current.txt", validate)
         self.assertIn("name: Release gate", validate)
-        self.assertIn("needs: [unit, home_assistant, hassfest, hacs]", validate)
+        self.assertIn(
+            "needs: [unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]",
+            validate,
+        )
 
         expected_requirements = {
             "requirements-ha-test.txt": [
                 "homeassistant==2026.8.0",
+            ],
+            "requirements-ha-current.txt": [
+                "homeassistant==2026.8.1",
             ],
         }
         for relative_path, expected_lines in expected_requirements.items():
@@ -1160,7 +1190,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 expected_lines,
             )
 
-        self.assertFalse((ROOT / "requirements-ha-test-current.txt").exists())
         harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
         )
@@ -1182,6 +1211,19 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertLess(validate.index(pip_check), validate.index(ha_pytest))
         self.assertFalse((ROOT / "scripts/check_ha_test_dependencies.py").exists())
         self.assertFalse((ROOT / "tests/test_ha_test_dependencies.py").exists())
+        current_install = (
+            "python -m pip install --upgrade -r requirements-ha-current.txt"
+        )
+        patch_check = (
+            "python scripts/check_ha_patch_compatibility.py --minimum "
+            "requirements-ha-test.txt --current requirements-ha-current.txt"
+        )
+        current_job = validate.index("  home_assistant_current:")
+        current_install_position = validate.index(current_install, current_job)
+        patch_check_position = validate.index(patch_check, current_install_position)
+        current_pytest_position = validate.index(ha_pytest, patch_check_position)
+        self.assertLess(current_install_position, patch_check_position)
+        self.assertLess(patch_check_position, current_pytest_position)
         for relative_path in expected_requirements:
             self.assertNotIn(
                 "pytest-homeassistant-custom-component",
