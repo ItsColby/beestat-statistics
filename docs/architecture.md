@@ -50,7 +50,14 @@
   per-source overrides before reload so numeric resource IDs cannot silently
   cross the account boundary; timing options remain intact. Previously imported
   Recorder statistics remain, so the confirmation must also explain the possible
-  stable-slug history overlap.
+  stable-slug history overlap. Reconfigure and reauthentication snapshot the
+  config-entry owners they retain across validation or confirmation. If another
+  flow or external update changes data that the flow would write—or options that
+  an account replacement would write—the stale flow aborts without saving or
+  scheduling a reload; same-account connection updates leave concurrent options
+  untouched. Awaited YAML connection validation applies the same data-owner
+  guard, then reconciles its declared option fields with current saved options
+  immediately before saving.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client
   or exposing the API key to transport. A legacy invalid or insecure entry

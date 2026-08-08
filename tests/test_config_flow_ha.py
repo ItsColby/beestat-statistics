@@ -6,6 +6,7 @@ They intentionally fail collection when the discovered HA harness is unavailable
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from collections.abc import Callable
@@ -1004,6 +1005,95 @@ async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
     )
 
 
+async def test_import_flow_preserves_external_data_update_during_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Test an awaited YAML import cannot replace newer config-entry data."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={**_add_mock_entry_data(), "future": {"v": 1}},
+    )
+    external_data = {
+        **dict(entry.data),
+        CONF_API_KEY: "external-key",
+        "future": {"v": 2, "unknown": True},
+    }
+
+    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+        hass.config_entries.async_update_entry(entry, data=external_data)
+        return ACCOUNT_A
+
+    with (
+        _mock_validate_input(side_effect=validate),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 90,
+                CONF_SCAN_INTERVAL_SECONDS: 1800,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "configuration_changed"
+    assert dict(entry.data) == external_data
+    reload.assert_not_called()
+
+
+async def test_import_flow_reconciles_concurrent_options_update(
+    hass: HomeAssistant,
+) -> None:
+    """Test an awaited YAML import merges against the current options owner."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            CONF_API_KEY: "yaml-key",
+            CONF_API_BASE: API_BASE,
+        },
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            "future_option": {"v": 1},
+        },
+    )
+    external_options = {**dict(entry.options), "future_option": {"v": 2}}
+
+    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+        hass.config_entries.async_update_entry(entry, options=external_options)
+        return ACCOUNT_A
+
+    with (
+        _mock_validate_input(side_effect=validate),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={
+                CONF_API_KEY: "yaml-key",
+                CONF_API_BASE: API_BASE,
+                CONF_POINT_LOOKBACK_DAYS: 90,
+                CONF_SCAN_INTERVAL_SECONDS: 1800,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
+    assert dict(entry.options) == {
+        **external_options,
+        CONF_POINT_LOOKBACK_DAYS: 90,
+        CONF_SCAN_INTERVAL_SECONDS: 1800,
+    }
+    reload.assert_called_once_with(entry.entry_id)
+
+
 async def test_same_connection_yaml_import_backfills_missing_fingerprint(
     hass: HomeAssistant,
 ) -> None:
@@ -1465,6 +1555,191 @@ async def test_reconfigure_flow_confirms_different_account(
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
     }
+
+
+async def test_reconfigure_second_flow_wins_during_awaited_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Test a slower reconfigure flow cannot overwrite a newer flow."""
+
+    entry = _add_mock_entry(hass)
+    first = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    second = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    first_validation_started = asyncio.Event()
+    release_first_validation = asyncio.Event()
+
+    async def validate(data: dict[str, Any]) -> dict[str, Any]:
+        if data[CONF_API_KEY] == "first-key":
+            first_validation_started.set()
+            await release_first_validation.wait()
+        return ACCOUNT_A
+
+    with (
+        _mock_validate_input(side_effect=validate),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        first_task = asyncio.create_task(
+            hass.config_entries.flow.async_configure(
+                first["flow_id"],
+                {
+                    CONF_API_KEY: "first-key",
+                    CONF_API_BASE: API_BASE,
+                },
+            )
+        )
+        await first_validation_started.wait()
+        second_result = await hass.config_entries.flow.async_configure(
+            second["flow_id"],
+            {
+                CONF_API_KEY: "second-key",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+        release_first_validation.set()
+        first_result = await first_task
+
+    assert second_result["type"] is FlowResultType.ABORT
+    assert second_result["reason"] == "reconfigure_successful"
+    assert first_result["type"] is FlowResultType.ABORT
+    assert first_result["reason"] == "configuration_changed"
+    assert entry.data[CONF_API_KEY] == "second-key"
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_reconfigure_preserves_external_update_during_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Test an external data update wins without a stale flow reload."""
+
+    entry = _add_mock_entry(hass, data={**_add_mock_entry_data(), "future": {"v": 1}})
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    external_data = {
+        **dict(entry.data),
+        CONF_API_KEY: "external-key",
+        "future": {"v": 2, "unknown": True},
+    }
+
+    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+        hass.config_entries.async_update_entry(entry, data=external_data)
+        return ACCOUNT_A
+
+    with (
+        _mock_validate_input(side_effect=validate),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "flow-key",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "configuration_changed"
+    assert dict(entry.data) == external_data
+    reload.assert_not_called()
+
+
+async def test_reconfigure_reconciles_concurrent_options_update(
+    hass: HomeAssistant,
+) -> None:
+    """Test a data-only reconfigure preserves independently owned options."""
+
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            "future_option": {"v": 1},
+        },
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    external_options = {**dict(entry.options), "future_option": {"v": 2}}
+
+    async def validate(_data: dict[str, Any]) -> dict[str, Any]:
+        hass.config_entries.async_update_entry(entry, options=external_options)
+        return ACCOUNT_A
+
+    with (
+        _mock_validate_input(side_effect=validate),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "flow-key",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_API_KEY] == "flow-key"
+    assert dict(entry.options) == external_options
+    reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_account_change_confirmation_preserves_intervening_entry_update(
+    hass: HomeAssistant,
+) -> None:
+    """Test account replacement aborts when its data or options snapshot drifts."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            **_add_mock_entry_data(),
+            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
+            "future_data": {"v": 1},
+        },
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_SENSORS: [{CONF_ID: 2001}],
+            "future_option": {"v": 1},
+        },
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    with _mock_validate_input(return_value=ACCOUNT_B):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "different-account-key",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "account_change_confirm"
+
+    external_options = {**dict(entry.options), "future_option": {"v": 2}}
+    hass.config_entries.async_update_entry(entry, options=external_options)
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "configuration_changed"
+    assert entry.data[CONF_API_KEY] == "old-key"
+    assert entry.data["future_data"] == {"v": 1}
+    assert dict(entry.options) == external_options
+    reload.assert_not_called()
 
 
 async def test_reconfigure_flow_recovers_from_unexpected_error(
@@ -2942,6 +3217,14 @@ def _mock_validate_input(**kwargs: Any):
         new_callable=AsyncMock,
         **kwargs,
     )
+
+
+def _add_mock_entry_data() -> dict[str, Any]:
+    return {
+        CONF_API_KEY: "old-key",
+        CONF_API_BASE: API_BASE,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
+    }
 
 
 def _runtime_data(
