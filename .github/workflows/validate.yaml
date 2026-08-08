@@ -51,7 +51,8 @@ jobs:
         run: zizmor --strict-collection --persona auditor .
       - run: python -m ruff format --check custom_components tests scripts
       - run: python -m ruff check custom_components tests scripts
-      - run: python -m unittest discover -s tests
+      - name: Run dependency-light unit tests
+        run: python scripts/run_dependency_light_tests.py
       - run: python -m compileall -q custom_components/beestat_statistics tests scripts
       - run: python scripts/check_public_safety.py
       - name: Validate JSON metadata
@@ -107,7 +108,7 @@ jobs:
         run: python -m pip check
       - run: python -m mypy --version
       - run: python -m mypy --strict custom_components/beestat_statistics
-      - run: pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+      - run: pytest tests -q
 
   home_assistant_current:
     name: Home Assistant current-patch integration tests (Core 2026.8.1)
@@ -121,12 +122,12 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install Home Assistant test harness
-        run: python -m pip install "pytest-homeassistant-custom-component==0.13.354"
+        run: python -m pip install "pytest-homeassistant-custom-component==0.13.355"
       - name: Install current Home Assistant Core patch
         run: python -m pip install --upgrade -r requirements-ha-current.txt
-      - name: Verify bounded same-month patch compatibility
-        run: python scripts/check_ha_patch_compatibility.py --minimum requirements-ha-test.txt --current requirements-ha-current.txt
-      - run: pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+      - name: Require dependency closure
+        run: python -m pip check
+      - run: pytest tests -q
 
   hassfest:
     name: Hassfest

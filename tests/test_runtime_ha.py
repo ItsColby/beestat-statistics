@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import types
-import unittest
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,16 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-try:
-    import pytest
-    from homeassistant.const import CONF_API_KEY
-    from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import (
-        MockConfigEntry,
-        async_fire_time_changed_exact,
-    )
-except ModuleNotFoundError as err:  # pragma: no cover - local non-HA test env
-    raise unittest.SkipTest(f"Home Assistant test harness unavailable: {err}") from err
+import pytest
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed_exact,
+)
 
 from custom_components.beestat_statistics import (
     BeestatStatisticsImporter,

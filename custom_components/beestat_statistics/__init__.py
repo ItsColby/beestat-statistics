@@ -62,6 +62,7 @@ from .api import (
 from .config_model import (
     ConfiguredSensor,
     ConfiguredThermostat,
+    configured_mapping_device_conflicts,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
     configured_unresolved_entity_ids,
@@ -203,6 +204,7 @@ _DEFAULT_ENABLED_PROBLEM_ENTITY_SUFFIXES: frozenset[str] = frozenset(
 )
 _MISSING_OVERRIDE_ENTITIES_ISSUE_ID = "missing_override_entities"
 _INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID = "invalid_override_entity_domains"
+_MAPPING_DEVICE_CONFLICTS_ISSUE_ID = "mapping_device_conflicts"
 _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS = 3
 _GLOBAL_UNIQUE_ID_MIGRATION = {
     "beestat_statistics_status": "status",
@@ -1777,6 +1779,7 @@ def _async_update_override_issues(
 ) -> None:
     _async_update_missing_override_entity_issue(hass, entry)
     _async_update_invalid_override_domain_issue(hass, entry)
+    _async_update_mapping_device_conflicts_issue(hass, entry)
 
 
 @callback
@@ -1874,6 +1877,33 @@ def _async_update_invalid_override_domain_issue(
         translation_placeholders={
             "entities": ", ".join(errors),
         },
+    )
+
+
+@callback
+def _async_update_mapping_device_conflicts_issue(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> None:
+    """Create or clear the Repair for inconsistent explicit source devices."""
+
+    conflicts = configured_mapping_device_conflicts(
+        entry_runtime_config_data(entry),
+        er.async_get(hass),
+    )
+    if not conflicts:
+        ir.async_delete_issue(hass, DOMAIN, _MAPPING_DEVICE_CONFLICTS_ISSUE_ID)
+        return
+
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _MAPPING_DEVICE_CONFLICTS_ISSUE_ID,
+        is_fixable=False,
+        issue_domain=DOMAIN,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=_MAPPING_DEVICE_CONFLICTS_ISSUE_ID,
+        translation_placeholders={"conflict_count": str(len(conflicts))},
     )
 
 

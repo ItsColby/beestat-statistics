@@ -879,6 +879,431 @@ class ConfigModelTest(unittest.TestCase):
         self.assertIsNone(room_sensor.temperature_entity_id)
         self.assertIsNone(room_sensor.device_id)
 
+    def test_multiple_thermostats_do_not_share_single_strong_automatic_match(
+        self,
+    ) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+            },
+            entries=[
+                FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+                FakeEntityEntry(
+                    "sensor.zone_a_temperature",
+                    "thermostat_zone_a",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(
+                {"id": 1001, "name": "Unknown One"},
+                {"id": 1002, "name": "Unknown Two"},
+            ),
+            sensor_rows=(),
+            config_data={},
+        )
+
+        self.assertTrue(
+            all(thermostat.device_id is None for thermostat in config.thermostats)
+        )
+        self.assertTrue(
+            all(
+                thermostat.climate_entity_id is None
+                for thermostat in config.thermostats
+            )
+        )
+
+    def test_named_thermostat_match_wins_over_competing_strong_fallback(
+        self,
+    ) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+            },
+            entries=[
+                FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+                FakeEntityEntry(
+                    "sensor.zone_a_temperature",
+                    "thermostat_zone_a",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(
+                {"id": 1001, "name": "Zone A"},
+                {"id": 1002, "name": "Unknown Two"},
+            ),
+            sensor_rows=(),
+            config_data={},
+        )
+
+        thermostat_by_id = {
+            thermostat.thermostat_id: thermostat for thermostat in config.thermostats
+        }
+        self.assertEqual(thermostat_by_id[1001].device_id, "thermostat_zone_a")
+        self.assertIsNone(thermostat_by_id[1002].device_id)
+
+    def test_duplicate_beestat_sensor_names_do_not_share_automatic_match(
+        self,
+    ) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "sensor_room_a": FakeDeviceEntry(
+                    name="Room A",
+                    identifiers=(("homekit_controller", "room-a-device"),),
+                ),
+            },
+            entries=[
+                FakeEntityEntry(
+                    "sensor.room_a_temperature",
+                    "sensor_room_a",
+                    original_device_class="temperature",
+                ),
+                FakeEntityEntry(
+                    "binary_sensor.room_a_occupancy",
+                    "sensor_room_a",
+                    original_device_class="occupancy",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(),
+            sensor_rows=(
+                {"id": 2001, "name": "Room A", "temperature": 70},
+                {"id": 2002, "name": "Room A", "temperature": 71},
+            ),
+            config_data={},
+        )
+
+        self.assertTrue(all(sensor.device_id is None for sensor in config.sensors))
+        self.assertTrue(
+            all(sensor.temperature_entity_id is None for sensor in config.sensors)
+        )
+
+    def test_explicit_mapping_reserves_device_from_automatic_match(self) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+            },
+            entries=[
+                FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+                FakeEntityEntry(
+                    "sensor.zone_a_temperature",
+                    "thermostat_zone_a",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(
+                {"id": 1001, "name": "Explicit Zone"},
+                {"id": 1002, "name": "Zone A"},
+            ),
+            sensor_rows=(),
+            config_data={
+                "thermostats": [{"id": 1001, "climate_entity_id": "climate.zone_a"}]
+            },
+        )
+
+        thermostat_by_id = {
+            thermostat.thermostat_id: thermostat for thermostat in config.thermostats
+        }
+        self.assertEqual(thermostat_by_id[1001].device_id, "thermostat_zone_a")
+        self.assertIsNone(thermostat_by_id[1002].device_id)
+
+    def test_explicit_mapping_across_devices_fails_device_linking_closed(self) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+                "thermostat_zone_b": FakeDeviceEntry(
+                    name="Zone B",
+                    identifiers=(("homekit_controller", "zone-b-device"),),
+                ),
+            },
+            entries=[
+                FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+                FakeEntityEntry(
+                    "sensor.zone_b_temperature",
+                    "thermostat_zone_b",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=(),
+            config_data={
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "climate_entity_id": "climate.zone_a",
+                        "temperature_entity_id": "sensor.zone_b_temperature",
+                    }
+                ]
+            },
+        )
+
+        thermostat = config.thermostats[0]
+        self.assertIsNone(thermostat.device_id)
+        self.assertEqual(thermostat.climate_entity_id, "climate.zone_a")
+        self.assertEqual(
+            thermostat.temperature_entity_id,
+            "sensor.zone_b_temperature",
+        )
+
+    def test_duplicate_explicit_device_claims_fail_linking_closed(self) -> None:
+        entries = [
+            FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+            FakeEntityEntry("climate.zone_a_secondary", "thermostat_zone_a"),
+        ]
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+            },
+            entries=entries,
+        )
+
+        config_data = {
+            "thermostats": [
+                {"id": 1001, "climate_entity_id": "climate.zone_a"},
+                {
+                    "id": 1002,
+                    "climate_entity_id": "climate.zone_a_secondary",
+                },
+            ]
+        }
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(
+                {"id": 1001, "name": "First Zone"},
+                {"id": 1002, "name": "Second Zone"},
+            ),
+            sensor_rows=(),
+            config_data=config_data,
+        )
+
+        self.assertTrue(all(item.device_id is None for item in config.thermostats))
+        conflicts = config_model.configured_mapping_device_conflicts(
+            config_data,
+            FakeEntityRegistry(entries),
+        )
+        self.assertEqual(
+            conflicts,
+            (
+                config_model.MappingDeviceConflict(
+                    resource_type="thermostat",
+                    resource_ids=(1001, 1002),
+                    reason="duplicate_device",
+                ),
+            ),
+        )
+
+    def test_reports_cross_device_explicit_mapping_conflict(self) -> None:
+        entries = [
+            FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+            FakeEntityEntry(
+                "sensor.zone_b_temperature",
+                "thermostat_zone_b",
+                original_device_class="temperature",
+            ),
+        ]
+
+        conflicts = config_model.configured_mapping_device_conflicts(
+            {
+                "thermostats": [
+                    {
+                        "id": 1001,
+                        "climate_entity_id": "climate.zone_a",
+                        "temperature_entity_id": "sensor.zone_b_temperature",
+                    }
+                ]
+            },
+            FakeEntityRegistry(entries),
+        )
+
+        self.assertEqual(
+            conflicts,
+            (
+                config_model.MappingDeviceConflict(
+                    resource_type="thermostat",
+                    resource_ids=(1001,),
+                    reason="cross_device",
+                ),
+            ),
+        )
+
+    def test_cross_device_mapping_participates_in_duplicate_claims(self) -> None:
+        entries = [
+            FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+            FakeEntityEntry(
+                "sensor.zone_b_temperature",
+                "thermostat_zone_b",
+                original_device_class="temperature",
+            ),
+            FakeEntityEntry("climate.zone_a_secondary", "thermostat_zone_a"),
+        ]
+        self._install_fake_homeassistant_modules(
+            devices={
+                "thermostat_zone_a": FakeDeviceEntry(
+                    name="Zone A",
+                    identifiers=(("homekit_controller", "zone-a-device"),),
+                ),
+                "thermostat_zone_b": FakeDeviceEntry(
+                    name="Zone B",
+                    identifiers=(("homekit_controller", "zone-b-device"),),
+                ),
+            },
+            entries=entries,
+        )
+        config_data = {
+            "thermostats": [
+                {
+                    "id": 1001,
+                    "climate_entity_id": "climate.zone_a",
+                    "temperature_entity_id": "sensor.zone_b_temperature",
+                },
+                {
+                    "id": 1002,
+                    "climate_entity_id": "climate.zone_a_secondary",
+                },
+            ]
+        }
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(
+                {"id": 1001, "name": "First Zone"},
+                {"id": 1002, "name": "Second Zone"},
+            ),
+            sensor_rows=(),
+            config_data=config_data,
+        )
+
+        self.assertTrue(all(item.device_id is None for item in config.thermostats))
+        self.assertEqual(
+            config_model.configured_mapping_device_conflicts(
+                config_data,
+                FakeEntityRegistry(entries),
+            ),
+            (
+                config_model.MappingDeviceConflict(
+                    resource_type="thermostat",
+                    resource_ids=(1001,),
+                    reason="cross_device",
+                ),
+                config_model.MappingDeviceConflict(
+                    resource_type="thermostat",
+                    resource_ids=(1001, 1002),
+                    reason="duplicate_device",
+                ),
+            ),
+        )
+
+    def test_repeated_override_id_uses_effective_last_row_for_conflicts(self) -> None:
+        entries = [
+            FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
+            FakeEntityEntry("climate.zone_b", "thermostat_zone_b"),
+        ]
+
+        conflicts = config_model.configured_mapping_device_conflicts(
+            {
+                "thermostats": [
+                    {"id": 1001, "climate_entity_id": "climate.zone_a"},
+                    {"id": 1001, "climate_entity_id": "climate.zone_b"},
+                ]
+            },
+            FakeEntityRegistry(entries),
+        )
+
+        self.assertEqual(conflicts, ())
+
+    def test_duplicate_explicit_sensor_device_claims_fail_linking_closed(self) -> None:
+        entries = [
+            FakeEntityEntry(
+                "sensor.room_a_temperature",
+                "sensor_room_a",
+                original_device_class="temperature",
+            ),
+            FakeEntityEntry(
+                "sensor.room_a_temperature_secondary",
+                "sensor_room_a",
+                original_device_class="temperature",
+            ),
+        ]
+        self._install_fake_homeassistant_modules(
+            devices={
+                "sensor_room_a": FakeDeviceEntry(
+                    name="Room A",
+                    identifiers=(("homekit_controller", "room-a-device"),),
+                )
+            },
+            entries=entries,
+        )
+        config_data = {
+            "sensors": [
+                {
+                    "id": 2001,
+                    "temperature_entity_id": "sensor.room_a_temperature",
+                },
+                {
+                    "id": 2002,
+                    "temperature_entity_id": "sensor.room_a_temperature_secondary",
+                },
+            ]
+        }
+
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=(),
+            sensor_rows=(
+                {"id": 2001, "name": "Room A", "temperature": 70},
+                {"id": 2002, "name": "Room B", "temperature": 71},
+            ),
+            config_data=config_data,
+        )
+
+        self.assertTrue(all(item.device_id is None for item in config.sensors))
+        self.assertEqual(
+            config_model.configured_mapping_device_conflicts(
+                config_data,
+                FakeEntityRegistry(entries),
+            ),
+            (
+                config_model.MappingDeviceConflict(
+                    resource_type="sensor",
+                    resource_ids=(2001, 2002),
+                    reason="duplicate_device",
+                ),
+            ),
+        )
+
     def test_reports_override_entity_domain_errors(self) -> None:
         errors = config_model.configured_override_entity_domain_errors(
             {

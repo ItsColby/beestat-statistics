@@ -13,15 +13,21 @@
   `pytest.ini`, `docs/`, `scripts/`, `tests/`, and `blueprints/`.
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
   Assistant floor, currently Core `2026.8.0`, and its dependency-closed harness
-  lane. `requirements-ha-current.txt` owns exact same-month patch compatibility,
-  currently Core `2026.8.1`. That hosted lane verifies installed package
-  metadata, runs `pip check`, accepts no conflict or exactly the single proven
-  harness/Core pin mismatch, and then runs the complete HA tests. It proves
-  patch compatibility, not dependency closure. Cross-month, prerelease,
-  extra-conflict, skipped, or failing-test cases remain unsupported. Advance
+  lane. `requirements-ha-current.txt` owns a second dependency-closed lane for
+  the exact installed same-month patch, currently Core `2026.8.1` with harness
+  `0.13.355`. Both hosted lanes run `pip check` after the final dependency
+  installation and then run the complete HA tests. Conflicts, skipped
+  collection, or failing tests remain unsupported. Advance
   each requirements owner, CI label, documentation, and assertion with the
   support contract it represents; advance the HACS and blueprint minima only
   when the distribution floor changes.
+- `scripts/run_dependency_light_tests.py` uses direct-import AST discovery to
+  select tests that do not require Home Assistant. Both hosted HA lanes run the
+  complete `tests/` tree, so a newly added module needs no second file-list
+  update and cannot miss the HA lane. The HA modules import the real harness
+  unconditionally so either hosted lane fails collection instead of passing
+  through module-level skips when its dependencies are unavailable; discovering
+  no HA modules also fails the dependency-light selector closed.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
   working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
@@ -97,6 +103,24 @@
   only when their current registry entry can be proven. YAML remains the
   portable entity-ID owner and is never silently rewritten; an unresolved YAML
   or unmigratable legacy mapping raises the existing mapping Repair.
+- The options flow can confirm every currently ambiguity-safe automatic
+  thermostat and room-sensor match in one transaction. It derives the
+  candidate solely from the coordinator's cached normalized configuration and
+  the in-memory entity registry, stores the same stable references as an
+  individual mapping, leaves missing, ambiguous, and cross-row conflicting
+  matches unresolved, preserves unrelated options, and causes at most one
+  config-entry reload. A local source device may be claimed by at most one
+  automatic Beestat thermostat or room-sensor row; a higher-confidence unique
+  name match wins over a weaker fallback, while explicit mappings reserve their
+  source device. Every explicit mapping must resolve its selected entities to
+  one foreign source device, and one source device may be claimed by at most
+  one explicit mapping of the same resource type. Options reject newly
+  introduced conflicts; saved conflicts raise an actionable Repair and fail
+  device linking closed for every affected row instead of selecting the first
+  field or row by registry order. Bulk confirmation shows the exact entity
+  candidates and recomputes them against current cached mappings and options
+  before saving; target drift requires confirmation again. It never silently
+  persists name matches without explicit confirmation.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate
@@ -193,6 +217,10 @@
 - Source-scope changes may alter future entity exposure and import membership,
   but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
   units, statistic metadata, or previously imported Recorder history.
+- Capture the discovered source-ID set when the source-scope form is shown. If
+  discovery changes before the first submission, show the refreshed form; if
+  it changes after a destructive preview, show the refreshed source set or
+  removal count before accepting the change.
 - Updating source scope must preserve mapping, filter, and statistic-capability
   fields on known resources and preserve unknown saved overrides unchanged.
 - Disabled source overrides are ignored by mapping-domain and missing-entity

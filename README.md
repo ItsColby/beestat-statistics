@@ -79,9 +79,9 @@ Configuration fields:
 - `point_lookback_days`: number of recent local days to import from Beestat point-history resources. Defaults to 45 and is capped at 366.
 - `scan_interval`: YAML import interval. Defaults to 6 hours. UI options expose this as `scan_interval_seconds` with a 300-second minimum.
 
-By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched. Open the integration options and choose **Choose Beestat sources** to include only a subset. Newly discovered active sources remain included by default; explicit exclusions are preserved across discovery refreshes. Excluding a source stops its native entities from updating and omits it from future statistics imports, but does not delete external Recorder statistics already imported for it.
+By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched. Open the integration options and choose **Choose Beestat sources** to include only a subset. Newly discovered active sources remain included by default; explicit exclusions are preserved across discovery refreshes. If discovery changes while the selection form or its destructive confirmation is open, Home Assistant shows the refreshed source set or removal count before accepting the change. Excluding a source stops its native entities from updating and omits it from future statistics imports, but does not delete external Recorder statistics already imported for it.
 
-Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Ambiguous duplicate name matches are left as Beestat-only fallback devices; use advanced overrides to pin those.
+Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Automatic mappings are one-to-one: when multiple Beestat sources compete for the same local device at the same confidence, every conflicting source remains unresolved; a unique name match can win over a weaker single-device fallback. Every explicit mapping must select entities from one source device, and the same source device cannot be explicitly assigned to multiple thermostat mappings or multiple room-sensor mappings. Conflicting explicit mappings remain detached and raise a Repair instead of silently linking to the first selected device. Explicit mappings also reserve their local device from automatic reuse. Use the mapping options to resolve conflicts deliberately.
 
 Advanced YAML can pin Beestat IDs to existing HomeKit entities when automatic name matching is not enough:
 
@@ -101,7 +101,7 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Open the Beestat Statistics integration options, choose **Map a thermostat** or **Map a room sensor**, then select the Beestat row and the matching HomeKit entities. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Automatic name matching remains an ambiguity-safe onboarding fallback only. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all current unambiguous thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. The confirmation recomputes against current cached mappings and options immediately before saving: a changed target is shown again for confirmation, and unrelated concurrent option changes are preserved. Individual mapping forms reject a newly introduced cross-device or duplicate-device claim. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing, ambiguous, or conflicting matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
 
 Advanced thermostat override fields:
 
@@ -211,7 +211,7 @@ The Status sensor attributes include HomeKit mapping counts for thermostats and 
 
 If a Beestat-only fallback device disappears from current Beestat metadata, Home Assistant can remove that stale Beestat device manually from the device page. Shared HomeKit/Ecobee devices are not removed by this integration.
 
-If an enabled advanced YAML/import override references an entity that no longer exists, or assigns an override to the wrong Home Assistant domain, Home Assistant Repairs shows a warning. The warning follows referenced entity-registry removal, rename, and recovery without waiting for an integration reload. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override when the mapping intentionally changed.
+If an enabled advanced YAML/import override references an entity that no longer exists, assigns an override to the wrong Home Assistant domain, spans multiple source devices, or duplicates another mapping's source device, Home Assistant Repairs shows a warning. Mapping-device conflicts disable device linking for every affected mapping rather than choosing one field or row by registry order. The warnings follow referenced entity-registry removal, rename, move, and recovery without waiting for an integration reload. Excluded sources do not create mapping Repairs until they are included again. Update or remove an enabled override when the mapping intentionally changed.
 
 When a Beestat row becomes mapped to a HomeKit/Ecobee device, existing Beestat entities are migrated to that HomeKit device and stale Beestat-only fallback devices are removed from the integration device list. Subsequent source-device association changes are reconciled from Home Assistant's registries, and only entity records owned by the loaded Beestat config entry can be changed.
 
@@ -342,7 +342,7 @@ Local pure-module checks:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy shellcheck-py zizmor
-.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
@@ -367,7 +367,7 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and runs a literal `python -m pip check` after the final dependency installation. A second hosted lane targets exact current same-month patch Core `2026.8.1`. Its bounded checker verifies installed package metadata and the real `pip check` result, permits no conflict or exactly the single proven harness/Core pin mismatch, and then runs the complete Home Assistant tests. That lane proves patch compatibility, not dependency closure. It fails for a cross-month or prerelease target, another dependency conflict, skipped collection, or a test failure. When the harness catches up, the same checker accepts a clean environment. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and a second dependency-closed lane targets exact current same-month patch Core `2026.8.1` with harness `0.13.355`. Each lane installs its exact harness and Core requirements separately, runs a literal `python -m pip check` after the final dependency installation, and then runs the complete Home Assistant tests. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
 
 Supported-minimum lane:
 
@@ -375,22 +375,22 @@ Supported-minimum lane:
 python -m pip install pytest-homeassistant-custom-component==0.13.354
 python -m pip install --upgrade -r requirements-ha-test.txt
 python -m pip check
-pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+pytest tests -q
 ```
 
 Current same-month patch lane:
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.354
+python -m pip install pytest-homeassistant-custom-component==0.13.355
 python -m pip install --upgrade -r requirements-ha-current.txt
-python scripts/check_ha_patch_compatibility.py --minimum requirements-ha-test.txt --current requirements-ha-current.txt
-pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q
+python -m pip check
+pytest tests -q
 ```
 
 On Windows, run the same harness through Docker Desktop or WSL from the repository root:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests/test_config_flow_ha.py tests/test_runtime_ha.py -q"
+docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests -q"
 ```
 
 The workflow pins every third-party action to a full commit SHA, runs the latest
@@ -398,8 +398,8 @@ actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
 Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
-unit, the dependency-closed supported-minimum lane, the current same-month
-patch lane, Hassfest, and HACS validation all succeed.
+unit, both dependency-closed Home Assistant lanes, Hassfest, and HACS validation
+all succeed.
 
 ## Release Publishing
 
