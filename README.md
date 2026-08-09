@@ -405,9 +405,8 @@ On Windows, run the same harness through Docker Desktop or WSL from the reposito
 docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests -q"
 ```
 
-The workflow pins every third-party action to a full commit SHA, runs the latest
-actionlint with ShellCheck and `zizmor` in auditor mode, and reports the current
-Ruff, mypy, actionlint, ShellCheck, and zizmor versions.
+The workflow pins every third-party action to a full commit SHA and runs
+exact-pinned Ruff, mypy, actionlint, ShellCheck, and `zizmor` in auditor mode.
 Dependabot proposes weekly GitHub Actions updates after a seven-day stability
 and supply-chain cooldown. The stable **Release gate** check succeeds only when
 unit, both dependency-closed Home Assistant lanes, Hassfest, and HACS validation

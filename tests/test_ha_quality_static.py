@@ -439,6 +439,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
             encoding="utf-8"
         )
+        release_wrapper = (ROOT / "scripts/verify-release-local.ps1").read_text(
+            encoding="utf-8"
+        )
         requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
         current_requirements = (ROOT / "requirements-ha-current.txt").read_text(
             encoding="utf-8"
@@ -471,6 +474,17 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install --upgrade -r requirements-ha-test.txt"
         )
         self.assertNotIn("matrix:", workflow)
+        self.assertNotIn("ubuntu-latest", workflow)
+        self.assertEqual(6, workflow.count("runs-on: ubuntu-24.04"))
+        self.assertIn(
+            '"${source_git[@]}" ls-files --cached --others --exclude-standard -z',
+            release_runner,
+        )
+        self.assertIn('--git-dir="$source_git_dir"', release_runner)
+        self.assertIn("rev-parse --path-format=absolute --git-dir", release_wrapper)
+        self.assertIn("$Mode container $linuxGitDir", release_wrapper)
+        self.assertIn('tar -C "$source_root" --null --files-from=-', release_runner)
+        self.assertNotIn('cp -a "$source_root/."', release_runner)
         self.assertIn("bash scripts/verify-release-local.sh minimum native", workflow)
         self.assertIn(minimum_harness_install, release_runner)
         self.assertIn(requirements_install, release_runner)
@@ -569,6 +583,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn("pytest tests -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
+        dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        self.assertEqual(2, dependabot.count("interval: weekly"))
+        self.assertNotIn("interval: daily", dependabot)
+        self.assertIn("exact-pinned", readme)
 
     def test_ruff_policy_is_repository_owned_and_high_signal(self) -> None:
         config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
