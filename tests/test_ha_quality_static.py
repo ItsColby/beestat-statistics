@@ -486,6 +486,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn('tar -C "$source_root" --null --files-from=-', release_runner)
         self.assertNotIn('cp -a "$source_root/."', release_runner)
         self.assertIn("bash scripts/verify-release-local.sh minimum native", workflow)
+        self.assertIn("run_minimum() {\n  run_python '\n", release_runner)
+        self.assertIn("run_current() {\n  run_python '\n", release_runner)
+        self.assertIn("  minimum) run_minimum ;;", release_runner)
+        self.assertIn("  current) run_current ;;", release_runner)
         self.assertIn(minimum_harness_install, release_runner)
         self.assertIn(requirements_install, release_runner)
         self.assertLess(
