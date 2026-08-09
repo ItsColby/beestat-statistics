@@ -478,7 +478,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             release_runner.index(minimum_harness_install),
             release_runner.index(requirements_install),
         )
-        mypy_install = "python -m pip install --upgrade mypy"
+        mypy_install = 'python -m pip install "mypy==2.3.0"'
         pip_check = "python -m pip check"
         ha_pytest = "pytest tests -q"
         self.assertLess(
@@ -520,7 +520,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn("astral-sh/ruff-action@", workflow)
         self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn(
-            "python -m pip install --upgrade ruff shellcheck-py zizmor",
+            'python -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
             release_runner,
         )
         self.assertIn(
@@ -530,7 +530,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn(
             "python -m ruff check custom_components tests scripts", release_runner
         )
-        self.assertNotIn("shellcheck-py==", release_runner)
+        self.assertIn('"shellcheck-py==0.11.0.1"', release_runner)
         self.assertIn(
             "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
             release_runner,
@@ -540,14 +540,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         permissions = workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual("  contents: read", permissions)
         self.assertNotIn("GH_TOKEN", release_runner)
-        self.assertIn("python -m pip install --upgrade mypy", release_runner)
+        self.assertIn('python -m pip install "mypy==2.3.0"', release_runner)
         self.assertIn(
             "python -m mypy --strict custom_components/beestat_statistics",
             release_runner,
         )
         self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m pip install --upgrade "
-            "ruff mypy shellcheck-py zizmor",
+            ".\\.venv\\Scripts\\python.exe -m pip install "
+            '"ruff==0.16.2" "mypy==2.3.0" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
             readme,
         )
         local_zizmor_block = (
@@ -1199,13 +1199,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "Existing explicit mappings were left unchanged.",
         )
 
-    def test_validate_workflow_runs_on_a_schedule(self) -> None:
+    def test_validate_workflow_is_change_driven_or_manual(self) -> None:
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
 
-        self.assertRegex(workflow, r"(?m)^  schedule:\s*$")
-        self.assertRegex(workflow, r'(?m)^    - cron: "\d+ \d+ \* \* \d"\s*$')
+        self.assertNotRegex(workflow, r"(?m)^  schedule:\s*$")
+        self.assertRegex(workflow, r"(?m)^  push:\s*$")
+        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
+        self.assertRegex(workflow, r"(?m)^  workflow_dispatch:\s*$")
 
     def test_workflows_pin_actions_and_cover_supported_ha_versions(self) -> None:
         workflows = "\n".join(
@@ -1270,7 +1272,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             release_runner.index(minimum_harness_install),
             release_runner.index(requirements_install),
         )
-        mypy_install = "python -m pip install --upgrade mypy"
+        mypy_install = 'python -m pip install "mypy==2.3.0"'
         pip_check = "python -m pip check"
         ha_pytest = "pytest tests -q"
         self.assertLess(

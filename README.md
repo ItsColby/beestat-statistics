@@ -353,7 +353,7 @@ This repository is a HACS custom integration. The Beestat API client is intentio
 Local pure-module checks:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --upgrade ruff mypy shellcheck-py zizmor
+.\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "mypy==2.3.0" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
 .\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
