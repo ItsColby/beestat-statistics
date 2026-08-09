@@ -1,5 +1,17 @@
 # Beestat Statistics
 
+## Local release validation
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1`
+before publishing a release candidate. It uses the `Ubuntu-24.04` WSL2
+distribution and rootless Podman to run the same local-tree unit,
+minimum/current Home Assistant, and Hassfest validation classes as the hosted
+workflow. Images are pinned by digest. HACS validation reads a pushed repository
+through GitHub's API, so the hosted HACS job remains the independent public
+metadata and release gate rather than receiving a local GitHub credential. The
+hosted unit and Home Assistant jobs call this same script in `native` mode, so
+future validation changes have one product-owned command surface.
+
 Home Assistant custom integration for importing Beestat HVAC history and enriching local Ecobee/HomeKit thermostat and room-sensor entities with Beestat-only context.
 
 ## Source Model
