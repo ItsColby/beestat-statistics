@@ -85,11 +85,36 @@ if failures:
 PY
   '
 }
-run_minimum() { run_python 'python -m pip install "pytest-homeassistant-custom-component==0.13.354" && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip install "mypy==2.3.0" && python -m pip check && python -m mypy --strict custom_components/beestat_statistics && pytest tests -q'; }
-run_current() { run_python 'python -m pip install "pytest-homeassistant-custom-component==0.13.355" && python -m pip install --upgrade -r requirements-ha-current.txt && python -m pip check && pytest tests -q'; }
-run_release() { if [[ "$backend" == native ]]; then docker run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"; else podman run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"; fi; }
+run_minimum() {
+  run_python '
+    python -m pip install "pytest-homeassistant-custom-component==0.13.354" &&
+    python -m pip install --upgrade -r requirements-ha-test.txt &&
+    python -m pip install "mypy==2.3.0" &&
+    python -m pip check &&
+    python -m mypy --strict custom_components/beestat_statistics &&
+    pytest tests -q
+  '
+}
+run_current() {
+  run_python '
+    python -m pip install "pytest-homeassistant-custom-component==0.13.355" &&
+    python -m pip install --upgrade -r requirements-ha-current.txt &&
+    python -m pip check &&
+    pytest tests -q
+  '
+}
+run_release() {
+  if [[ "$backend" == native ]]; then
+    docker run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"
+  else
+    podman run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"
+  fi
+}
 case "$mode" in
   all) run_unit; run_minimum; run_current; run_release ;;
-  unit) run_unit ;; minimum) run_minimum ;; current) run_current ;; release) run_release ;;
+  unit) run_unit ;;
+  minimum) run_minimum ;;
+  current) run_current ;;
+  release) run_release ;;
   *) echo "Unknown mode: $mode" >&2; exit 2 ;;
 esac
