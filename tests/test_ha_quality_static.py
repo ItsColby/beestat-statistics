@@ -436,6 +436,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
+        release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
+            encoding="utf-8"
+        )
         requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
         current_requirements = (ROOT / "requirements-ha-current.txt").read_text(
             encoding="utf-8"
@@ -468,21 +471,27 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m pip install --upgrade -r requirements-ha-test.txt"
         )
         self.assertNotIn("matrix:", workflow)
-        self.assertIn(minimum_harness_install, workflow)
-        self.assertIn(requirements_install, workflow)
+        self.assertIn("bash scripts/verify-release-local.sh minimum native", workflow)
+        self.assertIn(minimum_harness_install, release_runner)
+        self.assertIn(requirements_install, release_runner)
         self.assertLess(
-            workflow.index(minimum_harness_install),
-            workflow.index(requirements_install),
+            release_runner.index(minimum_harness_install),
+            release_runner.index(requirements_install),
         )
         mypy_install = "python -m pip install --upgrade mypy"
         pip_check = "python -m pip check"
         ha_pytest = "pytest tests -q"
         self.assertLess(
-            workflow.index(requirements_install), workflow.index(mypy_install)
+            release_runner.index(requirements_install),
+            release_runner.index(mypy_install),
         )
-        self.assertLess(workflow.index(mypy_install), workflow.index(pip_check))
-        self.assertLess(workflow.index(pip_check), workflow.index(ha_pytest))
-        self.assertNotIn("check_ha_test_dependencies.py", workflow)
+        self.assertLess(
+            release_runner.index(mypy_install), release_runner.index(pip_check)
+        )
+        self.assertLess(
+            release_runner.index(pip_check), release_runner.index(ha_pytest)
+        )
+        self.assertNotIn("check_ha_test_dependencies.py", release_runner)
         self.assertIn("requirements-ha-test.txt", readme)
         self.assertIn("requirements-ha-current.txt", readme)
         current_install = (
@@ -491,51 +500,50 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         current_harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component==0.13.355"'
         )
-        current_job = workflow.index("  home_assistant_current:")
-        current_harness_position = workflow.index(current_harness_install, current_job)
-        current_install_position = workflow.index(current_install, current_job)
-        current_pip_check_position = workflow.index(pip_check, current_install_position)
-        current_pytest_position = workflow.index(ha_pytest, current_pip_check_position)
+        current_job = release_runner.index("run_current()")
+        current_harness_position = release_runner.index(
+            current_harness_install, current_job
+        )
+        current_install_position = release_runner.index(current_install, current_job)
+        current_pip_check_position = release_runner.index(
+            pip_check, current_install_position
+        )
+        current_pytest_position = release_runner.index(
+            ha_pytest, current_pip_check_position
+        )
         self.assertLess(current_harness_position, current_install_position)
         self.assertLess(current_install_position, current_pip_check_position)
         self.assertLess(current_pip_check_position, current_pytest_position)
         self.assertFalse((ROOT / "scripts/check_ha_patch_compatibility.py").exists())
         self.assertFalse((ROOT / "tests/test_ha_patch_compatibility.py").exists())
-        self.assertEqual(2, workflow.count(ha_pytest))
+        self.assertEqual(2, release_runner.count(ha_pytest))
         self.assertNotIn("astral-sh/ruff-action@", workflow)
         self.assertNotIn('version: "0.16.1"', workflow)
         self.assertIn(
-            "python -m pip install --upgrade ruff shellcheck-py zizmor", workflow
+            "python -m pip install --upgrade ruff shellcheck-py zizmor",
+            release_runner,
         )
         self.assertIn(
-            "python -m ruff format --check custom_components tests scripts", workflow
+            "python -m ruff format --check custom_components tests scripts",
+            release_runner,
         )
-        self.assertIn("python -m ruff check custom_components tests scripts", workflow)
-        self.assertIn("python -m ruff --version", workflow)
-        self.assertNotIn("shellcheck-py==", workflow)
         self.assertIn(
-            "go install github.com/rhysd/actionlint/cmd/actionlint@latest",
-            workflow,
+            "python -m ruff check custom_components tests scripts", release_runner
         )
-        self.assertIn("actionlint -version", workflow)
-        self.assertIn("shellcheck --version", workflow)
-        self.assertIn("run: actionlint", workflow)
+        self.assertNotIn("shellcheck-py==", release_runner)
+        self.assertIn(
+            "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
+            release_runner,
+        )
+        self.assertIn("run_actionlint", release_runner)
         self.assertEqual(1, workflow.count("permissions:"))
         permissions = workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
         self.assertEqual("  contents: read", permissions)
-        self.assertEqual(1, workflow.count("GH_TOKEN: ${{ github.token }}"))
-        workflow_zizmor_step = (
-            "      - name: Audit GitHub Actions security\n"
-            "        env:\n"
-            "          GH_TOKEN: ${{ github.token }}\n"
-            "        run: zizmor --strict-collection --persona auditor ."
-        )
-        self.assertIn(workflow_zizmor_step, workflow)
-        self.assertIn("python -m mypy --version", workflow)
-        self.assertIn("python -m pip install --upgrade mypy", workflow)
+        self.assertNotIn("GH_TOKEN", release_runner)
+        self.assertIn("python -m pip install --upgrade mypy", release_runner)
         self.assertIn(
             "python -m mypy --strict custom_components/beestat_statistics",
-            workflow,
+            release_runner,
         )
         self.assertIn(
             ".\\.venv\\Scripts\\python.exe -m pip install --upgrade "
@@ -648,7 +656,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn("check_ha_test_dependencies.py", readme)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
-        workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
+        release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
             encoding="utf-8"
         )
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -667,13 +675,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
         )
 
-        self.assertEqual(2, workflow.count("pytest tests -q"))
-        self.assertIn("python scripts/run_dependency_light_tests.py", workflow)
+        self.assertEqual(2, release_runner.count("pytest tests -q"))
+        self.assertIn("python scripts/run_dependency_light_tests.py", release_runner)
         self.assertIn(
             r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
             readme,
         )
-        self.assertNotIn("python -m unittest discover -s tests", workflow)
+        self.assertNotIn("python -m unittest discover -s tests", release_runner)
         self.assertIn("if path not in ha_test_files", dependency_light_runner)
         for relative_path in ha_modules:
             with self.subTest(path=relative_path):
@@ -1222,9 +1230,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         validate = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
+        release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("matrix:", validate)
-        self.assertIn("requirements-ha-test.txt", validate)
-        self.assertIn("requirements-ha-current.txt", validate)
+        self.assertIn("bash scripts/verify-release-local.sh minimum native", validate)
+        self.assertIn("bash scripts/verify-release-local.sh current native", validate)
+        self.assertIn("requirements-ha-test.txt", release_runner)
+        self.assertIn("requirements-ha-current.txt", release_runner)
         self.assertIn("name: Release gate", validate)
         self.assertIn(
             "needs: [unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]",
@@ -1251,20 +1264,25 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         requirements_install = (
             "python -m pip install --upgrade -r requirements-ha-test.txt"
         )
-        self.assertIn(minimum_harness_install, validate)
-        self.assertIn(requirements_install, validate)
+        self.assertIn(minimum_harness_install, release_runner)
+        self.assertIn(requirements_install, release_runner)
         self.assertLess(
-            validate.index(minimum_harness_install),
-            validate.index(requirements_install),
+            release_runner.index(minimum_harness_install),
+            release_runner.index(requirements_install),
         )
         mypy_install = "python -m pip install --upgrade mypy"
         pip_check = "python -m pip check"
         ha_pytest = "pytest tests -q"
         self.assertLess(
-            validate.index(requirements_install), validate.index(mypy_install)
+            release_runner.index(requirements_install),
+            release_runner.index(mypy_install),
         )
-        self.assertLess(validate.index(mypy_install), validate.index(pip_check))
-        self.assertLess(validate.index(pip_check), validate.index(ha_pytest))
+        self.assertLess(
+            release_runner.index(mypy_install), release_runner.index(pip_check)
+        )
+        self.assertLess(
+            release_runner.index(pip_check), release_runner.index(ha_pytest)
+        )
         self.assertFalse((ROOT / "scripts/check_ha_test_dependencies.py").exists())
         self.assertFalse((ROOT / "tests/test_ha_test_dependencies.py").exists())
         current_install = (
@@ -1273,11 +1291,17 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         current_harness_install = (
             'python -m pip install "pytest-homeassistant-custom-component==0.13.355"'
         )
-        current_job = validate.index("  home_assistant_current:")
-        current_harness_position = validate.index(current_harness_install, current_job)
-        current_install_position = validate.index(current_install, current_job)
-        current_pip_check_position = validate.index(pip_check, current_install_position)
-        current_pytest_position = validate.index(ha_pytest, current_pip_check_position)
+        current_job = release_runner.index("run_current()")
+        current_harness_position = release_runner.index(
+            current_harness_install, current_job
+        )
+        current_install_position = release_runner.index(current_install, current_job)
+        current_pip_check_position = release_runner.index(
+            pip_check, current_install_position
+        )
+        current_pytest_position = release_runner.index(
+            ha_pytest, current_pip_check_position
+        )
         self.assertLess(current_harness_position, current_install_position)
         self.assertLess(current_install_position, current_pip_check_position)
         self.assertLess(current_pip_check_position, current_pytest_position)
