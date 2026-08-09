@@ -51,7 +51,7 @@ run_actionlint() {
 run_unit() {
   run_actionlint
   run_python '
-    python -m pip install --upgrade ruff shellcheck-py zizmor &&
+    python -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0" &&
     zizmor --strict-collection --persona auditor . &&
     python -m ruff format --check custom_components tests scripts &&
     python -m ruff check custom_components tests scripts &&
@@ -71,7 +71,7 @@ if failures:
 PY
   '
 }
-run_minimum() { run_python 'python -m pip install "pytest-homeassistant-custom-component==0.13.354" && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip install --upgrade mypy && python -m pip check && python -m mypy --strict custom_components/beestat_statistics && pytest tests -q'; }
+run_minimum() { run_python 'python -m pip install "pytest-homeassistant-custom-component==0.13.354" && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip install "mypy==2.3.0" && python -m pip check && python -m mypy --strict custom_components/beestat_statistics && pytest tests -q'; }
 run_current() { run_python 'python -m pip install "pytest-homeassistant-custom-component==0.13.355" && python -m pip install --upgrade -r requirements-ha-current.txt && python -m pip check && pytest tests -q'; }
 run_release() { if [[ "$backend" == native ]]; then docker run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"; else podman run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"; fi; }
 case "$mode" in
