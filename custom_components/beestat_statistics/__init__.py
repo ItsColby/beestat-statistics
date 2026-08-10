@@ -615,7 +615,7 @@ class BeestatStatisticsImporter:
                 fallback_reason="forced_full_baseline",
             )
 
-        statistic_ids = cumulative_statistic_ids(runtime_data.config)
+        statistic_ids = cumulative_statistic_ids(runtime_data.config, cached_rows)
         if not statistic_ids:
             return SummaryImportPlan(
                 rows=cached_rows,
@@ -1018,6 +1018,7 @@ async def _async_handle_get_configuration(
         config=runtime.coordinator.data.config,
         point_lookback_days=_entry_point_lookback_days(entry),
         scan_interval_seconds=_entry_scan_interval_seconds(entry),
+        thermostat_rows=runtime.coordinator.data.thermostat_rows,
     )
 
 
@@ -1205,6 +1206,7 @@ async def async_setup_entry(
         entry,
         client,
         local_tz=local_tz,
+        scan_interval_seconds=_entry_scan_interval_seconds(entry),
     )
     importer = BeestatStatisticsImporter(
         hass,

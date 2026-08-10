@@ -75,6 +75,47 @@ class ConfigurationResponseTest(unittest.TestCase):
             ),
             point_lookback_days=45,
             scan_interval_seconds=21600,
+            thermostat_rows=(
+                {
+                    "id": 1001,
+                    "model_number": "EB-STATE5-01",
+                    "version": {"thermostatFirmwareVersion": "4.8.7"},
+                    "settings": {
+                        "differential_heat": 0.5,
+                        "differential_cool": 1.0,
+                        "unrelated": "excluded",
+                    },
+                    "system_type": {
+                        "reported": {"cool": {"equipment": "ac", "stages": 2}},
+                        "detected": {"heat": {"equipment": "furnace", "stages": 1}},
+                        "private_future_field": "excluded",
+                    },
+                    "property": {
+                        "age": 18,
+                        "square_feet": 2400,
+                        "stories": 3,
+                        "structure_type": "detached",
+                        "address": "excluded",
+                    },
+                    "program": {
+                        "climates": [
+                            {
+                                "climateRef": "sleep",
+                                "name": "Sleep",
+                                "isOccupied": False,
+                                "coolTemp": 74.0,
+                                "heatTemp": 67.0,
+                                "coolFan": "auto",
+                                "heatFan": "on",
+                                "isOptimized": True,
+                                "sensors": [{"name": "Room Sensor A"}],
+                                "unrelated": "excluded",
+                            }
+                        ]
+                    },
+                    "secret": "excluded",
+                },
+            ),
         )
 
         self.assertEqual(
@@ -108,9 +149,50 @@ class ConfigurationResponseTest(unittest.TestCase):
             response["effective_configuration"]["sensors"][0]["occupancy_entity_id"],
             "binary_sensor.room_sensor_a_occupancy",
         )
+        self.assertEqual(
+            response["source_details"]["thermostats"],
+            [
+                {
+                    "thermostat_id": 1001,
+                    "model_number": "EB-STATE5-01",
+                    "version": {"thermostatFirmwareVersion": "4.8.7"},
+                    "settings": {
+                        "differential_heat": 0.5,
+                        "differential_cool": 1.0,
+                    },
+                    "system_type": {
+                        "reported": {"cool": {"equipment": "ac", "stages": 2}},
+                        "detected": {"heat": {"equipment": "furnace", "stages": 1}},
+                    },
+                    "property": {
+                        "age": 18,
+                        "square_feet": 2400,
+                        "stories": 3,
+                        "structure_type": "detached",
+                    },
+                    "comfort_profiles": [
+                        {
+                            "ref": "sleep",
+                            "name": "Sleep",
+                            "is_occupied": False,
+                            "heat_temperature": 67.0,
+                            "cool_temperature": 74.0,
+                            "heat_fan": "on",
+                            "cool_fan": "auto",
+                            "is_optimized": True,
+                            "sensors": ["Room Sensor A"],
+                        }
+                    ],
+                }
+            ],
+        )
         serialized = repr(response)
         self.assertNotIn("not-returned", serialized)
         self.assertNotIn("private.invalid", serialized)
+        self.assertNotIn("unrelated", serialized)
+        self.assertNotIn("private_future_field", serialized)
+        self.assertNotIn("address", serialized)
+        self.assertNotIn("secret", serialized)
 
 
 if __name__ == "__main__":

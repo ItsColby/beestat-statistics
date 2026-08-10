@@ -63,7 +63,8 @@ DEFAULT_SCAN_INTERVAL_SECONDS = int(DEFAULT_SCAN_INTERVAL.total_seconds())
 DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS = 250.0
 DEFAULT_FILTER_MAX_AGE_DAYS = 90
 DEFAULT_FILTER_NOTICE_DAYS = 7
-CLOUD_DATA_STALE_THRESHOLD_MINUTES = 120
+CLOUD_DATA_STALE_MINIMUM_MINUTES = 120
+CLOUD_DATA_STALE_GRACE_MINUTES = 60
 FILTER_RECENT_RUNTIME_DAYS = 30
 MAX_FILTER_LIFETIME_RUNTIME_HOURS = 10000
 MAX_FILTER_MAX_AGE_DAYS = 730
@@ -111,6 +112,35 @@ RUNTIME_FIELD_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("fan", "Fan Runtime", ("sum_fan",)),
 )
 
+DETAILED_RUNTIME_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("cool_stage_1", "Cool Stage 1 Runtime", "sum_compressor_cool_1"),
+    ("cool_stage_2", "Cool Stage 2 Runtime", "sum_compressor_cool_2"),
+    (
+        "compressor_heat_stage_1",
+        "Compressor Heat Stage 1 Runtime",
+        "sum_compressor_heat_1",
+    ),
+    (
+        "compressor_heat_stage_2",
+        "Compressor Heat Stage 2 Runtime",
+        "sum_compressor_heat_2",
+    ),
+    (
+        "auxiliary_heat_stage_1",
+        "Auxiliary Heat Stage 1 Runtime",
+        "sum_auxiliary_heat_1",
+    ),
+    (
+        "auxiliary_heat_stage_2",
+        "Auxiliary Heat Stage 2 Runtime",
+        "sum_auxiliary_heat_2",
+    ),
+    ("humidifier", "Humidifier Runtime", "sum_humidifier"),
+    ("dehumidifier", "Dehumidifier Runtime", "sum_dehumidifier"),
+    ("ventilator", "Ventilator Runtime", "sum_ventilator"),
+    ("economizer", "Economizer Runtime", "sum_economizer"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SensorStatistic:
@@ -122,6 +152,7 @@ class SensorStatistic:
     field: str
     unit: str
     unit_class: str | None
+    scale: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -35,6 +35,7 @@ from .entity import (
     thermostat_suggested_object_id,
 )
 from .filter_forecast import FilterForecast, build_filter_forecast
+from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
@@ -968,12 +969,7 @@ def _next_scheduled_profile_attributes(
 
 def _schedule_profile_attributes(metadata: ThermostatMetadata) -> list[dict[str, Any]]:
     return [
-        {
-            "ref": profile.ref,
-            "name": profile.name,
-            "is_occupied": profile.is_occupied,
-            "sensors": list(profile.sensors),
-        }
+        schedule_profile_payload(profile, include_none=True)
         for profile in metadata.schedule_profiles
     ]
 

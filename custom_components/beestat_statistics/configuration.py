@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+from math import isfinite
 from typing import Any
 
 from .config_model import (
@@ -13,6 +14,7 @@ from .config_model import (
     filter_boundary_status,
 )
 from .const import CONF_SENSORS, CONF_THERMOSTATS
+from .profile import schedule_profile_payload, schedule_profiles_by_ref
 
 
 def configuration_response(
@@ -23,6 +25,7 @@ def configuration_response(
     config: BeestatConfig,
     point_lookback_days: int,
     scan_interval_seconds: int,
+    thermostat_rows: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     """Return the complete non-secret saved and effective configuration."""
 
@@ -50,7 +53,122 @@ def configuration_response(
             ],
             "sensors": [_configured_sensor(sensor) for sensor in config.sensors],
         },
+        "source_details": {
+            "thermostats": _thermostat_source_details(config, thermostat_rows),
+        },
     }
+
+
+def _thermostat_source_details(
+    config: BeestatConfig,
+    thermostat_rows: tuple[dict[str, Any], ...],
+) -> list[dict[str, Any]]:
+    """Return allow-listed Beestat hardware, system, property, and program data."""
+
+    rows_by_id = {
+        row_id: row
+        for row in thermostat_rows
+        if (row_id := _int_or_none(row.get("thermostat_id", row.get("id")))) is not None
+    }
+    details: list[dict[str, Any]] = []
+    for thermostat in config.thermostats:
+        row = rows_by_id.get(thermostat.thermostat_id)
+        if row is None:
+            continue
+        item: dict[str, Any] = {"thermostat_id": thermostat.thermostat_id}
+        _copy_scalar(item, row, "model_number")
+        version_value = row.get("version")
+        version = _allowlisted_mapping(
+            version_value,
+            ("thermostatFirmwareVersion", "firmware_version", "version"),
+        )
+        if version:
+            item["version"] = version
+        elif (version_scalar := _safe_scalar(version_value)) is not None:
+            item["version"] = version_scalar
+        settings = _allowlisted_mapping(
+            row.get("settings"),
+            ("differential_heat", "differential_cool"),
+        )
+        if settings:
+            item["settings"] = settings
+        system_type = _system_type(row.get("system_type"))
+        if system_type:
+            item["system_type"] = system_type
+        property_details = _allowlisted_mapping(
+            row.get("property"),
+            ("age", "square_feet", "stories", "structure_type"),
+        )
+        if property_details:
+            item["property"] = property_details
+        comfort_profiles = [
+            schedule_profile_payload(profile, include_none=False)
+            for profile in schedule_profiles_by_ref(row.get("program")).values()
+        ]
+        if comfort_profiles:
+            item["comfort_profiles"] = comfort_profiles
+        details.append(item)
+    return details
+
+
+def _system_type(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for source in ("reported", "detected"):
+        source_value = value.get(source)
+        if not isinstance(source_value, Mapping):
+            continue
+        systems: dict[str, Any] = {}
+        for system in ("heat", "auxiliary_heat", "cool"):
+            system_value = source_value.get(system)
+            details = _allowlisted_mapping(system_value, ("equipment", "stages"))
+            if details:
+                systems[system] = details
+        if systems:
+            result[source] = systems
+    return result
+
+
+def _allowlisted_mapping(value: Any, keys: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in keys:
+        scalar = _safe_scalar(value.get(key))
+        if scalar is not None:
+            result[key] = scalar
+    return result
+
+
+def _copy_scalar(target: dict[str, Any], source: Mapping[str, Any], key: str) -> None:
+    value = _safe_scalar(source.get(key))
+    if value is not None:
+        target[key] = value
+
+
+def _safe_scalar(value: Any) -> str | int | float | bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if isfinite(value) else None
+    return _text_or_none(value)
+
+
+def _text_or_none(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value else None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except OverflowError, TypeError, ValueError:
+        return None
 
 
 def _saved_overrides(

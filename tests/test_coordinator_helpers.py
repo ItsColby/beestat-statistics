@@ -711,7 +711,17 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 "timezone": "America/New_York",
                 "program": {
                     "climates": [
-                        {"climateRef": "sleep", "name": "Sleep", "isOccupied": False},
+                        {
+                            "climateRef": "sleep",
+                            "name": "Sleep",
+                            "isOccupied": False,
+                            "heatTemp": 67.0,
+                            "coolTemp": 74.0,
+                            "heatFan": "on",
+                            "coolFan": "auto",
+                            "isOptimized": True,
+                            "sensors": [{"name": "Bedroom"}],
+                        },
                         {"climateRef": "home", "name": "Home", "isOccupied": True},
                     ],
                     "schedule": schedule,
@@ -733,6 +743,13 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ],
             [("sleep", "Sleep", False), ("home", "Home", True)],
         )
+        sleep = snapshot["profiles"][0]
+        self.assertEqual(sleep.heat_temperature, 67.0)
+        self.assertEqual(sleep.cool_temperature, 74.0)
+        self.assertEqual(sleep.heat_fan, "on")
+        self.assertEqual(sleep.cool_fan, "auto")
+        self.assertTrue(sleep.is_optimized)
+        self.assertEqual(sleep.sensors, ("Bedroom",))
 
     def test_ecobee_schedule_days_are_monday_first(self) -> None:
         local_tz = ZoneInfo("America/New_York")
@@ -817,8 +834,17 @@ class CoordinatorHelpersTest(unittest.TestCase):
             121,
         )
         self.assertEqual(
-            self.coordinator._cloud_data_stale_deadline(data_end),
+            self.coordinator._cloud_data_stale_deadline(data_end, 120),
             data_end + threshold + timedelta(microseconds=1),
+        )
+
+        self.assertEqual(
+            self.coordinator.cloud_data_stale_threshold_minutes(21600),
+            420,
+        )
+        self.assertEqual(
+            self.coordinator.cloud_data_stale_threshold_minutes(300),
+            120,
         )
 
     def test_next_local_midnight_tracks_dst_day_lengths(self) -> None:
