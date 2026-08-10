@@ -166,9 +166,8 @@ _TENTHS_FAHRENHEIT_FIELDS = frozenset(
 
 _SECOND_FIELDS = frozenset(
     {
+        "backlightOffTime",
         "compressorProtectionMinTime",
-        "randomStartDelayCool",
-        "randomStartDelayHeat",
         "stage1CoolingDissipationTime",
         "stage1HeatingDissipationTime",
     }
@@ -176,7 +175,6 @@ _SECOND_FIELDS = frozenset(
 
 _MINUTE_FIELDS = frozenset(
     {
-        "backlightOffTime",
         "fanMinOnTime",
         "ventilatorMinOnTime",
         "ventilatorMinOnTimeAway",

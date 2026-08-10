@@ -54,6 +54,9 @@ class ThermostatSettingsTest(unittest.TestCase):
                         "followMeComfort": False,
                         "compressorProtectionMinTemp": 350,
                         "compressorProtectionMinTime": 300,
+                        "backlightOffTime": 10,
+                        "randomStartDelayCool": 1,
+                        "randomStartDelayHeat": 0,
                         "humidity": "36",
                         "userAccessCode": "1234",
                         "groupName": "private group",
@@ -88,6 +91,18 @@ class ThermostatSettingsTest(unittest.TestCase):
         self.assertEqual(
             snapshot.source_details["humidity_and_ventilation"]["humidity"],
             {"value": "36", "unit": "%"},
+        )
+        self.assertEqual(
+            snapshot.source_details["display_and_access"]["backlightOffTime"],
+            {"value": 10, "unit": "s"},
+        )
+        self.assertEqual(
+            snapshot.source_details["temperature_and_staging"]["randomStartDelayCool"],
+            1,
+        )
+        self.assertEqual(
+            snapshot.source_details["temperature_and_staging"]["randomStartDelayHeat"],
+            0,
         )
         serialized = repr(snapshot)
         for excluded in (

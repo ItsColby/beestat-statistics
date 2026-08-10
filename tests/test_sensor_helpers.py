@@ -345,7 +345,7 @@ class SensorHelpersTest(unittest.TestCase):
             "runtime_summary_latest_date",
             "runtime_summary_lag_days",
             "active_sensor_count",
-            "active_room_temperature_spread",
+            "current_profile_room_temperature_spread",
             "compressor_minimum_off_time",
             "compressor_minimum_outdoor_temperature",
             "heat_cool_minimum_delta",

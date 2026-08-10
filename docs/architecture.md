@@ -111,11 +111,14 @@
   It must not serialize arbitrary future fields, expose credentials, or become
   a second write owner for Ecobee settings.
 - Current-profile room temperature spread is an I/O-free local projection of
-  explicitly mapped HomeKit temperature entities. Profile changes use cached
-  Beestat program data; local source state changes rebuild the projection
+  explicitly mapped HomeKit temperature entities. Profile participants resolve
+  from Ecobee's capability-qualified climate sensor identifier through the
+  Beestat sensor identifier and internal sensor ID to one configured mapping;
+  mutable or duplicate display names are never identity. Profile changes use
+  cached Beestat program data; local source state changes rebuild the projection
   immediately without a Beestat request. Unknown, unavailable, nonnumeric,
-  duplicate-name, missing-unit, or unconvertible sources are rejected honestly.
-  Source observation age is not an availability gate.
+  missing-unit, unconvertible, missing-identity, or ambiguous-identity sources
+  are rejected honestly. Source observation age is not an availability gate.
 - Mapped Beestat entities link through the existing HomeKit/Ecobee device entry;
   they must not return that other integration's identifiers or connections in
   `device_info` or add the Beestat config entry as a device owner. Setup removes
@@ -308,7 +311,7 @@
   as diagnostic; keep advanced global import counters disabled by default.
   Scheduled profile and next transition are local projections of the cached
   Beestat schedule and do not claim the thermostat's live hold/mode state.
-- Keep the profile-aware active-room temperature spread enabled as one compact
+- Keep the current-profile room temperature spread enabled as one compact
   diagnostic measurement with unrecorded room-name/count attributes. Keep
   advanced Ecobee settings disabled by default in the entity registry; the
   response-only configuration action remains the complete private audit surface.

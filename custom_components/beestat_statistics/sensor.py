@@ -536,10 +536,10 @@ def _thermostat_sensor_descriptions(
         BeestatSensorEntityDescription(
             key=thermostat_entity_unique_id(
                 thermostat_id,
-                "active_room_temperature_spread",
+                "current_profile_room_temperature_spread",
             ),
-            name="Active room temperature spread",
-            translation_key="active_room_temperature_spread",
+            name="Current profile room temperature spread",
+            translation_key="current_profile_room_temperature_spread",
             native_unit_of_measurement=temperature_unit,
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -549,7 +549,7 @@ def _thermostat_sensor_descriptions(
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
-                "active_room_temperature_spread",
+                "current_profile_room_temperature_spread",
             ),
             value_fn=partial(
                 _room_temperature_spread_value,

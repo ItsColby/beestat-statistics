@@ -154,7 +154,7 @@
           "1": "mdi:account-check"
         }
       },
-      "active_room_temperature_spread": {
+      "current_profile_room_temperature_spread": {
         "default": "mdi:thermometer-lines"
       },
       "cloud_data_end": {

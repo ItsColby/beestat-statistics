@@ -309,7 +309,7 @@ Home Assistant diagnostics are available from the integration entry. Diagnostics
 
 For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, the complete effective mappings, and allow-listed Beestat source details already held by the coordinator: thermostat model/firmware, reported and detected HVAC equipment/stages, basic property characteristics, comfort-profile targets and membership, and useful Ecobee comfort, staging, range, humidity, ventilation, equipment, alert, display, access-policy, and audio settings. Unit-bearing raw Ecobee scalars are labeled or normalized in the response. It does not contact Beestat or change Home Assistant state. The response deliberately excludes the API key, API URL, account/location/billing/utility/management/device/access-code data, notification recipients, arbitrary future source fields, and raw history, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
 
-The per-thermostat **Active room temperature spread** sensor follows the sensors
+The per-thermostat **Current profile room temperature spread** sensor follows the sensors
 participating in the current Beestat comfort profile while reading their mapped
 local HomeKit temperature entities. It rebuilds immediately from local state
 changes and profile transitions without cloud I/O. Advanced setting entities
