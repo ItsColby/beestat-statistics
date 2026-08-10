@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import astuple, dataclass
+from datetime import date, datetime, timedelta
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,6 +17,7 @@ class FilterForecast:
     """Derived replacement forecast for one thermostat filter."""
 
     changed_date: date | None
+    changed_at: datetime | None
     changed_source: str | None
     runtime_hours: float | None
     recent_runtime_hours_per_day: float | None
@@ -75,6 +77,7 @@ def build_filter_forecast(
     )
     return FilterForecast(
         changed_date=changed_date,
+        changed_at=thermostat.filter_changed_at,
         changed_source=changed_source,
         runtime_hours=runtime_hours,
         recent_runtime_hours_per_day=recent_runtime_hours_per_day,
@@ -89,6 +92,25 @@ def build_filter_forecast(
         due=due,
         due_soon=due_soon,
     )
+
+
+def filter_forecast_revision(forecast: FilterForecast) -> str:
+    """Return a stable content revision for one coherent forecast snapshot."""
+
+    payload = "\x1f".join(_revision_value(value) for value in astuple(forecast))
+    return sha256(payload.encode()).hexdigest()[:16]
+
+
+def _revision_value(value: object) -> str:
+    """Return one unambiguous, stable revision component."""
+
+    if value is None:
+        return "<none>"
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def _remaining_runtime_hours(
