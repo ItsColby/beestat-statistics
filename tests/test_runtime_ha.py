@@ -184,8 +184,8 @@ async def test_source_refresh_replaces_real_stale_timer(
     freezer: Any,
 ) -> None:
     before = datetime(2026, 7, 1, 13, tzinfo=UTC)
-    old_deadline = datetime(2026, 7, 1, 13, 30, 30, 1, tzinfo=UTC)
-    new_deadline = datetime(2026, 7, 1, 14, 30, 30, 1, tzinfo=UTC)
+    old_deadline = datetime(2026, 7, 1, 18, 30, 30, 1, tzinfo=UTC)
+    new_deadline = datetime(2026, 7, 1, 19, 30, 30, 1, tzinfo=UTC)
     freezer.move_to(before)
     entry, coordinator, client = _coordinator_data(
         hass,
@@ -224,7 +224,7 @@ async def test_source_refresh_replaces_real_stale_timer(
     async_fire_time_changed_exact(hass, new_deadline)
     await hass.async_block_till_done()
 
-    assert coordinator.data.thermostat_metadata[1].data_lag_minutes == 121
+    assert coordinator.data.thermostat_metadata[1].data_lag_minutes == 421
     assert coordinator.data.projected_at == new_deadline
     assert client.calls == []
     assert updates == ["updated"]

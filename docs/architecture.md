@@ -101,6 +101,11 @@
 - Use HomeKit/Ecobee entities in Home Assistant for live local thermostat, room
   temperature, occupancy, motion, and control state. Use Beestat for history,
   runtime summaries, cloud profile context, alerts, and filter forecast inputs.
+- The private read-only configuration action may project only explicitly
+  allow-listed thermostat hardware, equipment-stage, property, differential,
+  and comfort-profile fields already cached by the coordinator. It must not
+  widen the API surface, serialize arbitrary future fields, expose credentials,
+  or become a second write owner for Ecobee settings.
 - Mapped Beestat entities link through the existing HomeKit/Ecobee device entry;
   they must not return that other integration's identifiers or connections in
   `device_info` or add the Beestat config entry as a device owner. Setup removes
@@ -176,6 +181,18 @@
   is owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;
   `tests/test_runtime_ha.py` owns the exact-Core scheduler/lifecycle cases, but
   their presence is not executed dependency-closure evidence.
+- Cloud-stale state derives from the configured acquisition cadence: the larger
+  of the two-hour minimum or one poll interval plus 60 minutes of source grace.
+  The same computed threshold owns both entity state and the I/O-free projection
+  deadline; static thresholds that oscillate during a healthy poll interval are
+  not permitted.
+- Recorder owns Beestat historical analytics. Room occupancy is imported as a
+  daily percentage only when a mapped local occupancy entity proves capability.
+  Stage/accessory runtime series are stable cumulative IDs but are created only
+  after their source field has a non-zero observation, preserving aggregate
+  runtime while avoiding empty hardware series. Finite IAQ source values remain
+  unchanged; unsupported, missing, non-finite, or unrepresentable values are
+  rejected instead of clamped.
 - Filter changes are owned by the Home Assistant `date` entity, its colocated
   mark-changed button, and the optional legacy `input_datetime` helper bridge.
   The button first persists the local date and exact UTC click timestamp, because
@@ -213,6 +230,8 @@
   configuration Repairs, and runtime config modeling.
 - `sensor.py`, `binary_sensor.py`, `button.py`, `date.py`, `entity.py`: Home
   Assistant entities and device attachment behavior.
+- `profile.py`: pure comfort-profile normalization and the shared private/entity
+  projection contract.
 - `statistics_builder.py`: conversion of Beestat rows into Home Assistant
   external Recorder statistics. Preserve cumulative-series correctness when
   changing runtime or degree-day imports.

@@ -249,6 +249,11 @@ The separate 15-minute filter-boundary retry can read Beestat and persist a
 result, so it is not part of this local projection scheduler; a timezone change
 during that read leaves the boundary pending for a fresh effect attempt.
 
+The cloud-stale diagnostic follows that acquisition owner. Its threshold is the
+larger of two hours or the configured poll interval plus 60 minutes of source
+publication grace. The default six-hour cadence therefore becomes stale only
+after 420 minutes of source lag, while short cadences retain the two-hour floor.
+
 The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
 
 When a thermostat is mapped to a `filter_changed_entity_id`, changes to that Home Assistant helper also trigger a Beestat statistics import so filter-runtime statistics catch up without a separate automation. The helper is a compatibility bridge; the Home Assistant **Filter changed date** entity is preferred for new changes.
@@ -298,18 +303,26 @@ The `beestat_statistics.repair_filter_change_boundary` service action assigns a 
 
 Home Assistant diagnostics are available from the integration entry. Diagnostics use an allow-listed aggregate of saved configuration rather than serializing the config-entry payload. They redact credentials, URLs, names/slugs, Beestat and Home Assistant identifiers, exact filter-change details, and comfort-profile names/timing while retaining configuration ownership/counts, status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts plus at most three identifier-free resource/time examples, automatic filter-alert dismissal results, freshness, and compact aggregate thermostat evidence. Remote response bodies and arbitrary API error payload details are never included; HA-visible failures use bounded operation, status, and category messages. Raw Beestat history is not included.
 
-For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, and the complete effective mappings without contacting Beestat or changing Home Assistant state. The response deliberately excludes the API key and API URL, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
+For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, the complete effective mappings, and allow-listed Beestat source details already held by the coordinator: thermostat model/firmware, reported and detected HVAC equipment/stages, heat/cool differentials, basic property characteristics, and comfort-profile targets, fan/ventilation modes, optimization, and sensor membership. It does not contact Beestat or change Home Assistant state. The response deliberately excludes the API key, API URL, arbitrary future source fields, and raw history, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
 
 ## Recorder Statistics
 
 The integration imports external statistics under source `beestat`, including:
 
 - Cumulative cool, heat, and fan runtime hours
+- Cumulative stage and accessory runtime hours, created only for hardware fields
+  with observed non-zero runtime
 - Cumulative thermostat-summary heating and cooling degree days
 - Daily room temperature mean/min/max
+- Daily room occupancy percentage mean/min/max when a mapped local occupancy
+  entity proves that capability
 - Daily thermostat heat/cool setpoint mean/min/max
 - Daily thermostat-summary indoor humidity, outdoor temperature mean/min/max, and outdoor humidity means
 - Daily air quality, CO2, and TVOC mean/min/max for mapped sensors that expose those Beestat fields
+
+Finite Beestat IAQ values are preserved as source observations, including
+legitimate spikes. Missing, non-numeric, non-finite, and unrepresentable values
+are excluded from Recorder rather than guessed, clamped, or replaced.
 
 Temperature statistics use Home Assistant recorder temperature metadata, so Home Assistant can display them in the preferred frontend unit.
 

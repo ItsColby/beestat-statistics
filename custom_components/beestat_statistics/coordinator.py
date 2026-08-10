@@ -32,15 +32,18 @@ from .config_payload import (
     update_thermostat_override_options,
 )
 from .const import (
-    CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+    CLOUD_DATA_STALE_GRACE_MINUTES,
+    CLOUD_DATA_STALE_MINIMUM_MINUTES,
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_AT,
+    DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
     FILTER_RECENT_RUNTIME_DAYS,
 )
 from .filter_forecast import build_filter_forecast
+from .profile import ScheduleProfile, schedule_profiles_by_ref
 
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
@@ -106,16 +109,6 @@ class SensorMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class ScheduleProfile:
-    """One Ecobee comfort profile from the thermostat program."""
-
-    ref: str
-    name: str
-    is_occupied: bool | None
-    sensors: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class BeestatRuntimeData:
     """Latest Beestat runtime summary readback."""
 
@@ -173,6 +166,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         client: BeestatClient,
         *,
         local_tz: ZoneInfo,
+        scan_interval_seconds: int = DEFAULT_SCAN_INTERVAL_SECONDS,
     ) -> None:
         super().__init__(
             hass,
@@ -183,6 +177,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._client = client
         self._beestat_config_entry = config_entry
         self._local_tz = local_tz
+        self._cloud_data_stale_threshold_minutes = cloud_data_stale_threshold_minutes(
+            scan_interval_seconds
+        )
         self._timezone_revision = 0
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
@@ -230,6 +227,16 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Return the Home Assistant local time zone used for Beestat dates."""
 
         return self._local_tz
+
+    @property
+    def cloud_data_stale_threshold_minutes(self) -> int:
+        """Return the cadence-aware Beestat source-lag threshold."""
+
+        return getattr(
+            self,
+            "_cloud_data_stale_threshold_minutes",
+            CLOUD_DATA_STALE_MINIMUM_MINUTES,
+        )
 
     @callback
     def capture_temporal_context(self) -> TemporalContext:
@@ -397,7 +404,11 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             data = self.data
         if data is None:
             return
-        deadline = _next_projection_deadline(data, self._local_tz)
+        deadline = _next_projection_deadline(
+            data,
+            self._local_tz,
+            self.cloud_data_stale_threshold_minutes,
+        )
         if now is None:
             now = datetime.now(UTC)
         if deadline <= now:
@@ -1020,6 +1031,7 @@ def _projection_changed(
 def _next_projection_deadline(
     data: BeestatRuntimeData,
     local_tz: ZoneInfo,
+    stale_threshold_minutes: int = CLOUD_DATA_STALE_MINIMUM_MINUTES,
 ) -> datetime:
     """Return the earliest cached schedule, freshness, or local-date boundary."""
 
@@ -1033,7 +1045,10 @@ def _next_projection_deadline(
             deadlines.append(metadata.next_scheduled_at)
         if metadata.data_end is None:
             continue
-        stale_at = _cloud_data_stale_deadline(metadata.data_end)
+        stale_at = _cloud_data_stale_deadline(
+            metadata.data_end,
+            stale_threshold_minutes,
+        )
         if stale_at > projection_at:
             deadlines.append(stale_at)
     return min(deadlines)
@@ -1411,34 +1426,7 @@ def _empty_schedule_snapshot() -> dict[str, Any]:
 
 
 def _schedule_profiles_by_ref(program: dict[str, Any]) -> dict[str, ScheduleProfile]:
-    climates = program.get("climates")
-    if not isinstance(climates, list):
-        return {}
-
-    profiles: dict[str, ScheduleProfile] = {}
-    for climate in climates:
-        if not isinstance(climate, dict):
-            continue
-        ref = _string_or_none(climate.get("climateRef"))
-        if ref is None:
-            continue
-        sensors = climate.get("sensors")
-        sensor_names = (
-            tuple(
-                item["name"]
-                for item in sensors
-                if isinstance(item, dict) and isinstance(item.get("name"), str)
-            )
-            if isinstance(sensors, list)
-            else ()
-        )
-        profiles[ref] = ScheduleProfile(
-            ref=ref,
-            name=_string_or_none(climate.get("name")) or ref,
-            is_occupied=_optional_bool(climate.get("isOccupied")),
-            sensors=sensor_names,
-        )
-    return profiles
+    return schedule_profiles_by_ref(program)
 
 
 def _valid_schedule(value: Any) -> bool:
@@ -1570,11 +1558,24 @@ def _lag_minutes(now: datetime, then: datetime | None) -> int | None:
     return max(round((now - then).total_seconds() / 60), 0)
 
 
-def _cloud_data_stale_deadline(data_end: datetime) -> datetime:
+def cloud_data_stale_threshold_minutes(scan_interval_seconds: int) -> int:
+    """Return a lag threshold that permits one normal poll plus source grace."""
+
+    scan_minutes = max((scan_interval_seconds + 59) // 60, 0)
+    return max(
+        CLOUD_DATA_STALE_MINIMUM_MINUTES,
+        scan_minutes + CLOUD_DATA_STALE_GRACE_MINUTES,
+    )
+
+
+def _cloud_data_stale_deadline(
+    data_end: datetime,
+    threshold_minutes: int,
+) -> datetime:
     """Return when rounded cloud lag first exceeds the shared threshold."""
 
     return data_end + timedelta(
-        minutes=CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+        minutes=threshold_minutes,
         seconds=30,
         microseconds=1,
     )

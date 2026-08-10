@@ -297,6 +297,18 @@ def build_sensor_statistics(config: BeestatConfig) -> tuple[SensorStatistic, ...
                     STATISTIC_UNIT_CLASS_UNITLESS,
                 )
             )
+        if sensor.occupancy_entity_id is not None:
+            specs.append(
+                SensorStatistic(
+                    sensor.sensor_id,
+                    f"{sensor.slug}_occupancy",
+                    f"Beestat {sensor.name} Occupancy",
+                    "occupancy",
+                    "%",
+                    STATISTIC_UNIT_CLASS_UNITLESS,
+                    100.0,
+                )
+            )
     return tuple(specs)
 
 

@@ -15,7 +15,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .alerts import active_alert_examples, classify_active_alerts
 from .config_model import ConfiguredSensor, ConfiguredThermostat
 from .const import (
-    CLOUD_DATA_STALE_THRESHOLD_MINUTES,
     sensor_entity_unique_id,
     thermostat_entity_unique_id,
 )
@@ -664,12 +663,12 @@ class BeestatCloudDataStaleProblemBinarySensor(
 
     @property
     def is_on(self) -> bool | None:
-        """Return true when cloud data is more than two hours stale."""
+        """Return true when cloud data exceeds the configured cadence envelope."""
 
         metadata = self._metadata
         if metadata is None or metadata.data_lag_minutes is None:
             return None
-        return metadata.data_lag_minutes > CLOUD_DATA_STALE_THRESHOLD_MINUTES
+        return metadata.data_lag_minutes > _cloud_stale_threshold(self.coordinator)
 
     @property
     def extra_state_attributes(self) -> dict[str, object] | None:
@@ -680,7 +679,7 @@ class BeestatCloudDataStaleProblemBinarySensor(
             return None
         return {
             "lag_minutes": metadata.data_lag_minutes,
-            "threshold_minutes": CLOUD_DATA_STALE_THRESHOLD_MINUTES,
+            "threshold_minutes": _cloud_stale_threshold(self.coordinator),
         }
 
     @property
@@ -689,6 +688,12 @@ class BeestatCloudDataStaleProblemBinarySensor(
         if data is None:
             return None
         return data.thermostat_metadata.get(self._thermostat.thermostat_id)
+
+
+def _cloud_stale_threshold(coordinator: Any) -> int:
+    """Return the coordinator threshold with legacy test-double compatibility."""
+
+    return int(getattr(coordinator, "cloud_data_stale_threshold_minutes", 120))
 
 
 def _mapping_summary(data: BeestatRuntimeData) -> dict[str, int]:

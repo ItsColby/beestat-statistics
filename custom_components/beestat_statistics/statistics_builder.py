@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .config_model import BeestatConfig
 from .config_model import build_sensor_statistics as build_sensor_specs
 from .const import (
+    DETAILED_RUNTIME_FIELDS,
     RUNTIME_FIELD_GROUPS,
     STATISTIC_MEAN_TYPE_ARITHMETIC,
     STATISTIC_MEAN_TYPE_NONE,
@@ -54,14 +55,29 @@ class CumulativeStatisticSeed:
     sum: float
 
 
-def cumulative_statistic_ids(config: BeestatConfig) -> tuple[str, ...]:
+def cumulative_statistic_ids(
+    config: BeestatConfig,
+    summary_rows: list[dict[str, Any]] | None = None,
+) -> tuple[str, ...]:
     """Return cumulative statistic IDs that require Recorder seeding."""
 
     statistic_ids: list[str] = []
+    rows_by_thermostat = (
+        _summary_rows_by_thermostat(summary_rows) if summary_rows is not None else {}
+    )
     for thermostat in config.thermostats:
         statistic_ids.extend(
             f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
             for runtime_slug, _runtime_label, _fields in RUNTIME_FIELD_GROUPS
+        )
+        thermostat_rows = rows_by_thermostat.get(thermostat.thermostat_id, [])
+        statistic_ids.extend(
+            f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
+            for runtime_slug, _runtime_label, field in DETAILED_RUNTIME_FIELDS
+            if any(
+                (_as_float(row.get(field)) or 0.0) != 0
+                for _local_day, row in thermostat_rows
+            )
         )
         statistic_ids.extend(
             f"{STATISTIC_SOURCE}:{thermostat.slug}_{spec.statistic_suffix}"
@@ -138,40 +154,77 @@ def build_runtime_statistics(
         if not rows:
             continue
         for runtime_slug, runtime_label, fields in RUNTIME_FIELD_GROUPS:
-            total_hours = 0.0
-            stats: list[dict[str, Any]] = []
-            for local_day, row in rows:
-                daily_hours = _hours_for_fields(row, fields)
-                next_total = _finite_add(total_hours, daily_hours)
-                if next_total is None:
-                    break
-                total_hours = next_total
-                stats.append(
-                    {
-                        "start": _local_midnight(local_day, local_tz),
-                        "state": round(total_hours, 6),
-                        "sum": round(total_hours, 6),
-                        "last_reset": None,
-                    }
-                )
             series.append(
-                StatisticsSeries(
-                    metadata={
-                        "has_sum": True,
-                        "mean_type": STATISTIC_MEAN_TYPE_NONE,
-                        "name": f"Beestat {thermostat.name} {runtime_label}",
-                        "source": STATISTIC_SOURCE,
-                        "statistic_id": (
-                            f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
-                        ),
-                        "unit_class": STATISTIC_UNIT_CLASS_DURATION,
-                        "unit_of_measurement": "h",
-                    },
-                    statistics=stats,
-                    source_rows=len(rows),
+                _build_cumulative_runtime_series(
+                    thermostat_slug=thermostat.slug,
+                    thermostat_name=thermostat.name,
+                    runtime_slug=runtime_slug,
+                    runtime_label=runtime_label,
+                    fields=fields,
+                    rows=rows,
+                    local_tz=local_tz,
+                )
+            )
+        for runtime_slug, runtime_label, field in DETAILED_RUNTIME_FIELDS:
+            if not any((_as_float(row.get(field)) or 0.0) != 0 for _, row in rows):
+                continue
+            series.append(
+                _build_cumulative_runtime_series(
+                    thermostat_slug=thermostat.slug,
+                    thermostat_name=thermostat.name,
+                    runtime_slug=runtime_slug,
+                    runtime_label=runtime_label,
+                    fields=(field,),
+                    rows=rows,
+                    local_tz=local_tz,
                 )
             )
     return series
+
+
+def _build_cumulative_runtime_series(
+    *,
+    thermostat_slug: str,
+    thermostat_name: str,
+    runtime_slug: str,
+    runtime_label: str,
+    fields: tuple[str, ...],
+    rows: list[tuple[date, dict[str, Any]]],
+    local_tz: ZoneInfo,
+) -> StatisticsSeries:
+    """Build one cumulative runtime series from one or more source fields."""
+
+    total_hours = 0.0
+    stats: list[dict[str, Any]] = []
+    for local_day, row in rows:
+        daily_hours = _hours_for_fields(row, fields)
+        next_total = _finite_add(total_hours, daily_hours)
+        if next_total is None:
+            break
+        total_hours = next_total
+        stats.append(
+            {
+                "start": _local_midnight(local_day, local_tz),
+                "state": round(total_hours, 6),
+                "sum": round(total_hours, 6),
+                "last_reset": None,
+            }
+        )
+    return StatisticsSeries(
+        metadata={
+            "has_sum": True,
+            "mean_type": STATISTIC_MEAN_TYPE_NONE,
+            "name": f"Beestat {thermostat_name} {runtime_label}",
+            "source": STATISTIC_SOURCE,
+            "statistic_id": (
+                f"{STATISTIC_SOURCE}:{thermostat_slug}_{runtime_slug}_runtime_hours"
+            ),
+            "unit_class": STATISTIC_UNIT_CLASS_DURATION,
+            "unit_of_measurement": "h",
+        },
+        statistics=stats,
+        source_rows=len(rows),
+    )
 
 
 def build_summary_sum_statistics(
@@ -349,7 +402,7 @@ def build_sensor_statistics(
         grouped: dict[date, list[float]] = {}
         source_count = 0
         for row in sensor_rows_by_id.get(spec.sensor_id, []):
-            value = _as_float(row.get(spec.field))
+            value = _sensor_statistic_value(row.get(spec.field), spec.scale)
             local_day = _parse_timestamp_day(row.get("timestamp"), local_tz)
             if value is None or local_day is None:
                 continue
@@ -388,6 +441,22 @@ def build_sensor_statistics(
             )
         )
     return series
+
+
+def _sensor_statistic_value(value: Any, scale: float) -> float | None:
+    """Return one supported sensor statistic value with its unit scale applied."""
+
+    if scale == 100.0:
+        if value is True or value == 1:
+            return 100.0
+        if value is False or value == 0:
+            return 0.0
+        return None
+    parsed = _as_float(value)
+    if parsed is None:
+        return None
+    scaled = parsed * scale
+    return scaled if isfinite(scaled) else None
 
 
 def _parse_summary_day(row: dict[str, Any]) -> date:

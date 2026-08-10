@@ -127,7 +127,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                     label="Main",
                     data_begin=None,
                     data_end=datetime(2026, 7, 5, 11, tzinfo=UTC),
-                    data_lag_minutes=180,
+                    data_lag_minutes=480,
                     current_climate_ref=None,
                     current_climate_name=None,
                     scheduled_climate_ref=None,
@@ -188,17 +188,17 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(cloud_stale.is_on)
         self.assertEqual(
             cloud_stale.extra_state_attributes,
-            {"lag_minutes": 180, "threshold_minutes": 120},
+            {"lag_minutes": 480, "threshold_minutes": 420},
         )
         metadata = data.thermostat_metadata[1]
         fake_coordinator.data = replace(
             data,
-            thermostat_metadata={1: replace(metadata, data_lag_minutes=120)},
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=420)},
         )
         self.assertFalse(cloud_stale.is_on)
         fake_coordinator.data = replace(
             data,
-            thermostat_metadata={1: replace(metadata, data_lag_minutes=121)},
+            thermostat_metadata={1: replace(metadata, data_lag_minutes=421)},
         )
         self.assertTrue(cloud_stale.is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
@@ -408,6 +408,7 @@ class _FakeCoordinator:
         self.data = data
         self.hass = object()
         self.local_tz = ZoneInfo("America/New_York")
+        self.cloud_data_stale_threshold_minutes = 420
         self.last_import_partial = False
         self.last_import_skipped_windows = 0
         self.last_import_skipped_runtime_thermostat_windows = 0

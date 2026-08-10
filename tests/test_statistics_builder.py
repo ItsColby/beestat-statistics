@@ -58,6 +58,7 @@ class StatisticsBuilderTest(unittest.TestCase):
                     include_air_quality=False,
                     include_co2=False,
                     include_voc=False,
+                    occupancy_entity_id="binary_sensor.room_sensor_a_occupancy",
                 ),
             ),
         )
@@ -185,16 +186,19 @@ class StatisticsBuilderTest(unittest.TestCase):
                     "sensor_id": 10,
                     "timestamp": "2026-07-01T04:30:00Z",
                     "temperature": 70,
+                    "occupancy": True,
                 },
                 {
                     "sensor_id": 10,
                     "timestamp": "2026-07-01T05:30:00Z",
                     "temperature": 74,
+                    "occupancy": False,
                 },
                 {
                     "sensor_id": 10,
                     "timestamp": "2026-07-02T04:30:00Z",
                     "temperature": 68,
+                    "occupancy": 1,
                 },
                 {"sensor_id": 10, "timestamp": "not-a-timestamp", "temperature": 120},
                 {
@@ -242,6 +246,64 @@ class StatisticsBuilderTest(unittest.TestCase):
                     "max": 68.0,
                 },
             ],
+        )
+        occupancy = _series(series, "beestat:room_sensor_a_occupancy")
+        self.assertEqual(occupancy.metadata["unit_of_measurement"], "%")
+        self.assertEqual(
+            occupancy.statistics,
+            [
+                {
+                    "start": datetime(2026, 7, 1, tzinfo=self.local_tz),
+                    "mean": 50.0,
+                    "min": 0.0,
+                    "max": 100.0,
+                },
+                {
+                    "start": datetime(2026, 7, 2, tzinfo=self.local_tz),
+                    "mean": 100.0,
+                    "min": 100.0,
+                    "max": 100.0,
+                },
+            ],
+        )
+
+    def test_runtime_breakdowns_are_emitted_only_for_observed_hardware(self) -> None:
+        series = statistics_builder.build_runtime_statistics(
+            [
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-01",
+                    "sum_compressor_cool_1": 3600,
+                    "sum_compressor_cool_2": 0,
+                    "sum_humidifier": 900,
+                    "sum_dehumidifier": 0,
+                },
+                {
+                    "thermostat_id": 1,
+                    "date": "2026-07-02",
+                    "sum_compressor_cool_1": 1800,
+                    "sum_compressor_cool_2": 0,
+                    "sum_humidifier": 0,
+                    "sum_dehumidifier": 0,
+                },
+            ],
+            self.local_tz,
+            self.config,
+        )
+
+        cool_stage_1 = _series(series, "beestat:zone_a_cool_stage_1_runtime_hours")
+        humidifier = _series(series, "beestat:zone_a_humidifier_runtime_hours")
+        self.assertEqual([row["state"] for row in cool_stage_1.statistics], [1.0, 1.5])
+        self.assertEqual([row["state"] for row in humidifier.statistics], [0.25, 0.25])
+        self.assertFalse(
+            any(
+                item.statistic_id
+                in {
+                    "beestat:zone_a_cool_stage_2_runtime_hours",
+                    "beestat:zone_a_dehumidifier_runtime_hours",
+                }
+                for item in series
+            )
         )
 
     def test_summary_and_setpoint_statistics_use_current_recorder_metadata(
@@ -301,6 +363,28 @@ class StatisticsBuilderTest(unittest.TestCase):
                 "beestat:zone_a_cool_runtime_hours",
                 "beestat:zone_a_heat_runtime_hours",
                 "beestat:zone_a_fan_runtime_hours",
+                "beestat:zone_a_heating_degree_days",
+                "beestat:zone_a_cooling_degree_days",
+            ),
+        )
+        self.assertEqual(
+            statistics_builder.cumulative_statistic_ids(
+                self.config,
+                [
+                    {
+                        "thermostat_id": 1,
+                        "date": "2026-07-01",
+                        "sum_compressor_cool_1": 3600,
+                        "sum_humidifier": 300,
+                    }
+                ],
+            ),
+            (
+                "beestat:zone_a_cool_runtime_hours",
+                "beestat:zone_a_heat_runtime_hours",
+                "beestat:zone_a_fan_runtime_hours",
+                "beestat:zone_a_cool_stage_1_runtime_hours",
+                "beestat:zone_a_humidifier_runtime_hours",
                 "beestat:zone_a_heating_degree_days",
                 "beestat:zone_a_cooling_degree_days",
             ),

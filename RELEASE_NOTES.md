@@ -1,3 +1,34 @@
+# Beestat Statistics v2026.8.11
+
+## Added
+
+- Import daily room-sensor occupancy percentages when a mapped local occupancy
+  entity proves the source capability. Boolean Beestat samples become native
+  Recorder percentage mean/min/max statistics without adding another option or
+  live-state owner.
+- Import cumulative HVAC stage and accessory runtime statistics only after the
+  corresponding Beestat summary field has a non-zero observation. Existing
+  aggregate cool, heat, and fan runtime series remain unchanged.
+- Expose allow-listed thermostat model, firmware, equipment-stage, property,
+  differential, and complete comfort-profile details through the private,
+  read-only `get_configuration` action. The response still excludes credentials,
+  connection URLs, arbitrary source fields, and raw history.
+
+## Changed
+
+- Derive the cloud-data-stale threshold from the configured acquisition cadence:
+  one normal poll plus 60 minutes of source-publication grace, with the existing
+  two-hour minimum. The default six-hour cadence therefore uses 420 minutes and
+  no longer reports healthy between-poll data as stale.
+- Preserve comfort-profile heat/cool targets, fan modes, optimization, ventilation,
+  and sensor membership in the existing unrecorded scheduled-profile attributes.
+
+## Quality
+
+- Add regression coverage for cadence boundaries, allow-list exclusion, profile
+  parsing, occupancy scaling, zero-suppressed hardware detail, cumulative IDs,
+  and finite Recorder output.
+
 # Beestat Statistics v2026.8.10
 
 ## Fixed
