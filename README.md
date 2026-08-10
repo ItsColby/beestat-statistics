@@ -254,7 +254,7 @@ larger of two hours or the configured poll interval plus 60 minutes of source
 publication grace. The default six-hour cadence therefore becomes stale only
 after 420 minutes of source lag, while short cadences retain the two-hour floor.
 
-The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
+The integration intentionally keeps the Beestat API boundary narrow: `runtime.sync`, `thermostat.sync`, `sensor.sync`, `thermostat.read_id`, `sensor.read_id`, `ecobee_thermostat.read_id`, windowed `runtime_thermostat_summary.read_id`, windowed `runtime_thermostat.read` / `runtime_sensor.read`, and `thermostat.dismiss_alert` for Beestat-side filter alert acknowledgement after a local Home Assistant filter change. The raw Ecobee row is used only after Beestat's existing thermostat sync and is immediately reduced to a strict configuration allowlist; account, location, billing, utility, management, device-identifier, notification-recipient, and access-code data is never retained. Cumulative runtime and degree-day imports use a Recorder-seeded 7-day summary overlap when Home Assistant already has a trustworthy prior cumulative row; otherwise the importer falls back to the full Beestat summary baseline.
 
 When a thermostat is mapped to a `filter_changed_entity_id`, changes to that Home Assistant helper also trigger a Beestat statistics import so filter-runtime statistics catch up without a separate automation. The helper is a compatibility bridge; the Home Assistant **Filter changed date** entity is preferred for new changes.
 
@@ -283,6 +283,10 @@ https://raw.githubusercontent.com/ItsColby/beestat-statistics/main/blueprints/au
 - Show whether Beestat summary data is fresh for each thermostat.
 - Chart long-term HVAC runtime, weather-load context, setpoints, and room temperatures with Recorder statistics.
 - See which Ecobee room sensors Beestat says are active in the current comfort profile.
+- Measure the current comfort profile's local room-temperature spread from the
+  mapped HomeKit sensors, with unavailable sources rejected instead of aged out.
+- Inspect useful non-secret Ecobee configuration in the response-only action and
+  optionally enable a small set of advanced diagnostic entities later.
 - Track filter runtime and replacement forecasts from Beestat data, optionally initialized from a legacy Home Assistant filter-changed helper.
 - Distinguish routine maintenance reminders from equipment-looking active alerts in dashboard summaries and HA problem cards.
 
@@ -303,7 +307,15 @@ The `beestat_statistics.repair_filter_change_boundary` service action assigns a 
 
 Home Assistant diagnostics are available from the integration entry. Diagnostics use an allow-listed aggregate of saved configuration rather than serializing the config-entry payload. They redact credentials, URLs, names/slugs, Beestat and Home Assistant identifiers, exact filter-change details, and comfort-profile names/timing while retaining configuration ownership/counts, status, row counts, import metrics, import summary mode/window/fallback details, skipped-window counts plus at most three identifier-free resource/time examples, automatic filter-alert dismissal results, freshness, and compact aggregate thermostat evidence. Remote response bodies and arbitrary API error payload details are never included; HA-visible failures use bounded operation, status, and category messages. Raw Beestat history is not included.
 
-For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, the complete effective mappings, and allow-listed Beestat source details already held by the coordinator: thermostat model/firmware, reported and detected HVAC equipment/stages, heat/cool differentials, basic property characteristics, and comfort-profile targets, fan/ventilation modes, optimization, and sensor membership. It does not contact Beestat or change Home Assistant state. The response deliberately excludes the API key, API URL, arbitrary future source fields, and raw history, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
+For an exact local configuration audit, call the read-only `beestat_statistics.get_configuration` action with this integration's configuration entry. It returns the effective timing, saved thermostat and room-sensor overrides, the complete effective mappings, and allow-listed Beestat source details already held by the coordinator: thermostat model/firmware, reported and detected HVAC equipment/stages, basic property characteristics, comfort-profile targets and membership, and useful Ecobee comfort, staging, range, humidity, ventilation, equipment, alert, display, access-policy, and audio settings. Unit-bearing raw Ecobee scalars are labeled or normalized in the response. It does not contact Beestat or change Home Assistant state. The response deliberately excludes the API key, API URL, account/location/billing/utility/management/device/access-code data, notification recipients, arbitrary future source fields, and raw history, but it includes local names, Beestat IDs, and Home Assistant entity IDs; treat it as private household configuration and do not attach it to public issues.
+
+The per-thermostat **Active room temperature spread** sensor follows the sensors
+participating in the current Beestat comfort profile while reading their mapped
+local HomeKit temperature entities. It rebuilds immediately from local state
+changes and profile transitions without cloud I/O. Advanced setting entities
+such as Auto Away, Follow Me, Smart Circulation, preheat/precool, compressor
+protection, heat/cool minimum delta, and hold action are disabled by default so
+they remain discoverable without crowding routine device and dashboard surfaces.
 
 ## Recorder Statistics
 

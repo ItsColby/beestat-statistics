@@ -345,6 +345,11 @@ class SensorHelpersTest(unittest.TestCase):
             "runtime_summary_latest_date",
             "runtime_summary_lag_days",
             "active_sensor_count",
+            "active_room_temperature_spread",
+            "compressor_minimum_off_time",
+            "compressor_minimum_outdoor_temperature",
+            "heat_cool_minimum_delta",
+            "hold_action",
             "filter_runtime_hours",
             "filter_recent_runtime_hours_per_day",
             "filter_remaining_runtime_hours",
@@ -352,6 +357,13 @@ class SensorHelpersTest(unittest.TestCase):
             "filter_max_age_due_date",
         ):
             self.assertEqual("diagnostic", descriptions[key].entity_category, key)
+        for key in (
+            "compressor_minimum_off_time",
+            "compressor_minimum_outdoor_temperature",
+            "heat_cool_minimum_delta",
+            "hold_action",
+        ):
+            self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
         self.assertEqual(
             "_filter_forecast_snapshot_attributes",
             descriptions["filter_due_date"].extra_attributes_fn.func.__name__,
@@ -450,6 +462,7 @@ class SensorHelpersTest(unittest.TestCase):
         sensor.SensorDeviceClass = types.SimpleNamespace(
             DATE="date",
             DURATION="duration",
+            TEMPERATURE="temperature",
             TIMESTAMP="timestamp",
         )
         sensor.SensorEntity = object

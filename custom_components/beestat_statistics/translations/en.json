@@ -5,6 +5,9 @@
       "active_alert": {
         "name": "Active alert"
       },
+      "auto_away_enabled": {
+        "name": "Auto away"
+      },
       "equipment_alert": {
         "name": "Equipment alert"
       },
@@ -13,6 +16,9 @@
       },
       "filter_due_soon": {
         "name": "Filter due soon"
+      },
+      "follow_me_enabled": {
+        "name": "Follow me"
       },
       "cloud_data_stale": {
         "name": "Cloud data stale"
@@ -26,8 +32,17 @@
       "runtime_summary_stale": {
         "name": "Runtime summary stale"
       },
+      "precooling_enabled": {
+        "name": "Precooling"
+      },
+      "preheating_enabled": {
+        "name": "Preheating"
+      },
       "sensor_in_use": {
         "name": "Sensor in use"
+      },
+      "smart_circulation_enabled": {
+        "name": "Smart circulation"
       }
     },
     "button": {
@@ -56,6 +71,9 @@
       "active_sensor_count": {
         "name": "Active sensor count"
       },
+      "active_room_temperature_spread": {
+        "name": "Active room temperature spread"
+      },
       "cloud_data_end": {
         "name": "Cloud data end"
       },
@@ -64,6 +82,12 @@
       },
       "current_comfort_profile": {
         "name": "Current comfort profile"
+      },
+      "compressor_minimum_off_time": {
+        "name": "Compressor minimum off time"
+      },
+      "compressor_minimum_outdoor_temperature": {
+        "name": "Compressor minimum outdoor temperature"
       },
       "filter_recent_runtime_hours_per_day": {
         "name": "Filter recent runtime hours per day"
@@ -85,6 +109,12 @@
       },
       "filter_runtime_hours": {
         "name": "Filter runtime hours"
+      },
+      "heat_cool_minimum_delta": {
+        "name": "Heat cool minimum delta"
+      },
+      "hold_action": {
+        "name": "Hold action"
       },
       "metadata_sync_last_success": {
         "name": "Metadata sync last success"
@@ -246,7 +276,7 @@
   "services": {
     "get_configuration": {
       "name": "Get Beestat configuration",
-      "description": "Return the complete non-secret saved overrides and effective local Beestat mapping without changing integration state or contacting Beestat.",
+      "description": "Return saved overrides, effective local mappings, comfort profiles, and the privacy-allowlisted cached Ecobee configuration without changing state or contacting Beestat.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",

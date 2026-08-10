@@ -41,6 +41,11 @@ from .filter_forecast import (
 )
 from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+from .thermostat_settings import (
+    integer_setting,
+    temperature_fahrenheit,
+    text_setting,
+)
 
 if TYPE_CHECKING:
     from homeassistant.const import EntityCategory
@@ -193,6 +198,7 @@ def _build_entities(
     data = coordinator.data
     thermostats = data.config.thermostats if data else ()
     for thermostat in thermostats:
+        spread = data.room_temperature_spreads.get(thermostat.thermostat_id)
         entities.extend(
             BeestatSensor(
                 coordinator,
@@ -202,6 +208,7 @@ def _build_entities(
             )
             for description in _thermostat_sensor_descriptions(
                 thermostat=thermostat,
+                temperature_unit=spread.unit if spread is not None else None,
             )
         )
     return entities
@@ -248,6 +255,12 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "next_scheduled_profile_ref",
             "profile_ref",
             "profile_sensors",
+            "participating_sensor_count",
+            "participating_sensor_names",
+            "valid_sensor_count",
+            "unavailable_sensor_names",
+            "hottest_sensor_name",
+            "coldest_sensor_name",
             "profiles",
             "room_sensor_count",
             "scheduled_profile",
@@ -373,6 +386,7 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
 def _thermostat_sensor_descriptions(
     *,
     thermostat: ConfiguredThermostat,
+    temperature_unit: str | None = None,
 ) -> tuple[BeestatSensorEntityDescription, ...]:
     thermostat_id = thermostat.thermostat_id
     return (
@@ -517,6 +531,145 @@ def _thermostat_sensor_descriptions(
                 _thermostat_metadata_value,
                 thermostat_id=thermostat_id,
                 field="active_sensor_count",
+            ),
+        ),
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(
+                thermostat_id,
+                "active_room_temperature_spread",
+            ),
+            name="Active room temperature spread",
+            translation_key="active_room_temperature_spread",
+            native_unit_of_measurement=temperature_unit,
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            available_fn=partial(
+                _room_temperature_spread_available,
+                thermostat_id=thermostat_id,
+            ),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat,
+                "active_room_temperature_spread",
+            ),
+            value_fn=partial(
+                _room_temperature_spread_value,
+                thermostat_id=thermostat_id,
+            ),
+            extra_attributes_fn=partial(
+                _room_temperature_spread_attributes,
+                thermostat_id=thermostat_id,
+            ),
+        ),
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(
+                thermostat_id,
+                "compressor_minimum_off_time",
+            ),
+            name="Compressor minimum off time",
+            translation_key="compressor_minimum_off_time",
+            device_class=SensorDeviceClass.DURATION,
+            native_unit_of_measurement="s",
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            available_fn=partial(
+                _thermostat_setting_available,
+                thermostat_id=thermostat_id,
+                key="compressorProtectionMinTime",
+                value_type="integer",
+            ),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat,
+                "compressor_minimum_off_time",
+            ),
+            value_fn=partial(
+                _thermostat_setting_value,
+                thermostat_id=thermostat_id,
+                key="compressorProtectionMinTime",
+                value_type="integer",
+            ),
+        ),
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(
+                thermostat_id,
+                "compressor_minimum_outdoor_temperature",
+            ),
+            name="Compressor minimum outdoor temperature",
+            translation_key="compressor_minimum_outdoor_temperature",
+            device_class=SensorDeviceClass.TEMPERATURE,
+            native_unit_of_measurement="°F",
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            available_fn=partial(
+                _thermostat_setting_available,
+                thermostat_id=thermostat_id,
+                key="compressorProtectionMinTemp",
+                value_type="temperature",
+            ),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat,
+                "compressor_minimum_outdoor_temperature",
+            ),
+            value_fn=partial(
+                _thermostat_setting_value,
+                thermostat_id=thermostat_id,
+                key="compressorProtectionMinTemp",
+                value_type="temperature",
+            ),
+        ),
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(
+                thermostat_id,
+                "heat_cool_minimum_delta",
+            ),
+            name="Heat cool minimum delta",
+            translation_key="heat_cool_minimum_delta",
+            native_unit_of_measurement="°F",
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            available_fn=partial(
+                _thermostat_setting_available,
+                thermostat_id=thermostat_id,
+                key="heatCoolMinDelta",
+                value_type="temperature",
+            ),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat,
+                "heat_cool_minimum_delta",
+            ),
+            value_fn=partial(
+                _thermostat_setting_value,
+                thermostat_id=thermostat_id,
+                key="heatCoolMinDelta",
+                value_type="temperature",
+            ),
+        ),
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(
+                thermostat_id,
+                "hold_action",
+            ),
+            name="Hold action",
+            translation_key="hold_action",
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            available_fn=partial(
+                _thermostat_setting_available,
+                thermostat_id=thermostat_id,
+                key="holdAction",
+                value_type="text",
+            ),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat,
+                "hold_action",
+            ),
+            value_fn=partial(
+                _thermostat_setting_value,
+                thermostat_id=thermostat_id,
+                key="holdAction",
+                value_type="text",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -872,6 +1025,84 @@ def _thermostat_config(
             if thermostat.thermostat_id == thermostat_id
         ),
         None,
+    )
+
+
+def _room_temperature_spread_value(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> float | None:
+    data = coordinator.data
+    if (
+        data is None
+        or (projection := data.room_temperature_spreads.get(thermostat_id)) is None
+    ):
+        return None
+    return projection.value
+
+
+def _room_temperature_spread_available(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> bool:
+    return _room_temperature_spread_value(coordinator, thermostat_id) is not None
+
+
+def _room_temperature_spread_attributes(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> dict[str, Any] | None:
+    data = coordinator.data
+    if (
+        data is None
+        or (projection := data.room_temperature_spreads.get(thermostat_id)) is None
+    ):
+        return None
+    return {
+        "participating_sensor_count": projection.participating_sensor_count,
+        "valid_sensor_count": projection.valid_sensor_count,
+        "participating_sensor_names": list(projection.participating_sensor_names),
+        "unavailable_sensor_names": list(projection.unavailable_sensor_names),
+        "hottest_sensor_name": projection.hottest_sensor_name,
+        "coldest_sensor_name": projection.coldest_sensor_name,
+    }
+
+
+def _thermostat_setting_value(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    key: str,
+    value_type: str,
+) -> SensorValue:
+    data = coordinator.data
+    if (
+        data is None
+        or (snapshot := data.thermostat_settings.get(thermostat_id)) is None
+    ):
+        return None
+    if value_type == "temperature":
+        return temperature_fahrenheit(snapshot, key)
+    if value_type == "integer":
+        return integer_setting(snapshot, key)
+    if value_type == "text":
+        return text_setting(snapshot, key)
+    return None
+
+
+def _thermostat_setting_available(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    key: str,
+    value_type: str,
+) -> bool:
+    return (
+        _thermostat_setting_value(
+            coordinator,
+            thermostat_id,
+            key,
+            value_type,
+        )
+        is not None
     )
 
 

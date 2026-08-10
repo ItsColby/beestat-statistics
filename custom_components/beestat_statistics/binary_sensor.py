@@ -35,6 +35,7 @@ from .entity import (
 )
 from .filter_forecast import FilterForecast, build_filter_forecast
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+from .thermostat_settings import boolean_setting
 
 if TYPE_CHECKING:
     from homeassistant.const import EntityCategory
@@ -47,6 +48,38 @@ else:
         from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 PARALLEL_UPDATES = 0
+
+_THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, str, bool], ...] = (
+    ("auto_away_enabled", "Auto away", "auto_away_enabled", "autoAway", False),
+    (
+        "follow_me_enabled",
+        "Follow me",
+        "follow_me_enabled",
+        "followMeComfort",
+        False,
+    ),
+    (
+        "smart_circulation_enabled",
+        "Smart circulation",
+        "smart_circulation_enabled",
+        "smartCirculation",
+        False,
+    ),
+    (
+        "preheating_enabled",
+        "Preheating",
+        "preheating_enabled",
+        "disablePreHeating",
+        True,
+    ),
+    (
+        "precooling_enabled",
+        "Precooling",
+        "precooling_enabled",
+        "disablePreCooling",
+        True,
+    ),
+)
 
 
 async def async_setup_entry(
@@ -106,7 +139,94 @@ def _build_entities(
         BeestatCloudDataStaleProblemBinarySensor(coordinator, thermostat)
         for thermostat in data.config.thermostats
     )
+    entities.extend(
+        BeestatThermostatSettingBinarySensor(
+            coordinator,
+            thermostat,
+            key=key,
+            name=name,
+            translation_key=translation_key,
+            setting_key=setting_key,
+            inverted=inverted,
+        )
+        for thermostat in data.config.thermostats
+        for key, name, translation_key, setting_key, inverted in (
+            _THERMOSTAT_SETTING_BINARY_SENSORS
+        )
+    )
     return entities
+
+
+class BeestatThermostatSettingBinarySensor(
+    CoordinatorEntity[BeestatRuntimeDataCoordinator],
+    BinarySensorEntity,
+):
+    """Expose one useful read-only Ecobee setting without making it routine UI."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: BeestatRuntimeDataCoordinator,
+        thermostat: ConfiguredThermostat,
+        *,
+        key: str,
+        name: str,
+        translation_key: str,
+        setting_key: str,
+        inverted: bool,
+    ) -> None:
+        super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
+        self._thermostat = thermostat
+        self._setting_key = setting_key
+        self._inverted = inverted
+        self._attr_name = name
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = thermostat_entity_unique_id(
+            thermostat.thermostat_id,
+            key,
+        )
+        self._attr_suggested_object_id = thermostat_suggested_object_id(
+            thermostat,
+            key,
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo | None:
+        """Return the mapped thermostat device."""
+
+        return thermostat_device_info(self._thermostat)
+
+    @property
+    def available(self) -> bool:
+        """Return whether the exact boolean is in the allow-listed snapshot."""
+
+        return super().available and self._source_value is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the effective enabled state, inverting disable flags."""
+
+        value = self._source_value
+        if value is None:
+            return None
+        return not value if self._inverted else value
+
+    @property
+    def _source_value(self) -> bool | None:
+        data = self.coordinator.data
+        if (
+            data is None
+            or (
+                snapshot := data.thermostat_settings.get(self._thermostat.thermostat_id)
+            )
+            is None
+        ):
+            return None
+        return boolean_setting(snapshot, self._setting_key)
 
 
 class BeestatImportPartialProblemBinarySensor(

@@ -22,6 +22,13 @@
           "on": "mdi:alert-circle"
         }
       },
+      "auto_away_enabled": {
+        "default": "mdi:home-export-outline",
+        "state": {
+          "off": "mdi:home-outline",
+          "on": "mdi:home-export-outline"
+        }
+      },
       "equipment_alert": {
         "default": "mdi:alert-circle-outline",
         "state": {
@@ -41,6 +48,13 @@
         "state": {
           "off": "mdi:air-filter",
           "on": "mdi:air-filter-alert"
+        }
+      },
+      "follow_me_enabled": {
+        "default": "mdi:motion-sensor",
+        "state": {
+          "off": "mdi:motion-sensor-off",
+          "on": "mdi:motion-sensor"
         }
       },
       "cloud_data_stale": {
@@ -71,11 +85,32 @@
           "on": "mdi:calendar-alert"
         }
       },
+      "precooling_enabled": {
+        "default": "mdi:snowflake-clock",
+        "state": {
+          "off": "mdi:snowflake-off",
+          "on": "mdi:snowflake-clock"
+        }
+      },
+      "preheating_enabled": {
+        "default": "mdi:heat-wave",
+        "state": {
+          "off": "mdi:radiator-off",
+          "on": "mdi:heat-wave"
+        }
+      },
       "sensor_in_use": {
         "default": "mdi:account-outline",
         "state": {
           "off": "mdi:account-outline",
           "on": "mdi:account-check"
+        }
+      },
+      "smart_circulation_enabled": {
+        "default": "mdi:fan-auto",
+        "state": {
+          "off": "mdi:fan-off",
+          "on": "mdi:fan-auto"
         }
       }
     },
@@ -119,6 +154,9 @@
           "1": "mdi:account-check"
         }
       },
+      "active_room_temperature_spread": {
+        "default": "mdi:thermometer-lines"
+      },
       "cloud_data_end": {
         "default": "mdi:cloud-clock"
       },
@@ -132,6 +170,12 @@
       },
       "current_comfort_profile": {
         "default": "mdi:home-thermometer"
+      },
+      "compressor_minimum_off_time": {
+        "default": "mdi:timer-lock-outline"
+      },
+      "compressor_minimum_outdoor_temperature": {
+        "default": "mdi:snowflake-thermometer"
       },
       "filter_recent_runtime_hours_per_day": {
         "default": "mdi:clock-outline"
@@ -153,6 +197,12 @@
       },
       "filter_runtime_hours": {
         "default": "mdi:air-filter"
+      },
+      "heat_cool_minimum_delta": {
+        "default": "mdi:thermometer-chevron-up"
+      },
+      "hold_action": {
+        "default": "mdi:gesture-tap-hold"
       },
       "metadata_sync_last_success": {
         "default": "mdi:cloud-sync"

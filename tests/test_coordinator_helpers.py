@@ -132,6 +132,109 @@ class CoordinatorHelpersTest(unittest.TestCase):
             )
         )
 
+    def test_profile_room_spread_uses_mapped_local_values_and_rejects_unknown(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            temperature_entity_id="sensor.zone_a_temperature",
+        )
+        sensors = (
+            self.config_model.ConfiguredSensor(
+                sensor_id=2,
+                slug="room_a",
+                name="Room A",
+                thermostat_id=1,
+                thermostat_slug="zone_a",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id="sensor.room_a_temperature",
+            ),
+            self.config_model.ConfiguredSensor(
+                sensor_id=3,
+                slug="room_b",
+                name="Room B",
+                thermostat_id=1,
+                thermostat_slug="zone_a",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id="sensor.room_b_temperature",
+            ),
+        )
+        state_values = {
+            "sensor.zone_a_temperature": types.SimpleNamespace(
+                state="76",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+            "sensor.room_a_temperature": types.SimpleNamespace(
+                state="24",
+                attributes={"unit_of_measurement": "°C"},
+            ),
+            "sensor.room_b_temperature": types.SimpleNamespace(
+                state="unknown",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+        }
+        hass = types.SimpleNamespace(
+            states=types.SimpleNamespace(get=state_values.get),
+            config=types.SimpleNamespace(
+                units=types.SimpleNamespace(temperature_unit="°F")
+            ),
+        )
+        metadata = {
+            1: types.SimpleNamespace(
+                current_profile_sensor_names=(
+                    "Zone A",
+                    "Room A",
+                    "room a",
+                    "Room B",
+                )
+            )
+        }
+
+        projections = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            metadata,
+        )
+
+        projection = projections[1]
+        self.assertEqual(projection.value, 0.8)
+        self.assertEqual(projection.valid_sensor_count, 2)
+        self.assertEqual(projection.participating_sensor_count, 3)
+        self.assertEqual(projection.unavailable_sensor_names, ("Room B",))
+        self.assertEqual(projection.hottest_sensor_name, "Zone A")
+        self.assertEqual(projection.coldest_sensor_name, "Room A")
+
+        state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
+            state="78",
+            attributes={"unit_of_measurement": "°F"},
+        )
+        recovered = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            metadata,
+        )[1]
+        self.assertEqual(recovered.value, 2.8)
+        self.assertEqual(recovered.valid_sensor_count, 3)
+        self.assertEqual(recovered.unavailable_sensor_names, ())
+        self.assertEqual(
+            self.coordinator._convert_temperature(273.15, "K", "°C"),
+            0,
+        )
+
     def test_cached_rows_use_one_last_effective_identity(self) -> None:
         """Duplicate cloud identities cannot create duplicate entities or totals."""
 
@@ -316,6 +419,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             *,
             temporal_context,
             fetched_at=None,
+            thermostat_settings=None,
         ):
             built.append(
                 (

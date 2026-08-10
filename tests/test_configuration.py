@@ -34,6 +34,7 @@ class ConfigurationResponseTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         _load_module("const")
         cls.config_model = _load_module("config_model")
+        cls.thermostat_settings = _load_module("thermostat_settings")
         cls.configuration = _load_module("configuration")
 
     def test_response_includes_saved_and_effective_configuration(self) -> None:
@@ -116,6 +117,16 @@ class ConfigurationResponseTest(unittest.TestCase):
                     "secret": "excluded",
                 },
             ),
+            thermostat_settings={
+                1001: self.thermostat_settings.ThermostatSettingsSnapshot(
+                    thermostat_id=1001,
+                    source_details={
+                        "comfort_and_schedule": {"autoAway": True},
+                    },
+                    settings={"autoAway": True},
+                    audio={},
+                )
+            },
         )
 
         self.assertEqual(
@@ -183,6 +194,9 @@ class ConfigurationResponseTest(unittest.TestCase):
                             "sensors": ["Room Sensor A"],
                         }
                     ],
+                    "ecobee_configuration": {
+                        "comfort_and_schedule": {"autoAway": True}
+                    },
                 }
             ],
         )

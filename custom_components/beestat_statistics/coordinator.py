@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, time, timedelta
 from math import fsum, isfinite
 from typing import TYPE_CHECKING, Any, cast
@@ -44,6 +45,10 @@ from .const import (
 )
 from .filter_forecast import build_filter_forecast
 from .profile import ScheduleProfile, schedule_profiles_by_ref
+from .thermostat_settings import (
+    ThermostatSettingsSnapshot,
+    build_thermostat_settings_snapshots,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _FILTER_BOUNDARY_RETRY_DELAY = timedelta(minutes=15)
@@ -109,6 +114,20 @@ class SensorMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class RoomTemperatureSpread:
+    """Local temperatures for the sensors participating in the current profile."""
+
+    value: float | None
+    unit: str | None
+    participating_sensor_count: int
+    valid_sensor_count: int
+    participating_sensor_names: tuple[str, ...]
+    unavailable_sensor_names: tuple[str, ...]
+    hottest_sensor_name: str | None
+    coldest_sensor_name: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BeestatRuntimeData:
     """Latest Beestat runtime summary readback."""
 
@@ -127,6 +146,12 @@ class BeestatRuntimeData:
     thermostats: dict[int, ThermostatRuntimeSummary]
     thermostat_metadata: dict[int, ThermostatMetadata]
     sensor_metadata: dict[int, SensorMetadata]
+    thermostat_settings: dict[int, ThermostatSettingsSnapshot] = dataclass_field(
+        default_factory=dict
+    )
+    room_temperature_spreads: dict[int, RoomTemperatureSpread] = dataclass_field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +405,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 data.summary_window_end,
                 temporal_context=self.capture_temporal_context(),
                 fetched_at=data.fetched_at,
+                thermostat_settings=data.thermostat_settings,
             )
         )
 
@@ -464,6 +490,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 timezone_revision=self._timezone_revision,
             ),
             fetched_at=data.fetched_at,
+            thermostat_settings=data.thermostat_settings,
         )
         if _projection_changed(
             data,
@@ -635,6 +662,21 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 "sensor_id",
                 "id",
             )
+            thermostat_settings: dict[int, ThermostatSettingsSnapshot] = {}
+            try:
+                ecobee_thermostat_rows = await self._client.async_read_id(
+                    "ecobee_thermostat"
+                )
+            except Exception as err:  # noqa: BLE001 - optional metadata fails closed
+                _LOGGER.warning(
+                    "Beestat Ecobee settings projection remains unavailable (%s)",
+                    exception_fingerprint(err),
+                )
+            else:
+                thermostat_settings = build_thermostat_settings_snapshots(
+                    thermostat_rows_tuple,
+                    ecobee_thermostat_rows,
+                )
             config = build_beestat_config(
                 self.hass,
                 thermostat_rows_tuple,
@@ -717,6 +759,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 summary_window_start,
                 summary_window_end,
                 temporal_context=temporal_context,
+                thermostat_settings=thermostat_settings,
             )
         except Exception as err:
             self._async_record_error(err)
@@ -860,6 +903,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         temporal_context: TemporalContext | None = None,
         evaluated_at: datetime | None = None,
         fetched_at: datetime | None = None,
+        thermostat_settings: dict[int, ThermostatSettingsSnapshot] | None = None,
     ) -> BeestatRuntimeData:
         if temporal_context is None:
             temporal_context = TemporalContext(
@@ -928,6 +972,13 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 ),
             )
 
+        thermostat_metadata = _build_thermostat_metadata(
+            thermostat_rows_tuple,
+            sensor_metadata,
+            projected_at,
+            local_tz,
+            config.thermostats,
+        )
         return BeestatRuntimeData(
             config=config,
             fetched_at=source_fetched_at,
@@ -942,14 +993,14 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             sensor_rows=sensor_rows_tuple,
             summary_row_count=len(rows_tuple),
             thermostats=summaries,
-            thermostat_metadata=_build_thermostat_metadata(
-                thermostat_rows_tuple,
-                sensor_metadata,
-                projected_at,
-                local_tz,
-                config.thermostats,
-            ),
+            thermostat_metadata=thermostat_metadata,
             sensor_metadata=sensor_metadata,
+            thermostat_settings=thermostat_settings or {},
+            room_temperature_spreads=_build_room_temperature_spreads(
+                self.hass,
+                config,
+                thermostat_metadata,
+            ),
         )
 
     def _summary_window_start(
@@ -1324,6 +1375,163 @@ def _build_thermostat_metadata(
             active_alerts=active_alerts,
         )
     return metadata
+
+
+def _build_room_temperature_spreads(
+    hass: HomeAssistant,
+    config: BeestatConfig,
+    thermostat_metadata: dict[int, ThermostatMetadata],
+) -> dict[int, RoomTemperatureSpread]:
+    """Build profile-aware spreads from explicitly mapped local sources."""
+
+    states = getattr(hass, "states", None)
+    if states is None or not callable(getattr(states, "get", None)):
+        return {}
+    target_unit = _configured_temperature_unit(hass)
+    projections: dict[int, RoomTemperatureSpread] = {}
+    for thermostat in config.thermostats:
+        metadata = thermostat_metadata.get(thermostat.thermostat_id)
+        if metadata is None or not metadata.current_profile_sensor_names:
+            continue
+        sources: dict[str, list[tuple[str, str]]] = {}
+        if thermostat.temperature_entity_id is not None:
+            sources.setdefault(_normalized_name(thermostat.name), []).append(
+                (thermostat.name, thermostat.temperature_entity_id)
+            )
+        for sensor in config.sensors:
+            if (
+                sensor.thermostat_id != thermostat.thermostat_id
+                or sensor.temperature_entity_id is None
+            ):
+                continue
+            sources.setdefault(_normalized_name(sensor.name), []).append(
+                (sensor.name, sensor.temperature_entity_id)
+            )
+
+        participating_names = _unique_names(metadata.current_profile_sensor_names)
+        valid: list[tuple[str, float]] = []
+        unavailable: list[str] = []
+        resolved_unit = target_unit
+        for profile_name in participating_names:
+            candidates = sources.get(_normalized_name(profile_name), [])
+            if len(candidates) != 1:
+                unavailable.append(profile_name)
+                continue
+            source_name, entity_id = candidates[0]
+            state = states.get(entity_id)
+            reading = _temperature_state_value(state, resolved_unit)
+            if reading is None:
+                unavailable.append(profile_name)
+                continue
+            value, source_unit = reading
+            if resolved_unit is None:
+                resolved_unit = source_unit
+            valid.append((source_name, value))
+
+        hottest = max(valid, key=lambda item: item[1]) if valid else None
+        coldest = min(valid, key=lambda item: item[1]) if valid else None
+        spread = (
+            round(hottest[1] - coldest[1], 2)
+            if hottest is not None and coldest is not None and len(valid) >= 2
+            else None
+        )
+        projections[thermostat.thermostat_id] = RoomTemperatureSpread(
+            value=spread,
+            unit=resolved_unit,
+            participating_sensor_count=len(participating_names),
+            valid_sensor_count=len(valid),
+            participating_sensor_names=participating_names,
+            unavailable_sensor_names=tuple(unavailable),
+            hottest_sensor_name=hottest[0] if hottest is not None else None,
+            coldest_sensor_name=coldest[0] if coldest is not None else None,
+        )
+    return projections
+
+
+def _configured_temperature_unit(hass: HomeAssistant) -> str | None:
+    config = getattr(hass, "config", None)
+    units = getattr(config, "units", None)
+    return _canonical_temperature_unit(getattr(units, "temperature_unit", None))
+
+
+def _temperature_state_value(
+    state: Any,
+    target_unit: str | None,
+) -> tuple[float, str] | None:
+    if state is None or str(getattr(state, "state", "")).lower() in {
+        "unknown",
+        "unavailable",
+        "none",
+        "",
+    }:
+        return None
+    value = _finite_float(getattr(state, "state", None))
+    attributes = getattr(state, "attributes", None)
+    source_unit = _canonical_temperature_unit(
+        attributes.get("unit_of_measurement") if isinstance(attributes, dict) else None
+    )
+    if value is None or source_unit is None:
+        return None
+    destination = target_unit or source_unit
+    converted = _convert_temperature(value, source_unit, destination)
+    return (converted, destination) if converted is not None else None
+
+
+def _convert_temperature(value: float, source: str, target: str) -> float | None:
+    if source == target:
+        return value
+    if source == "°F" and target == "°C":
+        return (value - 32) * 5 / 9
+    if source == "°C" and target == "°F":
+        return value * 9 / 5 + 32
+    if source == "°C" and target == "K":
+        return value + 273.15
+    if source == "K" and target == "°C":
+        return value - 273.15
+    if source == "°F" and target == "K":
+        return (value - 32) * 5 / 9 + 273.15
+    if source == "K" and target == "°F":
+        return (value - 273.15) * 9 / 5 + 32
+    return None
+
+
+def _canonical_temperature_unit(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().upper().replace(" ", "")
+    if normalized in {"°F", "F", "DEGREESF", "FAHRENHEIT"}:
+        return "°F"
+    if normalized in {"°C", "C", "DEGREESC", "CELSIUS"}:
+        return "°C"
+    if normalized in {"K", "°K", "KELVIN"}:
+        return "K"
+    return None
+
+
+def _finite_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        parsed = float(value)
+    except OverflowError, TypeError, ValueError:
+        return None
+    return parsed if isfinite(parsed) else None
+
+
+def _normalized_name(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _unique_names(values: tuple[str, ...]) -> tuple[str, ...]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _normalized_name(value)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(value)
+    return tuple(unique)
 
 
 def _beestat_filter_changed_date(row: dict[str, Any]) -> date | None:
