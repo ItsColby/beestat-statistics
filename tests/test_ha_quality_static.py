@@ -588,7 +588,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("pytest tests -q", readme)
         self.assertIn("async_process_deps_reqs", config_flow_tests)
         dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
-        self.assertEqual(2, dependabot.count("interval: weekly"))
+        self.assertEqual(1, dependabot.count("package-ecosystem: github-actions"))
+        self.assertNotIn("package-ecosystem: pip", dependabot)
+        self.assertEqual(1, dependabot.count("interval: weekly"))
         self.assertNotIn("interval: daily", dependabot)
         self.assertIn("exact-pinned", readme)
 
