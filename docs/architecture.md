@@ -286,6 +286,11 @@
   public fixtures, or public documentation examples.
 - Keep filter-date source, helper, and click-boundary attributes available in
   current state but excluded from Recorder history.
+- Keep the primary filter due-date entity as the authoritative automation
+  publication for one coherent forecast snapshot. Its unrecorded attributes
+  carry the filter change boundary, runtime inputs, thresholds, intermediate
+  dates, due state, and a deterministic content revision from one coordinator
+  model so consumers never join sequential sibling-entity updates.
 - Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
   as the primary thermostat surface. Categorize freshness dates/lags, active
   sensor count, filter runtime details, intermediate forecast dates, and

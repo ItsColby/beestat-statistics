@@ -1,3 +1,18 @@
+# Beestat Statistics v2026.8.12
+
+## Changed
+
+- Publish every filter forecast field consumed by automations as one coherent,
+  content-revisioned snapshot on the primary **Filter due date** entity. The
+  snapshot includes the change boundary, runtime inputs, thresholds,
+  intermediate dates, remaining days, and due state so consumers no longer
+  combine sequential sibling-entity updates.
+
+## Quality
+
+- Add focused coverage for stable content revisions, runtime-only forecast
+  changes, exact change timestamps, and the authoritative entity wiring.
+
 # Beestat Statistics v2026.8.11
 
 ## Added

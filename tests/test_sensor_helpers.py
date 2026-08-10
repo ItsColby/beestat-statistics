@@ -7,8 +7,9 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_sensor_test"
@@ -182,6 +183,63 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertFalse(forecast.due)
         self.assertTrue(forecast.due_soon)
 
+    def test_filter_due_date_snapshot_is_atomic_and_content_revisioned(self) -> None:
+        changed_at = datetime(2026, 6, 18, 14, 30, tzinfo=UTC)
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_changed_at=changed_at,
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+            filter_notice_days=7,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=200,
+            recent_runtime_hours_per_day=10,
+        )
+        data = types.SimpleNamespace(
+            config=self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=(),
+            ),
+            thermostats={1: summary},
+            projected_at=datetime(2026, 7, 5, 12, tzinfo=UTC),
+        )
+        coordinator = types.SimpleNamespace(
+            data=data,
+            local_tz=ZoneInfo("America/New_York"),
+        )
+
+        snapshot = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
+        repeated = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot, repeated)
+        self.assertEqual(snapshot["changed_at"], changed_at.isoformat())
+        self.assertEqual(snapshot["runtime_hours"], 200)
+        self.assertEqual(snapshot["remaining_runtime_hours"], 50.0)
+        self.assertEqual(snapshot["runtime_due_date"], "2026-07-10")
+        self.assertEqual(snapshot["max_age_due_date"], "2026-09-16")
+        self.assertEqual(snapshot["due_date"], "2026-07-10")
+        self.assertEqual(snapshot["days_remaining"], 5)
+        original_revision = snapshot["forecast_revision"]
+
+        data.thermostats[1] = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=201,
+            recent_runtime_hours_per_day=10,
+        )
+        changed = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
+
+        self.assertIsNotNone(changed)
+        assert changed is not None
+        self.assertNotEqual(changed["forecast_revision"], original_revision)
+
     def test_filter_forecast_resets_runtime_on_replacement_date(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
@@ -294,6 +352,10 @@ class SensorHelpersTest(unittest.TestCase):
             "filter_max_age_due_date",
         ):
             self.assertEqual("diagnostic", descriptions[key].entity_category, key)
+        self.assertEqual(
+            "_filter_forecast_snapshot_attributes",
+            descriptions["filter_due_date"].extra_attributes_fn.func.__name__,
+        )
 
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(

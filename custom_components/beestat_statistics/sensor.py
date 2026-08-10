@@ -34,7 +34,11 @@ from .entity import (
     thermostat_device_info,
     thermostat_suggested_object_id,
 )
-from .filter_forecast import FilterForecast, build_filter_forecast
+from .filter_forecast import (
+    FilterForecast,
+    build_filter_forecast,
+    filter_forecast_revision,
+)
 from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
@@ -252,11 +256,20 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "active_alerts",
             "alert_category",
             "changed_source",
+            "changed_at",
+            "changed_date",
+            "days_remaining",
+            "due",
             "due_date",
+            "due_soon",
+            "forecast_revision",
             "lifetime_runtime_hours",
             "max_age_days",
+            "max_age_due_date",
             "notice_days",
+            "recent_runtime_hours_per_day",
             "remaining_runtime_hours",
+            "runtime_hours",
             "runtime_due_date",
             "thermostat_count",
             "unmapped_room_sensor_count",
@@ -762,7 +775,7 @@ def _thermostat_sensor_descriptions(
                 field="due_date",
             ),
             extra_attributes_fn=partial(
-                _filter_forecast_attributes,
+                _filter_forecast_snapshot_attributes,
                 thermostat_id=thermostat_id,
             ),
         ),
@@ -918,6 +931,51 @@ def _filter_forecast_attributes(
         "due_date": forecast.due_date.isoformat()
         if forecast.due_date is not None
         else None,
+    }
+
+
+def _filter_forecast_snapshot_attributes(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> dict[str, Any] | None:
+    """Return one complete, coherent filter forecast for consumer automation."""
+
+    forecast = _filter_forecast(coordinator, thermostat_id)
+    if forecast is None:
+        return None
+    return {
+        "forecast_revision": filter_forecast_revision(forecast),
+        "changed_date": (
+            forecast.changed_date.isoformat()
+            if forecast.changed_date is not None
+            else None
+        ),
+        "changed_at": (
+            forecast.changed_at.isoformat() if forecast.changed_at is not None else None
+        ),
+        "changed_source": forecast.changed_source,
+        "runtime_hours": forecast.runtime_hours,
+        "recent_runtime_hours_per_day": forecast.recent_runtime_hours_per_day,
+        "lifetime_runtime_hours": forecast.lifetime_runtime_hours,
+        "remaining_runtime_hours": forecast.remaining_runtime_hours,
+        "runtime_due_date": (
+            forecast.runtime_due_date.isoformat()
+            if forecast.runtime_due_date is not None
+            else None
+        ),
+        "max_age_days": forecast.max_age_days,
+        "max_age_due_date": (
+            forecast.max_age_due_date.isoformat()
+            if forecast.max_age_due_date is not None
+            else None
+        ),
+        "due_date": (
+            forecast.due_date.isoformat() if forecast.due_date is not None else None
+        ),
+        "days_remaining": forecast.days_remaining,
+        "notice_days": forecast.notice_days,
+        "due": forecast.due,
+        "due_soon": forecast.due_soon,
     }
 
 
