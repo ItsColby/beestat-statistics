@@ -1,3 +1,33 @@
+# Beestat Statistics v2026.8.13
+
+## Added
+
+- Expose a private, read-only thermostat configuration action with allow-listed
+  settings, comfort profiles, equipment, and sensor metadata for supported
+  configuration review without publishing credentials or raw vendor payloads.
+- Add native current-profile room-temperature spread sensors that resolve
+  comfort-profile participants through stable Ecobee and Beestat identifiers,
+  then use the mapped local Home Assistant temperature entities.
+
+## Changed
+
+- Publish complete comfort-profile participation details and additional
+  allow-listed thermostat settings while preserving native value types and
+  documented units.
+
+## Fixed
+
+- Interpret `backlightOffTime` as seconds and leave the undocumented-unit
+  random-start delay settings unlabelled instead of guessing units.
+- Fail the current-profile spread closed when a profile participant cannot be
+  resolved uniquely, while preserving distinct sensors that share a display
+  name.
+
+## Quality
+
+- Add focused coverage for stable profile identity joins, duplicate display
+  names, ambiguous metadata, unit projection, recovery, and entity wiring.
+
 # Beestat Statistics v2026.8.12
 
 ## Changed

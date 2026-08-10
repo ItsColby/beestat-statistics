@@ -837,7 +837,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             self.assertIn(snippet, sensor_text)
 
         self.assertIn("BinarySensorDeviceClass.PROBLEM", binary_text)
-        self.assertNotIn("entity_registry_enabled_default = False", binary_text)
+        self.assertIn("_attr_entity_registry_enabled_default = False", binary_text)
         self.assertIn("EntityCategory.DIAGNOSTIC", binary_text)
         self.assertIn("entity_category=EntityCategory.DIAGNOSTIC", button_text)
         self.assertIn("EntityCategory.CONFIG", button_text)

@@ -26,6 +26,7 @@ DEFAULT_SNAPSHOT = (
 WATCH_PATHS = (
     "api/cora/api.php",
     "api/cora/crud.php",
+    "api/ecobee_thermostat.php",
     "api/index.php",
     "api/runtime.php",
     "api/runtime_sensor.php",
@@ -50,6 +51,16 @@ INTEGRATION_DECISIONS = (
         "reason": (
             "These are the narrow metadata reads that support Home Assistant "
             "device matching, status sensors, and options-flow discovery."
+        ),
+    },
+    {
+        "surface": "ecobee_thermostat.read_id",
+        "decision": "used",
+        "reason": (
+            "The integration projects a strict privacy allowlist of cached "
+            "Ecobee settings for local configuration readback and optional "
+            "diagnostic entities; raw account, location, billing, device, and "
+            "access-control data is never retained."
         ),
     },
     {

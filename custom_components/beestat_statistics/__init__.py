@@ -1019,6 +1019,11 @@ async def _async_handle_get_configuration(
         point_lookback_days=_entry_point_lookback_days(entry),
         scan_interval_seconds=_entry_scan_interval_seconds(entry),
         thermostat_rows=runtime.coordinator.data.thermostat_rows,
+        thermostat_settings=getattr(
+            runtime.coordinator.data,
+            "thermostat_settings",
+            {},
+        ),
     )
 
 
@@ -1229,6 +1234,7 @@ async def async_setup_entry(
     _async_enable_default_problem_entities(hass, entry, coordinator.data)
     _async_migrate_homekit_device_assignments(hass, entry, coordinator.data)
     _async_track_source_device_relinks(hass, entry)
+    _async_track_room_temperature_sources(hass, entry)
     if coordinator.data is not None:
         async_remove_cross_integration_device_ownership(
             hass,
@@ -1656,6 +1662,73 @@ def _mapped_source_device_ids(data: BeestatRuntimeData | None) -> set[str]:
         )
         if device_id is not None
     }
+
+
+@callback
+def _room_temperature_entity_ids(data: BeestatRuntimeData | None) -> tuple[str, ...]:
+    """Return mapped temperature sources used by profile-aware projections."""
+
+    if data is None:
+        return ()
+    return tuple(
+        sorted(
+            {
+                entity_id
+                for entity_id in (
+                    *(item.temperature_entity_id for item in data.config.thermostats),
+                    *(item.temperature_entity_id for item in data.config.sensors),
+                )
+                if entity_id is not None
+            }
+        )
+    )
+
+
+@callback
+def _async_track_room_temperature_sources(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+) -> Callable[[], None]:
+    """Reproject current-profile spreads on local temperature state changes."""
+
+    coordinator = entry.runtime_data.coordinator
+    tracked_entity_ids: tuple[str, ...] = ()
+    remove_state_listener: Callable[[], None] | None = None
+
+    @callback
+    def handle_temperature_change(_event: Event[Any]) -> None:
+        coordinator.async_rebuild_runtime_from_cached_rows()
+
+    @callback
+    def rebind_state_listener() -> None:
+        nonlocal tracked_entity_ids, remove_state_listener
+        entity_ids = _room_temperature_entity_ids(coordinator.data)
+        if entity_ids == tracked_entity_ids:
+            return
+        if remove_state_listener is not None:
+            remove_state_listener()
+        tracked_entity_ids = entity_ids
+        remove_state_listener = (
+            async_track_state_change_event(
+                hass,
+                entity_ids,
+                handle_temperature_change,
+            )
+            if entity_ids
+            else None
+        )
+
+    rebind_state_listener()
+    remove_coordinator_listener = coordinator.async_add_listener(rebind_state_listener)
+
+    @callback
+    def remove() -> None:
+        remove_coordinator_listener()
+        if remove_state_listener is not None:
+            remove_state_listener()
+
+    entry.async_on_unload(remove)
+    return remove
 
 
 @callback

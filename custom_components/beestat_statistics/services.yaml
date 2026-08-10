@@ -21,7 +21,7 @@ import_statistics:
         boolean: {}
 get_configuration:
   name: Get Beestat configuration
-  description: Return the complete non-secret saved overrides and effective local Beestat mapping without changing integration state or contacting Beestat.
+  description: Return saved overrides, effective local mappings, comfort profiles, and the privacy-allowlisted cached Ecobee configuration without changing state or contacting Beestat.
   fields:
     config_entry_id:
       name: Configuration entry

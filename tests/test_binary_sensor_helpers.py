@@ -162,6 +162,20 @@ class BinarySensorHelpersTest(unittest.TestCase):
                     deleted=False,
                 )
             },
+            thermostat_settings={
+                1: self.coordinator.ThermostatSettingsSnapshot(
+                    thermostat_id=1,
+                    source_details={},
+                    settings={
+                        "autoAway": True,
+                        "followMeComfort": False,
+                        "smartCirculation": True,
+                        "disablePreHeating": False,
+                        "disablePreCooling": True,
+                    },
+                    audio={},
+                )
+            },
         )
         fake_coordinator = _FakeCoordinator(data)
         fake_coordinator.last_import_skipped_window_examples = (
@@ -202,6 +216,14 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         self.assertTrue(cloud_stale.is_on)
         self.assertFalse(by_key["homekit_mapping_incomplete"].is_on)
+        self.assertTrue(by_key["auto_away_enabled"].is_on)
+        self.assertFalse(by_key["follow_me_enabled"].is_on)
+        self.assertTrue(by_key["smart_circulation_enabled"].is_on)
+        self.assertTrue(by_key["preheating_enabled"].is_on)
+        self.assertFalse(by_key["precooling_enabled"].is_on)
+        self.assertFalse(
+            by_key["auto_away_enabled"]._attr_entity_registry_enabled_default
+        )
         self.assertEqual(
             by_key["statistics_import_partial"].extra_state_attributes[
                 "last_import_skipped_window_examples"

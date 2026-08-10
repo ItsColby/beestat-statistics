@@ -132,6 +132,257 @@ class CoordinatorHelpersTest(unittest.TestCase):
             )
         )
 
+    def test_profile_room_spread_uses_mapped_local_values_and_rejects_unknown(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            temperature_entity_id="sensor.zone_a_temperature",
+        )
+        sensors = (
+            self.config_model.ConfiguredSensor(
+                sensor_id=10,
+                slug="zone_a_sensor",
+                name="Zone A (HomeKit)",
+                thermostat_id=1,
+                thermostat_slug="zone_a",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id="sensor.zone_a_temperature",
+            ),
+            self.config_model.ConfiguredSensor(
+                sensor_id=11,
+                slug="room_a",
+                name="Room A (HomeKit)",
+                thermostat_id=1,
+                thermostat_slug="zone_a",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id="sensor.room_a_temperature",
+            ),
+            self.config_model.ConfiguredSensor(
+                sensor_id=12,
+                slug="room_b",
+                name="Room B",
+                thermostat_id=1,
+                thermostat_slug="zone_a",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id="sensor.room_b_temperature",
+            ),
+        )
+        state_values = {
+            "sensor.zone_a_temperature": types.SimpleNamespace(
+                state="76",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+            "sensor.room_a_temperature": types.SimpleNamespace(
+                state="24",
+                attributes={"unit_of_measurement": "°C"},
+            ),
+            "sensor.room_b_temperature": types.SimpleNamespace(
+                state="unknown",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+        }
+        hass = types.SimpleNamespace(
+            states=types.SimpleNamespace(get=state_values.get),
+            config=types.SimpleNamespace(
+                units=types.SimpleNamespace(temperature_unit="°F")
+            ),
+        )
+        metadata = {
+            1: types.SimpleNamespace(
+                current_profile_sensors=(
+                    self.coordinator.ProfileSensorReference("ei:0:1", "Zone A"),
+                    self.coordinator.ProfileSensorReference("rs:101:1", "Room A"),
+                    self.coordinator.ProfileSensorReference("rs:101:1", "Renamed"),
+                    self.coordinator.ProfileSensorReference("rs:102:1", "Room B"),
+                )
+            )
+        }
+        sensor_metadata = {
+            10: self.coordinator.SensorMetadata(
+                sensor_id=10,
+                thermostat_id=1,
+                name="Zone A",
+                identifier="ei:0",
+                sensor_type="thermostat",
+                in_use=True,
+                inactive=False,
+                deleted=False,
+            ),
+            11: self.coordinator.SensorMetadata(
+                sensor_id=11,
+                thermostat_id=1,
+                name="Room A",
+                identifier="rs:101",
+                sensor_type="ecobee3_remote_sensor",
+                in_use=True,
+                inactive=False,
+                deleted=False,
+            ),
+            12: self.coordinator.SensorMetadata(
+                sensor_id=12,
+                thermostat_id=1,
+                name="Room B",
+                identifier="rs:102",
+                sensor_type="ecobee3_remote_sensor",
+                in_use=False,
+                inactive=False,
+                deleted=False,
+            ),
+        }
+
+        projections = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            metadata,
+            sensor_metadata,
+        )
+
+        projection = projections[1]
+        self.assertEqual(projection.value, 0.8)
+        self.assertEqual(projection.valid_sensor_count, 2)
+        self.assertEqual(projection.participating_sensor_count, 3)
+        self.assertEqual(projection.unavailable_sensor_names, ("Room B",))
+        self.assertEqual(projection.hottest_sensor_name, "Zone A (HomeKit)")
+        self.assertEqual(projection.coldest_sensor_name, "Room A (HomeKit)")
+        self.assertEqual(
+            projection.participating_sensor_names,
+            ("Zone A (HomeKit)", "Room A (HomeKit)", "Room B"),
+        )
+
+        state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
+            state="78",
+            attributes={"unit_of_measurement": "°F"},
+        )
+        recovered = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            metadata,
+            sensor_metadata,
+        )[1]
+        self.assertEqual(recovered.value, 2.8)
+        self.assertEqual(recovered.valid_sensor_count, 3)
+        self.assertEqual(recovered.unavailable_sensor_names, ())
+        self.assertEqual(
+            self.coordinator._convert_temperature(273.15, "K", "°C"),
+            0,
+        )
+
+    def test_profile_room_spread_preserves_equal_names_and_fails_ambiguous_identity(
+        self,
+    ) -> None:
+        sensors = tuple(
+            self.config_model.ConfiguredSensor(
+                sensor_id=sensor_id,
+                slug=f"room_{sensor_id}",
+                name="Shared name",
+                thermostat_id=1,
+                thermostat_slug="zone",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=False,
+                temperature_entity_id=f"sensor.room_{sensor_id}",
+            )
+            for sensor_id in (10, 11)
+        )
+        state_values = {
+            "sensor.room_10": types.SimpleNamespace(
+                state="70",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+            "sensor.room_11": types.SimpleNamespace(
+                state="74",
+                attributes={"unit_of_measurement": "°F"},
+            ),
+        }
+        hass = types.SimpleNamespace(
+            states=types.SimpleNamespace(get=state_values.get),
+            config=types.SimpleNamespace(
+                units=types.SimpleNamespace(temperature_unit="°F")
+            ),
+        )
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone",
+            name="Zone",
+        )
+        thermostat_metadata = {
+            1: types.SimpleNamespace(
+                current_profile_sensors=(
+                    self.coordinator.ProfileSensorReference("rs:10:1", "First"),
+                    self.coordinator.ProfileSensorReference("rs:11:1", "Second"),
+                )
+            )
+        }
+        sensor_metadata = {
+            sensor_id: self.coordinator.SensorMetadata(
+                sensor_id=sensor_id,
+                thermostat_id=1,
+                name="Shared name",
+                identifier=f"rs:{sensor_id}",
+                sensor_type="ecobee3_remote_sensor",
+                in_use=True,
+                inactive=False,
+                deleted=False,
+            )
+            for sensor_id in (10, 11)
+        }
+
+        projection = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            thermostat_metadata,
+            sensor_metadata,
+        )[1]
+
+        self.assertEqual(projection.value, 4)
+        self.assertEqual(projection.participating_sensor_count, 2)
+        self.assertEqual(projection.valid_sensor_count, 2)
+
+        sensor_metadata[12] = self.coordinator.SensorMetadata(
+            sensor_id=12,
+            thermostat_id=1,
+            name="Ambiguous",
+            identifier="rs:10",
+            sensor_type="ecobee3_remote_sensor",
+            in_use=True,
+            inactive=False,
+            deleted=False,
+        )
+        ambiguous = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            thermostat_metadata,
+            sensor_metadata,
+        )[1]
+        self.assertEqual(ambiguous.valid_sensor_count, 1)
+        self.assertIsNone(ambiguous.value)
+        self.assertEqual(ambiguous.unavailable_sensor_names, ("First",))
+
     def test_cached_rows_use_one_last_effective_identity(self) -> None:
         """Duplicate cloud identities cannot create duplicate entities or totals."""
 
@@ -316,6 +567,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             *,
             temporal_context,
             fetched_at=None,
+            thermostat_settings=None,
         ):
             built.append(
                 (
@@ -679,8 +931,8 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(changed_date, date(2026, 7, 5))
         self.assertEqual(source, "home_assistant")
 
-    def test_current_profile_uses_ecobee_program_sensor_names(self) -> None:
-        current_ref, current_name, sensor_names = self.coordinator._current_profile(
+    def test_current_profile_uses_ecobee_program_sensor_identity(self) -> None:
+        current_ref, current_name, sensors = self.coordinator._current_profile(
             {
                 "program": {
                     "currentClimateRef": "home",
@@ -690,8 +942,8 @@ class CoordinatorHelpersTest(unittest.TestCase):
                             "climateRef": "home",
                             "name": "Home",
                             "sensors": [
-                                {"name": "Room Sensor C"},
-                                {"name": "Room Sensor B"},
+                                {"id": "rs:103:1", "name": "Room Sensor C"},
+                                {"id": "rs:104:1", "name": "Room Sensor B"},
                             ],
                         },
                     ],
@@ -701,7 +953,13 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
         self.assertEqual(current_ref, "home")
         self.assertEqual(current_name, "Home")
-        self.assertEqual(sensor_names, ("Room Sensor C", "Room Sensor B"))
+        self.assertEqual(
+            sensors,
+            (
+                self.coordinator.ProfileSensorReference("rs:103:1", "Room Sensor C"),
+                self.coordinator.ProfileSensorReference("rs:104:1", "Room Sensor B"),
+            ),
+        )
 
     def test_schedule_snapshot_finds_current_and_next_profile(self) -> None:
         schedule = [["sleep"] * 48 for _ in range(7)]

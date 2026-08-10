@@ -204,6 +204,12 @@ async def async_get_config_entry_diagnostics(
             else None,
             "summary_row_count": data.summary_row_count if data else None,
             "thermostat_row_count": len(data.thermostat_rows) if data else None,
+            "thermostat_settings_count": (
+                len(data.thermostat_settings) if data else None
+            ),
+            "room_temperature_spread_count": (
+                len(data.room_temperature_spreads) if data else None
+            ),
             "sensor_row_count": len(data.sensor_rows) if data else None,
             "thermostats": _thermostat_diagnostics(data) if data else [],
             "sensors": [

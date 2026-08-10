@@ -12,6 +12,11 @@
     },
     {
       "decision": "used",
+      "reason": "The integration projects a strict privacy allowlist of cached Ecobee settings for local configuration readback and optional diagnostic entities; raw account, location, billing, device, and access-control data is never retained.",
+      "surface": "ecobee_thermostat.read_id"
+    },
+    {
+      "decision": "used",
       "reason": "Point-history reads are windowed and feed daily Home Assistant external statistics; thermostat reads also reconcile saved filter clicks to the nearest five-minute runtime boundary.",
       "surface": "runtime_thermostat.read, runtime_sensor.read"
     },
@@ -38,10 +43,10 @@
   ],
   "schema_version": 1,
   "snapshot": {
-    "captured_at": "2026-07-05T17:54:59.399176+00:00",
-    "commit_date": "2026-05-25T12:13:42Z",
-    "commit_message": "Fixed runtime_thermostat_summary->read not supporting date ranges",
-    "commit_sha": "9000337eba6d98fdfdf462abf1b488779d19a3a5"
+    "captured_at": "2026-08-10T22:08:48.264748+00:00",
+    "commit_date": "2026-07-27T02:08:47Z",
+    "commit_message": "Dynamically growing Songstead promo",
+    "commit_sha": "defecda336faff834063ff2f1961239c81f6a434"
   },
   "source": {
     "api_docs_url": "https://api.beestat.io/doc",
@@ -52,6 +57,7 @@
   "watch_paths": [
     "api/cora/api.php",
     "api/cora/crud.php",
+    "api/ecobee_thermostat.php",
     "api/index.php",
     "api/runtime.php",
     "api/runtime_sensor.php",
@@ -72,6 +78,19 @@
         "read_id_forwards_attributes": true
       },
       "exposed": null
+    },
+    "api/ecobee_thermostat.php": {
+      "blob_sha": "c83e5daa2bd3053e96d6ffb5eaa0df78390a1ab9",
+      "checks": {},
+      "exposed": {
+        "private": [
+          "read_id"
+        ],
+        "public": [
+          "create",
+          "update"
+        ]
+      }
     },
     "api/index.php": {
       "blob_sha": "c6ae4a735042e1e4a43ad5c34977138fdffa6960",

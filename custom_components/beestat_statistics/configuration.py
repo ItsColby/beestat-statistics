@@ -15,6 +15,7 @@ from .config_model import (
 )
 from .const import CONF_SENSORS, CONF_THERMOSTATS
 from .profile import schedule_profile_payload, schedule_profiles_by_ref
+from .thermostat_settings import ThermostatSettingsSnapshot
 
 
 def configuration_response(
@@ -26,6 +27,7 @@ def configuration_response(
     point_lookback_days: int,
     scan_interval_seconds: int,
     thermostat_rows: tuple[dict[str, Any], ...] = (),
+    thermostat_settings: Mapping[int, ThermostatSettingsSnapshot] | None = None,
 ) -> dict[str, Any]:
     """Return the complete non-secret saved and effective configuration."""
 
@@ -54,7 +56,11 @@ def configuration_response(
             "sensors": [_configured_sensor(sensor) for sensor in config.sensors],
         },
         "source_details": {
-            "thermostats": _thermostat_source_details(config, thermostat_rows),
+            "thermostats": _thermostat_source_details(
+                config,
+                thermostat_rows,
+                thermostat_settings or {},
+            ),
         },
     }
 
@@ -62,6 +68,7 @@ def configuration_response(
 def _thermostat_source_details(
     config: BeestatConfig,
     thermostat_rows: tuple[dict[str, Any], ...],
+    thermostat_settings: Mapping[int, ThermostatSettingsSnapshot],
 ) -> list[dict[str, Any]]:
     """Return allow-listed Beestat hardware, system, property, and program data."""
 
@@ -107,6 +114,8 @@ def _thermostat_source_details(
         ]
         if comfort_profiles:
             item["comfort_profiles"] = comfort_profiles
+        if (snapshot := thermostat_settings.get(thermostat.thermostat_id)) is not None:
+            item["ecobee_configuration"] = snapshot.source_details
         details.append(item)
     return details
 

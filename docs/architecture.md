@@ -103,9 +103,22 @@
   runtime summaries, cloud profile context, alerts, and filter forecast inputs.
 - The private read-only configuration action may project only explicitly
   allow-listed thermostat hardware, equipment-stage, property, differential,
-  and comfort-profile fields already cached by the coordinator. It must not
-  widen the API surface, serialize arbitrary future fields, expose credentials,
-  or become a second write owner for Ecobee settings.
+  comfort-profile, and Ecobee configuration fields already cached by the
+  coordinator. The coordinator reads `ecobee_thermostat.read_id` after the
+  existing `thermostat.sync` refresh, immediately reduces each raw row to this
+  allowlist, and never retains its account, location, billing, utility,
+  management, device-identifier, notification-recipient, or access-code data.
+  It must not serialize arbitrary future fields, expose credentials, or become
+  a second write owner for Ecobee settings.
+- Current-profile room temperature spread is an I/O-free local projection of
+  explicitly mapped HomeKit temperature entities. Profile participants resolve
+  from Ecobee's capability-qualified climate sensor identifier through the
+  Beestat sensor identifier and internal sensor ID to one configured mapping;
+  mutable or duplicate display names are never identity. Profile changes use
+  cached Beestat program data; local source state changes rebuild the projection
+  immediately without a Beestat request. Unknown, unavailable, nonnumeric,
+  missing-unit, unconvertible, missing-identity, or ambiguous-identity sources
+  are rejected honestly. Source observation age is not an availability gate.
 - Mapped Beestat entities link through the existing HomeKit/Ecobee device entry;
   they must not return that other integration's identifiers or connections in
   `device_info` or add the Beestat config entry as a device owner. Setup removes
@@ -235,9 +248,9 @@
 - `statistics_builder.py`: conversion of Beestat rows into Home Assistant
   external Recorder statistics. Preserve cumulative-series correctness when
   changing runtime or degree-day imports.
-- `api.py`, `alerts.py`, `filter_forecast.py`, `diagnostics.py`: Beestat
-  transport/parsing, alert classification, filter forecasting, and redacted
-  diagnostics.
+- `api.py`, `thermostat_settings.py`, `alerts.py`, `filter_forecast.py`,
+  `diagnostics.py`: Beestat transport/parsing, the strict raw-Ecobee privacy
+  boundary, alert classification, filter forecasting, and redacted diagnostics.
 - `translations/en.json`, `icons.json`, `services.yaml`, `quality_scale.yaml`,
   and `README.md` are part of the user-facing contract. Update them with code
   behavior changes. Custom integrations ship complete translations directly;
@@ -298,6 +311,10 @@
   as diagnostic; keep advanced global import counters disabled by default.
   Scheduled profile and next transition are local projections of the cached
   Beestat schedule and do not claim the thermostat's live hold/mode state.
+- Keep the current-profile room temperature spread enabled as one compact
+  diagnostic measurement with unrecorded room-name/count attributes. Keep
+  advanced Ecobee settings disabled by default in the entity registry; the
+  response-only configuration action remains the complete private audit surface.
 - Keep partial-import and active-alert evidence bounded in ordinary entity
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in
