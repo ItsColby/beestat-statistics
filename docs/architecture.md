@@ -311,8 +311,10 @@
   as diagnostic; keep advanced global import counters disabled by default.
   Scheduled profile and next transition are local projections of the cached
   Beestat schedule and do not claim the thermostat's live hold/mode state.
-- Keep the current-profile room temperature spread enabled as one compact
-  diagnostic measurement with unrecorded room-name/count attributes. Keep
+- Keep the configured-profile room temperature spread enabled as one compact
+  diagnostic measurement with unrecorded configured room-name/count attributes;
+  do not present configured membership as Follow Me's momentary occupancy choice,
+  and retain legacy participating attributes for compatibility. Keep
   advanced Ecobee settings disabled by default in the entity registry; the
   response-only configuration action remains the complete private audit surface.
 - Keep partial-import and active-alert evidence bounded in ordinary entity

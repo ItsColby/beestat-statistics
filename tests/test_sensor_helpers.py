@@ -71,6 +71,7 @@ class SensorHelpersTest(unittest.TestCase):
         _load_module("coordinator")
         _load_module("entity")
         _load_module("runtime")
+        self.thermostat_settings = _load_module("thermostat_settings")
         self.sensor = _load_module("sensor")
 
     def tearDown(self) -> None:
@@ -350,6 +351,19 @@ class SensorHelpersTest(unittest.TestCase):
             "compressor_minimum_outdoor_temperature",
             "heat_cool_minimum_delta",
             "hold_action",
+            "temperature_correction",
+            "heating_differential",
+            "cooling_differential",
+            "heating_dissipation_time",
+            "cooling_dissipation_time",
+            "hot_temperature_alert",
+            "cold_temperature_alert",
+            "high_humidity_alert",
+            "low_humidity_alert",
+            "last_service_date",
+            "service_reminder_date",
+            "service_reminder_interval",
+            "playback_volume",
             "filter_runtime_hours",
             "filter_recent_runtime_hours_per_day",
             "filter_remaining_runtime_hours",
@@ -362,12 +376,97 @@ class SensorHelpersTest(unittest.TestCase):
             "compressor_minimum_outdoor_temperature",
             "heat_cool_minimum_delta",
             "hold_action",
+            "temperature_correction",
+            "heating_differential",
+            "cooling_differential",
+            "heating_dissipation_time",
+            "cooling_dissipation_time",
+            "hot_temperature_alert",
+            "cold_temperature_alert",
+            "high_humidity_alert",
+            "low_humidity_alert",
+            "last_service_date",
+            "service_reminder_date",
+            "service_reminder_interval",
+            "playback_volume",
         ):
             self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
+        self.assertEqual(
+            "Configured profile room temperature spread",
+            descriptions["current_profile_room_temperature_spread"].name,
+        )
         self.assertEqual(
             "_filter_forecast_snapshot_attributes",
             descriptions["filter_due_date"].extra_attributes_fn.func.__name__,
         )
+
+    def test_selected_settings_are_typed_and_disabled_values_are_unavailable(
+        self,
+    ) -> None:
+        snapshot = self.thermostat_settings.ThermostatSettingsSnapshot(
+            thermostat_id=1,
+            source_details={},
+            settings={
+                "tempCorrection": -5,
+                "humidityHighAlert": 70,
+                "humidityLowAlert": -1,
+                "lastServiceDate": "2026-06-18",
+            },
+            audio={"playbackVolume": 55},
+        )
+        coordinator = types.SimpleNamespace(
+            data=types.SimpleNamespace(thermostat_settings={1: snapshot})
+        )
+
+        self.assertEqual(
+            -0.5,
+            self.sensor._thermostat_setting_value(
+                coordinator, 1, "tempCorrection", "temperature"
+            ),
+        )
+        self.assertEqual(
+            70,
+            self.sensor._thermostat_setting_value(
+                coordinator, 1, "humidityHighAlert", "nonnegative_integer"
+            ),
+        )
+        self.assertIsNone(
+            self.sensor._thermostat_setting_value(
+                coordinator, 1, "humidityLowAlert", "nonnegative_integer"
+            )
+        )
+        self.assertEqual(
+            date(2026, 6, 18),
+            self.sensor._thermostat_setting_value(
+                coordinator, 1, "lastServiceDate", "date"
+            ),
+        )
+        self.assertEqual(
+            55,
+            self.sensor._thermostat_setting_value(
+                coordinator, 1, "playbackVolume", "audio_integer"
+            ),
+        )
+
+    def test_spread_attributes_name_configured_membership_without_breaking_legacy(
+        self,
+    ) -> None:
+        projection = types.SimpleNamespace(
+            participating_sensor_count=2,
+            valid_sensor_count=2,
+            participating_sensor_names=("Bedroom", "Office"),
+            unavailable_sensor_names=(),
+            hottest_sensor_name="Office",
+            coldest_sensor_name="Bedroom",
+        )
+        coordinator = types.SimpleNamespace(
+            data=types.SimpleNamespace(room_temperature_spreads={1: projection})
+        )
+
+        attributes = self.sensor._room_temperature_spread_attributes(coordinator, 1)
+        self.assertEqual(2, attributes["configured_sensor_count"])
+        self.assertEqual(["Bedroom", "Office"], attributes["configured_sensor_names"])
+        self.assertEqual(2, attributes["participating_sensor_count"])
 
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(
@@ -439,6 +538,7 @@ class SensorHelpersTest(unittest.TestCase):
             HOURS="h",
             MINUTES="min",
         )
+        const.UnitOfTemperature = types.SimpleNamespace(FAHRENHEIT="F")
         core.HomeAssistant = object
         core.callback = lambda func: func
         exceptions.ConfigEntryAuthFailed = type(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from math import isfinite
 from typing import Any
 
@@ -287,6 +288,36 @@ def text_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> str | None:
 
     value = snapshot.setting(key)
     return value if isinstance(value, str) and value else None
+
+
+def date_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> date | None:
+    """Return one ISO calendar date without inventing timezone semantics."""
+
+    value = text_setting(snapshot, key)
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def audio_boolean_setting(
+    snapshot: ThermostatSettingsSnapshot, key: str
+) -> bool | None:
+    """Return one exact allow-listed audio boolean."""
+
+    value = snapshot.audio.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def audio_integer_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> int | None:
+    """Return one exact allow-listed audio integer."""
+
+    value = snapshot.audio.get(key)
+    if isinstance(value, bool):
+        return None
+    return _int_or_none(value)
 
 
 def _all_setting_fields() -> tuple[str, ...]:

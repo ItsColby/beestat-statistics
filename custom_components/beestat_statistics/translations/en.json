@@ -8,6 +8,7 @@
       "auto_away_enabled": {
         "name": "Auto away"
       },
+      "cold_temperature_alert_enabled": {"name": "Cold temperature alert"},
       "equipment_alert": {
         "name": "Equipment alert"
       },
@@ -20,6 +21,8 @@
       "follow_me_enabled": {
         "name": "Follow me"
       },
+      "hot_temperature_alert_enabled": {"name": "Hot temperature alert"},
+      "microphone_enabled": {"name": "Microphone"},
       "cloud_data_stale": {
         "name": "Cloud data stale"
       },
@@ -41,9 +44,11 @@
       "sensor_in_use": {
         "name": "Sensor in use"
       },
+      "service_reminder_enabled": {"name": "Service reminder"},
       "smart_circulation_enabled": {
         "name": "Smart circulation"
-      }
+      },
+      "wifi_offline_alert_enabled": {"name": "Wi-Fi offline alert"}
     },
     "button": {
       "import_statistics": {
@@ -72,7 +77,7 @@
         "name": "Active sensor count"
       },
       "current_profile_room_temperature_spread": {
-        "name": "Current profile room temperature spread"
+        "name": "Configured profile room temperature spread"
       },
       "cloud_data_end": {
         "name": "Cloud data end"
@@ -89,6 +94,9 @@
       "compressor_minimum_outdoor_temperature": {
         "name": "Compressor minimum outdoor temperature"
       },
+      "cold_temperature_alert": {"name": "Cold temperature alert threshold"},
+      "cooling_differential": {"name": "Cooling differential"},
+      "cooling_dissipation_time": {"name": "Cooling dissipation time"},
       "filter_recent_runtime_hours_per_day": {
         "name": "Filter recent runtime hours per day"
       },
@@ -113,15 +121,22 @@
       "heat_cool_minimum_delta": {
         "name": "Heat cool minimum delta"
       },
+      "heating_differential": {"name": "Heating differential"},
+      "heating_dissipation_time": {"name": "Heating dissipation time"},
+      "high_humidity_alert": {"name": "High humidity alert threshold"},
+      "hot_temperature_alert": {"name": "Hot temperature alert threshold"},
       "hold_action": {
         "name": "Hold action"
       },
+      "last_service_date": {"name": "Last service date"},
+      "low_humidity_alert": {"name": "Low humidity alert threshold"},
       "metadata_sync_last_success": {
         "name": "Metadata sync last success"
       },
       "next_scheduled_comfort_profile_time": {
         "name": "Next scheduled comfort profile time"
       },
+      "playback_volume": {"name": "Playback volume"},
       "runtime_summary_lag_days": {
         "name": "Runtime summary lag days"
       },
@@ -137,6 +152,8 @@
       "scheduled_comfort_profile": {
         "name": "Scheduled comfort profile"
       },
+      "service_reminder_date": {"name": "Service reminder date"},
+      "service_reminder_interval": {"name": "Service reminder interval"},
       "statistics_imported_rows": {
         "name": "Imported rows"
       },
@@ -154,7 +171,8 @@
       },
       "status": {
         "name": "Status"
-      }
+      },
+      "temperature_correction": {"name": "Temperature correction"}
     }
   },
   "config": {
