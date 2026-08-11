@@ -313,7 +313,8 @@
   as diagnostic; label the count and per-room-sensor `in_use` state as
   Beestat-reported in-use metadata so neither is confused with configured
   profile membership or Follow Me's momentary weighting. An absent or invalid
-  `in_use` value fails closed as unavailable rather than becoming false or zero.
+  `in_use` field remains available but unknown rather than becoming false or
+  zero; an absent source row remains unavailable.
   Keep advanced global import
   counters disabled by default.
   Scheduled profile and next transition are local projections of the cached

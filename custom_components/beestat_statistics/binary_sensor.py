@@ -482,7 +482,6 @@ class BeestatSensorInUseBinarySensor(
         return (
             super().available
             and metadata is not None
-            and metadata.in_use is not None
             and not metadata.deleted
             and not metadata.inactive
         )

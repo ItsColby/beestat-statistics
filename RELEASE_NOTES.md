@@ -8,8 +8,9 @@
 
 ## Fixed
 
-- Keep missing or invalid upstream `in_use` metadata unknown so an incomplete
-  sensor row cannot manufacture an off binary sensor or zero aggregate count.
+- Keep missing or invalid upstream `in_use` metadata available but unknown so
+  an incomplete sensor row cannot manufacture an off binary sensor or zero
+  aggregate count; a missing row remains unavailable.
 
 # Beestat Statistics v2026.8.16
 

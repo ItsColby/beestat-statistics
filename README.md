@@ -209,12 +209,13 @@ Beestat-reported in-use sensor count, raw filter-runtime detail, and intermediat
 runtime/max-age forecast dates are also categorized as diagnostic. Advanced
 account-wide import counters remain disabled by default.
 
-Room-level **Beestat-reported sensor in use** binary sensors expose Beestat's per-sensor
-`in_use` metadata. That upstream diagnostic can differ from both the sensors
-configured in the current comfort profile and the sensor Follow Me is
-momentarily weighting. A missing or invalid `in_use` value makes the affected
-binary sensor and aggregate count unavailable instead of manufacturing an
-off/zero result. Use **Configured profile room temperature spread** for
+Room-level **Beestat-reported sensor in use** binary sensors expose Beestat's
+per-sensor `in_use` metadata. That upstream diagnostic can differ from both the
+sensors configured in the current comfort profile and the sensor Follow Me is
+momentarily weighting. A missing or invalid `in_use` value leaves the affected
+binary sensor and aggregate count available with an unknown state instead of
+manufacturing an off/zero result. A missing source row remains unavailable.
+Use **Configured profile room temperature spread** for
 the explicitly configured profile membership. When a local HomeKit/Ecobee room
 sensor match exists, these entities attach to that local room-sensor device.
 

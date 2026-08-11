@@ -346,9 +346,12 @@ class SensorHelpersTest(unittest.TestCase):
                 }
             )
         )
-        self.assertFalse(active_count.available_fn(unknown_count))
+        self.assertTrue(active_count.available_fn(unknown_count))
+        self.assertIsNone(active_count.value_fn(unknown_count))
         unknown_count.data.thermostat_metadata[1].active_sensor_count = 0
         self.assertTrue(active_count.available_fn(unknown_count))
+        unknown_count.data.thermostat_metadata = {}
+        self.assertFalse(active_count.available_fn(unknown_count))
 
         for key in (
             "scheduled_comfort_profile",

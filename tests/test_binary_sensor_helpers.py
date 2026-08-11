@@ -243,8 +243,24 @@ class BinarySensorHelpersTest(unittest.TestCase):
                 10: replace(data.sensor_metadata[10], in_use=None),
             },
         )
-        self.assertFalse(sensor_in_use.available)
+        self.assertTrue(sensor_in_use.available)
         self.assertIsNone(sensor_in_use.is_on)
+        fake_coordinator.data = replace(data, sensor_metadata={})
+        self.assertFalse(sensor_in_use.available)
+        fake_coordinator.data = replace(
+            data,
+            sensor_metadata={
+                10: replace(data.sensor_metadata[10], inactive=True),
+            },
+        )
+        self.assertFalse(sensor_in_use.available)
+        fake_coordinator.data = replace(
+            data,
+            sensor_metadata={
+                10: replace(data.sensor_metadata[10], deleted=True),
+            },
+        )
+        self.assertFalse(sensor_in_use.available)
         fake_coordinator.data = data
         self.assertEqual(
             "Hot temperature alert enabled",
