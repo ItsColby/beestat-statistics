@@ -1,3 +1,11 @@
+# Beestat Statistics v2026.8.17
+
+## Changed
+
+- Clarify that the active-sensor count and room-level sensor-participation
+  entities report Beestat metadata, which can differ from configured comfort-
+  profile membership and Follow Me's momentary weighting.
+
 # Beestat Statistics v2026.8.16
 
 ## Security
