@@ -214,8 +214,10 @@ per-sensor `in_use` metadata. That upstream diagnostic can differ from both the
 sensors configured in the current comfort profile and the sensor Follow Me is
 momentarily weighting. A missing or invalid `in_use` value leaves the affected
 binary sensor and aggregate count available with an unknown state instead of
-manufacturing an off/zero result. A missing source row remains unavailable.
-Use **Configured profile room temperature spread** for
+manufacturing an off/zero result. A room sensor whose source row is absent
+remains unavailable; the aggregate counts only current `in_use: true`,
+non-inactive, non-deleted sensor rows present in the successful metadata
+snapshot. Use **Configured profile room temperature spread** for
 the explicitly configured profile membership. When a local HomeKit/Ecobee room
 sensor match exists, these entities attach to that local room-sensor device.
 

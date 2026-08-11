@@ -314,7 +314,9 @@
   Beestat-reported in-use metadata so neither is confused with configured
   profile membership or Follow Me's momentary weighting. An absent or invalid
   `in_use` field remains available but unknown rather than becoming false or
-  zero; an absent source row remains unavailable.
+  zero. A room sensor with no current source row remains unavailable; the
+  aggregate counts only current `in_use: true`, non-inactive, non-deleted rows
+  present in the successful metadata snapshot.
   Keep advanced global import
   counters disabled by default.
   Scheduled profile and next transition are local projections of the cached

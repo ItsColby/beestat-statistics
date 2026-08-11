@@ -10,7 +10,9 @@
 
 - Keep missing or invalid upstream `in_use` metadata available but unknown so
   an incomplete sensor row cannot manufacture an off binary sensor or zero
-  aggregate count; a missing row remains unavailable.
+  aggregate count. A room sensor with no current source row remains unavailable,
+  while the aggregate counts current `in_use: true`, non-inactive, non-deleted
+  rows in the successful metadata snapshot.
 
 # Beestat Statistics v2026.8.16
 
