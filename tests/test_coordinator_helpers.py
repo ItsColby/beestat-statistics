@@ -1218,6 +1218,42 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(metadata.active_alert_count, 1)
         self.assertEqual(metadata.active_alerts[0]["code"], "filter")
 
+    def test_in_use_metadata_fails_closed_when_missing_or_invalid(self) -> None:
+        sensor_metadata = self.coordinator._build_sensor_metadata(
+            (
+                {
+                    "id": 10,
+                    "thermostat_id": 1,
+                    "name": "Room Sensor A",
+                    "in_use": "not-a-boolean",
+                },
+                {
+                    "id": 11,
+                    "thermostat_id": 1,
+                    "name": "Room Sensor B",
+                    "in_use": "false",
+                },
+            )
+        )
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+        )
+
+        metadata = self.coordinator._build_thermostat_metadata(
+            ({"id": 1},),
+            sensor_metadata,
+            datetime(2026, 7, 1, 13, 0, tzinfo=UTC),
+            ZoneInfo("America/New_York"),
+            (thermostat,),
+        )[1]
+
+        self.assertIsNone(sensor_metadata[10].in_use)
+        self.assertFalse(sensor_metadata[11].in_use)
+        self.assertIsNone(metadata.active_sensor_count)
+        self.assertEqual((), metadata.active_sensor_names)
+
     def test_filter_alert_guids_selects_active_filter_alerts_only(self) -> None:
         row = {
             "alerts": [

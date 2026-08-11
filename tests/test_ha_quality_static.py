@@ -1409,14 +1409,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             'name="Runtime summary latest date"',
             'name="Runtime summary lag days"',
             'name="Current comfort profile"',
-            'name="Reported active sensor count"',
+            'name="Beestat-reported in-use sensor count"',
             'name="Filter runtime hours"',
             'name="Filter recent runtime hours per day"',
             'name="Filter due date"',
         ):
             self.assertIn(expected, sensor_text)
         for expected in (
-            '_attr_name = "Reported sensor in use"',
+            '_attr_name = "Beestat-reported sensor in use"',
             '_attr_name = "Active alert"',
             '_attr_name = "Equipment alert"',
             '_attr_name = "Filter due"',
@@ -1437,11 +1437,21 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertEqual(
             translations["entity"]["sensor"]["active_sensor_count"]["name"],
-            "Reported active sensor count",
+            "Beestat-reported in-use sensor count",
         )
         self.assertEqual(
             translations["entity"]["binary_sensor"]["sensor_in_use"]["name"],
-            "Reported sensor in use",
+            "Beestat-reported sensor in use",
+        )
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "Beestat sensor participation in the active comfort profile",
+            readme,
+        )
+        self.assertNotIn(
+            "Beestat says are active in the current comfort profile",
+            readme,
         )
 
     def test_entity_unique_ids_do_not_repeat_integration_scope(self) -> None:

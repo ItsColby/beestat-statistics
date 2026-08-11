@@ -2,9 +2,14 @@
 
 ## Changed
 
-- Clarify that the active-sensor count and room-level sensor-participation
-  entities report Beestat metadata, which can differ from configured comfort-
-  profile membership and Follow Me's momentary weighting.
+- Name the in-use count and room-level state as Beestat-reported metadata, which
+  can differ from configured comfort-profile membership and Follow Me's
+  momentary weighting.
+
+## Fixed
+
+- Keep missing or invalid upstream `in_use` metadata unknown so an incomplete
+  sensor row cannot manufacture an off binary sensor or zero aggregate count.
 
 # Beestat Statistics v2026.8.16
 

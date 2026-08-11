@@ -310,9 +310,11 @@
   as the primary thermostat surface. Categorize freshness dates/lags, active
   sensor count, filter runtime details, intermediate forecast dates, and
   Beestat's delayed `program.currentClimateRef` current-comfort-profile context
-  as diagnostic; label the active count and per-room-sensor `in_use` state as
-  Beestat-reported metadata so neither is confused with configured profile
-  membership or Follow Me's momentary weighting. Keep advanced global import
+  as diagnostic; label the count and per-room-sensor `in_use` state as
+  Beestat-reported in-use metadata so neither is confused with configured
+  profile membership or Follow Me's momentary weighting. An absent or invalid
+  `in_use` value fails closed as unavailable rather than becoming false or zero.
+  Keep advanced global import
   counters disabled by default.
   Scheduled profile and next transition are local projections of the cached
   Beestat schedule and do not claim the thermostat's live hold/mode state.

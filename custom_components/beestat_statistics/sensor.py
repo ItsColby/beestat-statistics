@@ -636,14 +636,15 @@ def _thermostat_sensor_descriptions(
                 thermostat_id,
                 "active_sensor_count",
             ),
-            name="Reported active sensor count",
+            name="Beestat-reported in-use sensor count",
             translation_key="active_sensor_count",
             native_unit_of_measurement="sensors",
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
-                _thermostat_metadata_available,
+                _thermostat_metadata_field_available,
                 thermostat_id=thermostat_id,
+                field="active_sensor_count",
             ),
             suggested_object_id=thermostat_suggested_object_id(
                 thermostat,
@@ -1144,6 +1145,17 @@ def _thermostat_metadata_available(
     thermostat_id: int,
 ) -> bool:
     return _thermostat_metadata(coordinator, thermostat_id) is not None
+
+
+def _thermostat_metadata_field_available(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    field: str,
+) -> bool:
+    """Return whether one metadata field has an explicit source value."""
+
+    metadata = _thermostat_metadata(coordinator, thermostat_id)
+    return metadata is not None and getattr(metadata, field) is not None
 
 
 def _thermostat_metadata_value(

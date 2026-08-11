@@ -24,7 +24,8 @@ Use this Beestat integration as the secondary cloud/history surface for data Hom
 - HVAC runtime summary freshness and lag
 - Daily external statistics for runtime, room temperatures, thermostat setpoints, thermostat-summary weather-load and humidity context, CO2, TVOC, and air quality
 - Current, scheduled, and next Ecobee comfort profile names from Beestat's Ecobee cloud data
-- Beestat sensor participation in the active comfort profile
+- Beestat-reported per-sensor `in_use` metadata, kept distinct from configured
+  comfort-profile membership and Follow Me weighting
 - Thermostat cloud data window, active Ecobee alert counts, and equipment-alert problem binary sensors
 - Native filter replacement forecasts from Beestat runtime plus per-thermostat filter lifetime settings
 
@@ -204,14 +205,16 @@ and filter-maintenance controls form the primary thermostat surface. Beestat's
 current comfort profile is delayed cloud diagnostic context: it mirrors the
 cached `program.currentClimateRef` and is not a replacement for Home
 Assistant's local thermostat mode or active hold. Freshness dates/lags,
-reported active-sensor count, raw filter-runtime detail, and intermediate
+Beestat-reported in-use sensor count, raw filter-runtime detail, and intermediate
 runtime/max-age forecast dates are also categorized as diagnostic. Advanced
 account-wide import counters remain disabled by default.
 
-Room-level **Reported sensor in use** binary sensors expose Beestat's per-sensor
+Room-level **Beestat-reported sensor in use** binary sensors expose Beestat's per-sensor
 `in_use` metadata. That upstream diagnostic can differ from both the sensors
 configured in the current comfort profile and the sensor Follow Me is
-momentarily weighting. Use **Configured profile room temperature spread** for
+momentarily weighting. A missing or invalid `in_use` value makes the affected
+binary sensor and aggregate count unavailable instead of manufacturing an
+off/zero result. Use **Configured profile room temperature spread** for
 the explicitly configured profile membership. When a local HomeKit/Ecobee room
 sensor match exists, these entities attach to that local room-sensor device.
 
@@ -291,7 +294,8 @@ https://raw.githubusercontent.com/ItsColby/beestat-statistics/main/blueprints/au
 
 - Show whether Beestat summary data is fresh for each thermostat.
 - Chart long-term HVAC runtime, weather-load context, setpoints, and room temperatures with Recorder statistics.
-- See which Ecobee room sensors Beestat says are active in the current comfort profile.
+- Inspect Beestat's reported per-sensor `in_use` metadata without interpreting
+  it as configured comfort-profile membership or Follow Me weighting.
 - Measure the current comfort profile's local room-temperature spread from the
   mapped HomeKit sensors, with unavailable sources rejected instead of aged out.
 - Inspect useful non-secret Ecobee configuration in the response-only action and

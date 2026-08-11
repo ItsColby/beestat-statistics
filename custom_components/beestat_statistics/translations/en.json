@@ -42,7 +42,7 @@
         "name": "Preheating"
       },
       "sensor_in_use": {
-        "name": "Reported sensor in use"
+        "name": "Beestat-reported sensor in use"
       },
       "service_reminder_enabled": {"name": "Service reminder enabled"},
       "smart_circulation_enabled": {
@@ -74,7 +74,7 @@
         "name": "Active alert category"
       },
       "active_sensor_count": {
-        "name": "Reported active sensor count"
+        "name": "Beestat-reported in-use sensor count"
       },
       "current_profile_room_temperature_spread": {
         "name": "Configured profile room temperature spread"
