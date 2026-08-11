@@ -636,7 +636,7 @@ def _thermostat_sensor_descriptions(
                 thermostat_id,
                 "active_sensor_count",
             ),
-            name="Active sensor count",
+            name="Reported active sensor count",
             translation_key="active_sensor_count",
             native_unit_of_measurement="sensors",
             state_class=SensorStateClass.MEASUREMENT,

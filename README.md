@@ -178,7 +178,7 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - current comfort profile
 - scheduled comfort profile
 - next scheduled comfort profile time
-- active sensor count
+- reported active sensor count
 - cloud data end
 - cloud data lag minutes
 - active alert count
@@ -204,11 +204,16 @@ and filter-maintenance controls form the primary thermostat surface. Beestat's
 current comfort profile is delayed cloud diagnostic context: it mirrors the
 cached `program.currentClimateRef` and is not a replacement for Home
 Assistant's local thermostat mode or active hold. Freshness dates/lags,
-active-sensor count, raw filter-runtime detail, and intermediate
+reported active-sensor count, raw filter-runtime detail, and intermediate
 runtime/max-age forecast dates are also categorized as diagnostic. Advanced
 account-wide import counters remain disabled by default.
 
-Room-level binary sensors expose whether Beestat reports each mapped Ecobee sensor as active in the current comfort profile. When a local HomeKit/Ecobee room sensor match exists, these entities attach to that local room-sensor device.
+Room-level **Reported sensor in use** binary sensors expose Beestat's per-sensor
+`in_use` metadata. That upstream diagnostic can differ from both the sensors
+configured in the current comfort profile and the sensor Follow Me is
+momentarily weighting. Use **Configured profile room temperature spread** for
+the explicitly configured profile membership. When a local HomeKit/Ecobee room
+sensor match exists, these entities attach to that local room-sensor device.
 
 Per-thermostat alert binary sensors expose whether Beestat/Ecobee reports any active thermostat alert. Equipment-looking or unknown alerts are also surfaced through a separate problem binary sensor, so routine maintenance reminders do not make the thermostat device look failed.
 

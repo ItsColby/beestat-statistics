@@ -461,7 +461,7 @@ class BeestatSensorInUseBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, sensor.device_id)
         self._sensor = sensor
-        self._attr_name = "Sensor in use"
+        self._attr_name = "Reported sensor in use"
         self._attr_translation_key = "sensor_in_use"
         self._attr_unique_id = sensor_entity_unique_id(
             sensor.sensor_id, "sensor_in_use"
