@@ -123,6 +123,20 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
             ):
                 self.checker._validated_request_url(url)
 
+    def test_surface_checker_refuses_redirects(self) -> None:
+        handler = self.checker._NoRedirectHandler()
+
+        self.assertIsNone(
+            handler.redirect_request(
+                object(),
+                object(),
+                302,
+                "Found",
+                {},
+                "https://example.com/credential-target",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

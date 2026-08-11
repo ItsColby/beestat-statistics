@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = "beestat/app"
 BRANCH = "master"
@@ -22,6 +22,18 @@ ALLOWED_REQUEST_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"
 DEFAULT_SNAPSHOT = (
     Path(__file__).resolve().parents[1] / "docs" / "beestat-api-surface.json"
 )
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Reject redirects so an optional GitHub token stays on approved hosts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Refuse every redirect instead of forwarding request headers."""
+
+        return
+
+
+_URL_OPENER = build_opener(_NoRedirectHandler)
 
 WATCH_PATHS = (
     "api/cora/api.php",
@@ -321,7 +333,7 @@ def _request_text(url: str) -> str:
         headers["Authorization"] = f"Bearer {token}"
     validated_url = _validated_request_url(url)
     request = Request(validated_url, headers=headers)  # noqa: S310 - validated HTTPS host
-    with urlopen(request, timeout=30) as response:  # noqa: S310 - validated HTTPS host
+    with _URL_OPENER.open(request, timeout=30) as response:
         return response.read().decode("utf-8")
 
 

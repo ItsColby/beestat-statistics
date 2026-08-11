@@ -60,7 +60,9 @@
   immediately before saving.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client
-  or exposing the API key to transport. A legacy invalid or insecure entry
+  or exposing the API key to transport. Credential-bearing requests never
+  follow redirects; a redirect fails closed so the API key cannot be forwarded
+  to a different endpoint. A legacy invalid or insecure entry
   fails setup, creates an actionable Repair, and remains uncontacted until
   Reconfigure saves a valid secure URL.
 - Config-entry `options` owns persistent behavior: import timing, selected
