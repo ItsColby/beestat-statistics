@@ -1,3 +1,18 @@
+# Beestat Statistics v2026.8.14
+
+## Fixed
+
+- Resolve comfort-profile sensor identifiers within their owning thermostat so
+  the native room-temperature spread remains available when Ecobee reuses the
+  same local identifier on another thermostat.
+- Continue failing closed when an identifier is ambiguous within the same
+  thermostat.
+
+## Quality
+
+- Add regression coverage for both safe cross-thermostat identifier reuse and
+  unsafe same-thermostat ambiguity.
+
 # Beestat Statistics v2026.8.13
 
 ## Added
