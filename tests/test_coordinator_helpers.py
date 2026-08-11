@@ -360,6 +360,28 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(projection.participating_sensor_count, 2)
         self.assertEqual(projection.valid_sensor_count, 2)
 
+        sensor_metadata[20] = self.coordinator.SensorMetadata(
+            sensor_id=20,
+            thermostat_id=2,
+            name="Other thermostat room",
+            identifier="rs:10",
+            sensor_type="ecobee3_remote_sensor",
+            in_use=True,
+            inactive=False,
+            deleted=False,
+        )
+        cross_thermostat_collision = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            thermostat_metadata,
+            sensor_metadata,
+        )[1]
+        self.assertEqual(cross_thermostat_collision.value, 4)
+        self.assertEqual(cross_thermostat_collision.valid_sensor_count, 2)
+
         sensor_metadata[12] = self.coordinator.SensorMetadata(
             sensor_id=12,
             thermostat_id=1,

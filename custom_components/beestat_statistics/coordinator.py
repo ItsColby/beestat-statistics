@@ -1430,6 +1430,7 @@ def _build_room_temperature_spreads(
             participant_metadata = _profile_sensor_metadata(
                 participant.identifier,
                 metadata_by_identifier,
+                thermostat.thermostat_id,
             )
             configured = (
                 configured_by_id.get(participant_metadata.sensor_id, [])
@@ -1574,12 +1575,17 @@ def _unique_profile_sensors(
 def _profile_sensor_metadata(
     identifier: str | None,
     metadata_by_identifier: dict[str, list[SensorMetadata]],
+    thermostat_id: int,
 ) -> SensorMetadata | None:
-    """Resolve one climate capability identifier to one Beestat sensor row."""
+    """Resolve one climate capability identifier within its thermostat owner."""
 
     if identifier is None or not (normalized := identifier.strip()):
         return None
-    exact = metadata_by_identifier.get(normalized, [])
+    exact = [
+        item
+        for item in metadata_by_identifier.get(normalized, [])
+        if item.thermostat_id == thermostat_id
+    ]
     if len(exact) == 1:
         return exact[0]
     if exact:
@@ -1587,7 +1593,11 @@ def _profile_sensor_metadata(
     base, separator, capability = normalized.rpartition(":")
     if not separator or not base or not capability or ":" not in base:
         return None
-    candidates = metadata_by_identifier.get(base, [])
+    candidates = [
+        item
+        for item in metadata_by_identifier.get(base, [])
+        if item.thermostat_id == thermostat_id
+    ]
     return candidates[0] if len(candidates) == 1 else None
 
 
