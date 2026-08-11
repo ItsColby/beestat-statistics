@@ -1454,6 +1454,22 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             readme,
         )
 
+    def test_reported_sensor_use_icons_do_not_imply_occupancy(self) -> None:
+        """Reported upstream metadata should use neutral sensor icons."""
+
+        icons = _json_file("custom_components/beestat_statistics/icons.json")
+        sensor_in_use = icons["entity"]["binary_sensor"]["sensor_in_use"]
+        active_sensor_count = icons["entity"]["sensor"]["active_sensor_count"]
+
+        self.assertEqual("mdi:home-thermometer", sensor_in_use["default"])
+        self.assertEqual("mdi:home-thermometer", sensor_in_use["state"]["off"])
+        self.assertEqual("mdi:thermometer-check", sensor_in_use["state"]["on"])
+        self.assertEqual("mdi:home-thermometer", active_sensor_count["default"])
+        self.assertEqual("mdi:home-thermometer", active_sensor_count["range"]["0"])
+        self.assertEqual("mdi:thermometer-check", active_sensor_count["range"]["1"])
+        self.assertNotIn("account", str(sensor_in_use))
+        self.assertNotIn("account", str(active_sensor_count))
+
     def test_entity_unique_ids_do_not_repeat_integration_scope(self) -> None:
         const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(
             encoding="utf-8"

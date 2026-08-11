@@ -103,10 +103,10 @@
         }
       },
       "sensor_in_use": {
-        "default": "mdi:account-outline",
+        "default": "mdi:home-thermometer",
         "state": {
-          "off": "mdi:account-outline",
-          "on": "mdi:account-check"
+          "off": "mdi:home-thermometer",
+          "on": "mdi:thermometer-check"
         }
       },
       "service_reminder_enabled": {"default": "mdi:wrench-clock"},
@@ -153,10 +153,10 @@
         }
       },
       "active_sensor_count": {
-        "default": "mdi:account-off-outline",
+        "default": "mdi:home-thermometer",
         "range": {
-          "0": "mdi:account-off-outline",
-          "1": "mdi:account-check"
+          "0": "mdi:home-thermometer",
+          "1": "mdi:thermometer-check"
         }
       },
       "current_profile_room_temperature_spread": {

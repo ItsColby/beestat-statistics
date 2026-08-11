@@ -5,6 +5,8 @@
 - Name the in-use count and room-level state as Beestat-reported metadata, which
   can differ from configured comfort-profile membership and Follow Me's
   momentary weighting.
+- Use neutral sensor and thermometer icons for that metadata instead of person
+  icons that could imply occupancy or motion.
 
 ## Fixed
 
