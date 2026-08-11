@@ -35,7 +35,7 @@ from .entity import (
 )
 from .filter_forecast import FilterForecast, build_filter_forecast
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
-from .thermostat_settings import boolean_setting
+from .thermostat_settings import audio_boolean_setting, boolean_setting
 
 if TYPE_CHECKING:
     from homeassistant.const import EntityCategory
@@ -78,6 +78,34 @@ _THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, str, bool], ...] 
         "precooling_enabled",
         "disablePreCooling",
         True,
+    ),
+    (
+        "hot_temperature_alert_enabled",
+        "Hot temperature alert enabled",
+        "hot_temperature_alert_enabled",
+        "hotTempAlertEnabled",
+        False,
+    ),
+    (
+        "cold_temperature_alert_enabled",
+        "Cold temperature alert enabled",
+        "cold_temperature_alert_enabled",
+        "coldTempAlertEnabled",
+        False,
+    ),
+    (
+        "wifi_offline_alert_enabled",
+        "Wi-Fi offline alert enabled",
+        "wifi_offline_alert_enabled",
+        "wifiOfflineAlert",
+        False,
+    ),
+    (
+        "service_reminder_enabled",
+        "Service reminder enabled",
+        "service_reminder_enabled",
+        "serviceRemindMe",
+        False,
     ),
 )
 
@@ -154,7 +182,70 @@ def _build_entities(
             _THERMOSTAT_SETTING_BINARY_SENSORS
         )
     )
+    entities.extend(
+        BeestatThermostatAudioBinarySensor(coordinator, thermostat)
+        for thermostat in data.config.thermostats
+    )
     return entities
+
+
+class BeestatThermostatAudioBinarySensor(
+    CoordinatorEntity[BeestatRuntimeDataCoordinator],
+    BinarySensorEntity,
+):
+    """Expose microphone state when an Ecobee model supplies it."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Microphone enabled"
+    _attr_translation_key = "microphone_enabled"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: BeestatRuntimeDataCoordinator,
+        thermostat: ConfiguredThermostat,
+    ) -> None:
+        super().__init__(coordinator)
+        link_entity_to_device(self, coordinator.hass, thermostat.device_id)
+        self._thermostat = thermostat
+        self._attr_unique_id = thermostat_entity_unique_id(
+            thermostat.thermostat_id, "microphone_enabled"
+        )
+        self._attr_suggested_object_id = thermostat_suggested_object_id(
+            thermostat, "microphone_enabled"
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo | None:
+        """Return the mapped thermostat device."""
+
+        return thermostat_device_info(self._thermostat)
+
+    @property
+    def available(self) -> bool:
+        """Return whether this thermostat supplies microphone state."""
+
+        return super().available and self._source_value is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the configured microphone state."""
+
+        return self._source_value
+
+    @property
+    def _source_value(self) -> bool | None:
+        data = self.coordinator.data
+        if (
+            data is None
+            or (
+                snapshot := data.thermostat_settings.get(self._thermostat.thermostat_id)
+            )
+            is None
+        ):
+            return None
+        return audio_boolean_setting(snapshot, "microphoneEnabled")
 
 
 class BeestatThermostatSettingBinarySensor(

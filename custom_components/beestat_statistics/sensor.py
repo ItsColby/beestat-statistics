@@ -14,7 +14,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTime
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -42,6 +42,8 @@ from .filter_forecast import (
 from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .thermostat_settings import (
+    audio_integer_setting,
+    date_setting,
     integer_setting,
     temperature_fahrenheit,
     text_setting,
@@ -75,6 +77,124 @@ class BeestatSensorEntityDescription(SensorEntityDescription):
         Callable[[BeestatRuntimeDataCoordinator], dict[str, Any] | None] | None
     ) = None
     suggested_object_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ThermostatSettingSensorSpec:
+    """One deliberately selected, read-only Ecobee setting projection."""
+
+    key: str
+    name: str
+    setting_key: str
+    value_type: str
+    device_class: SensorDeviceClass | None = None
+    unit: str | None = None
+
+
+THERMOSTAT_SETTING_SENSOR_SPECS = (
+    ThermostatSettingSensorSpec(
+        "temperature_correction",
+        "Temperature correction",
+        "tempCorrection",
+        "temperature",
+        SensorDeviceClass.TEMPERATURE_DELTA,
+        UnitOfTemperature.FAHRENHEIT,
+    ),
+    ThermostatSettingSensorSpec(
+        "heating_differential",
+        "Heating differential",
+        "stage1HeatingDifferentialTemp",
+        "temperature",
+        SensorDeviceClass.TEMPERATURE_DELTA,
+        UnitOfTemperature.FAHRENHEIT,
+    ),
+    ThermostatSettingSensorSpec(
+        "cooling_differential",
+        "Cooling differential",
+        "stage1CoolingDifferentialTemp",
+        "temperature",
+        SensorDeviceClass.TEMPERATURE_DELTA,
+        UnitOfTemperature.FAHRENHEIT,
+    ),
+    ThermostatSettingSensorSpec(
+        "heating_dissipation_time",
+        "Heating dissipation time",
+        "stage1HeatingDissipationTime",
+        "integer",
+        SensorDeviceClass.DURATION,
+        "s",
+    ),
+    ThermostatSettingSensorSpec(
+        "cooling_dissipation_time",
+        "Cooling dissipation time",
+        "stage1CoolingDissipationTime",
+        "integer",
+        SensorDeviceClass.DURATION,
+        "s",
+    ),
+    ThermostatSettingSensorSpec(
+        "hot_temperature_alert",
+        "Hot temperature alert threshold",
+        "hotTempAlert",
+        "temperature",
+        SensorDeviceClass.TEMPERATURE,
+        UnitOfTemperature.FAHRENHEIT,
+    ),
+    ThermostatSettingSensorSpec(
+        "cold_temperature_alert",
+        "Cold temperature alert threshold",
+        "coldTempAlert",
+        "temperature",
+        SensorDeviceClass.TEMPERATURE,
+        UnitOfTemperature.FAHRENHEIT,
+    ),
+    ThermostatSettingSensorSpec(
+        "high_humidity_alert",
+        "High humidity alert threshold",
+        "humidityHighAlert",
+        "nonnegative_integer",
+        SensorDeviceClass.HUMIDITY,
+        "%",
+    ),
+    ThermostatSettingSensorSpec(
+        "low_humidity_alert",
+        "Low humidity alert threshold",
+        "humidityLowAlert",
+        "nonnegative_integer",
+        SensorDeviceClass.HUMIDITY,
+        "%",
+    ),
+    ThermostatSettingSensorSpec(
+        "last_service_date",
+        "Last service date",
+        "lastServiceDate",
+        "date",
+        SensorDeviceClass.DATE,
+    ),
+    ThermostatSettingSensorSpec(
+        "service_reminder_date",
+        "Service reminder date",
+        "remindMeDate",
+        "date",
+        SensorDeviceClass.DATE,
+    ),
+    ThermostatSettingSensorSpec(
+        "service_reminder_interval",
+        "Service reminder interval",
+        "monthsBetweenService",
+        "integer",
+        None,
+        "months",
+    ),
+    ThermostatSettingSensorSpec(
+        "playback_volume",
+        "Playback volume",
+        "playbackVolume",
+        "audio_integer",
+        None,
+        "%",
+    ),
+)
 
 
 GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
@@ -257,6 +377,8 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "profile_sensors",
             "participating_sensor_count",
             "participating_sensor_names",
+            "configured_sensor_count",
+            "configured_sensor_names",
             "valid_sensor_count",
             "unavailable_sensor_names",
             "hottest_sensor_name",
@@ -389,7 +511,7 @@ def _thermostat_sensor_descriptions(
     temperature_unit: str | None = None,
 ) -> tuple[BeestatSensorEntityDescription, ...]:
     thermostat_id = thermostat.thermostat_id
-    return (
+    descriptions = (
         BeestatSensorEntityDescription(
             key=thermostat_entity_unique_id(
                 thermostat_id,
@@ -538,8 +660,9 @@ def _thermostat_sensor_descriptions(
                 thermostat_id,
                 "current_profile_room_temperature_spread",
             ),
-            name="Current profile room temperature spread",
+            name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
+            device_class=SensorDeviceClass.TEMPERATURE_DELTA,
             native_unit_of_measurement=temperature_unit,
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -569,7 +692,6 @@ def _thermostat_sensor_descriptions(
             translation_key="compressor_minimum_off_time",
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement="s",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -598,7 +720,6 @@ def _thermostat_sensor_descriptions(
             translation_key="compressor_minimum_outdoor_temperature",
             device_class=SensorDeviceClass.TEMPERATURE,
             native_unit_of_measurement="°F",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -625,8 +746,8 @@ def _thermostat_sensor_descriptions(
             ),
             name="Heat cool minimum delta",
             translation_key="heat_cool_minimum_delta",
+            device_class=SensorDeviceClass.TEMPERATURE_DELTA,
             native_unit_of_measurement="°F",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -962,6 +1083,31 @@ def _thermostat_sensor_descriptions(
             ),
         ),
     )
+    return descriptions + tuple(
+        BeestatSensorEntityDescription(
+            key=thermostat_entity_unique_id(thermostat_id, spec.key),
+            name=spec.name,
+            translation_key=spec.key,
+            device_class=spec.device_class,
+            native_unit_of_measurement=spec.unit,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            available_fn=partial(
+                _thermostat_setting_available,
+                thermostat_id=thermostat_id,
+                key=spec.setting_key,
+                value_type=spec.value_type,
+            ),
+            suggested_object_id=thermostat_suggested_object_id(thermostat, spec.key),
+            value_fn=partial(
+                _thermostat_setting_value,
+                thermostat_id=thermostat_id,
+                key=spec.setting_key,
+                value_type=spec.value_type,
+            ),
+        )
+        for spec in THERMOSTAT_SETTING_SENSOR_SPECS
+    )
 
 
 def _summary_value(
@@ -1059,6 +1205,10 @@ def _room_temperature_spread_attributes(
     ):
         return None
     return {
+        "configured_sensor_count": projection.participating_sensor_count,
+        "configured_sensor_names": list(projection.participating_sensor_names),
+        # Retained for entity-attribute compatibility. These are configured
+        # profile members, not proof of Follow Me's momentary occupancy choice.
         "participating_sensor_count": projection.participating_sensor_count,
         "valid_sensor_count": projection.valid_sensor_count,
         "participating_sensor_names": list(projection.participating_sensor_names),
@@ -1084,6 +1234,13 @@ def _thermostat_setting_value(
         return temperature_fahrenheit(snapshot, key)
     if value_type == "integer":
         return integer_setting(snapshot, key)
+    if value_type == "nonnegative_integer":
+        value = integer_setting(snapshot, key)
+        return value if value is not None and value >= 0 else None
+    if value_type == "audio_integer":
+        return audio_integer_setting(snapshot, key)
+    if value_type == "date":
+        return date_setting(snapshot, key)
     if value_type == "text":
         return text_setting(snapshot, key)
     return None

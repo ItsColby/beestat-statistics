@@ -29,6 +29,7 @@
           "on": "mdi:home-export-outline"
         }
       },
+      "cold_temperature_alert_enabled": {"default": "mdi:snowflake-alert"},
       "equipment_alert": {
         "default": "mdi:alert-circle-outline",
         "state": {
@@ -57,6 +58,8 @@
           "on": "mdi:motion-sensor"
         }
       },
+      "hot_temperature_alert_enabled": {"default": "mdi:thermometer-alert"},
+      "microphone_enabled": {"default": "mdi:microphone"},
       "cloud_data_stale": {
         "default": "mdi:cloud-clock",
         "state": {
@@ -106,13 +109,15 @@
           "on": "mdi:account-check"
         }
       },
+      "service_reminder_enabled": {"default": "mdi:wrench-clock"},
       "smart_circulation_enabled": {
         "default": "mdi:fan-auto",
         "state": {
           "off": "mdi:fan-off",
           "on": "mdi:fan-auto"
         }
-      }
+      },
+      "wifi_offline_alert_enabled": {"default": "mdi:wifi-alert"}
     },
     "button": {
       "import_statistics": {
@@ -177,6 +182,9 @@
       "compressor_minimum_outdoor_temperature": {
         "default": "mdi:snowflake-thermometer"
       },
+      "cold_temperature_alert": {"default": "mdi:snowflake-alert"},
+      "cooling_differential": {"default": "mdi:snowflake-thermometer"},
+      "cooling_dissipation_time": {"default": "mdi:timer-sand"},
       "filter_recent_runtime_hours_per_day": {
         "default": "mdi:clock-outline"
       },
@@ -201,15 +209,22 @@
       "heat_cool_minimum_delta": {
         "default": "mdi:thermometer-chevron-up"
       },
+      "heating_differential": {"default": "mdi:radiator"},
+      "heating_dissipation_time": {"default": "mdi:timer-sand"},
+      "high_humidity_alert": {"default": "mdi:water-percent-alert"},
+      "hot_temperature_alert": {"default": "mdi:thermometer-alert"},
       "hold_action": {
         "default": "mdi:gesture-tap-hold"
       },
+      "last_service_date": {"default": "mdi:wrench-clock"},
+      "low_humidity_alert": {"default": "mdi:water-percent-alert"},
       "metadata_sync_last_success": {
         "default": "mdi:cloud-sync"
       },
       "next_scheduled_comfort_profile_time": {
         "default": "mdi:calendar-arrow-right"
       },
+      "playback_volume": {"default": "mdi:volume-high"},
       "runtime_summary_lag_days": {
         "default": "mdi:calendar-remove",
         "range": {
@@ -230,6 +245,8 @@
       "scheduled_comfort_profile": {
         "default": "mdi:calendar-clock"
       },
+      "service_reminder_date": {"default": "mdi:calendar-wrench"},
+      "service_reminder_interval": {"default": "mdi:calendar-sync"},
       "statistics_imported_rows": {
         "default": "mdi:database-import"
       },
@@ -245,6 +262,7 @@
       "statistics_skipped_windows": {
         "default": "mdi:database-alert"
       },
+      "temperature_correction": {"default": "mdi:thermometer-check"},
       "status": {
         "default": "mdi:cloud-question",
         "state": {

@@ -172,8 +172,12 @@ class BinarySensorHelpersTest(unittest.TestCase):
                         "smartCirculation": True,
                         "disablePreHeating": False,
                         "disablePreCooling": True,
+                        "hotTempAlertEnabled": True,
+                        "coldTempAlertEnabled": False,
+                        "wifiOfflineAlert": True,
+                        "serviceRemindMe": True,
                     },
-                    audio={},
+                    audio={"microphoneEnabled": False},
                 )
             },
         )
@@ -221,6 +225,31 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(by_key["smart_circulation_enabled"].is_on)
         self.assertTrue(by_key["preheating_enabled"].is_on)
         self.assertFalse(by_key["precooling_enabled"].is_on)
+        self.assertTrue(by_key["hot_temperature_alert_enabled"].is_on)
+        self.assertFalse(by_key["cold_temperature_alert_enabled"].is_on)
+        self.assertTrue(by_key["wifi_offline_alert_enabled"].is_on)
+        self.assertTrue(by_key["service_reminder_enabled"].is_on)
+        self.assertFalse(by_key["microphone_enabled"].is_on)
+        self.assertEqual(
+            "Hot temperature alert enabled",
+            by_key["hot_temperature_alert_enabled"]._attr_name,
+        )
+        self.assertEqual(
+            "Cold temperature alert enabled",
+            by_key["cold_temperature_alert_enabled"]._attr_name,
+        )
+        self.assertEqual(
+            "Wi-Fi offline alert enabled",
+            by_key["wifi_offline_alert_enabled"]._attr_name,
+        )
+        self.assertEqual(
+            "Service reminder enabled",
+            by_key["service_reminder_enabled"]._attr_name,
+        )
+        self.assertEqual(
+            "Microphone enabled",
+            by_key["microphone_enabled"]._attr_name,
+        )
         self.assertFalse(
             by_key["auto_away_enabled"]._attr_entity_registry_enabled_default
         )
