@@ -56,6 +56,10 @@ The preferred configuration path is the Home Assistant UI. The options flow expo
 
 Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
 
+Credential-bearing API requests never follow redirects. If Beestat moves the
+endpoint, update the validated HTTPS API URL through **Reconfigure** instead of
+allowing an HTTP redirect to forward the API-key query to another endpoint.
+
 YAML remains supported as an import/backward-compatibility route:
 
 ```yaml
@@ -393,6 +397,7 @@ Local pure-module checks:
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
+.\.venv\Scripts\shellcheck.exe scripts\verify-release-local.sh
 .\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
 $env:GH_TOKEN = gh auth token
 if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }

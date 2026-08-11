@@ -31,6 +31,15 @@ class _BeestatNonRetryableError(BeestatApiError):
     """Raised when another identical request cannot plausibly correct the error."""
 
 
+def _reject_http_redirect(status: int, resource: str, method: str) -> None:
+    """Fail closed instead of forwarding API-key query parameters."""
+
+    if 300 <= status < 400:
+        raise _BeestatNonRetryableError(
+            f"{resource}.{method} refused HTTP redirect {status}"
+        )
+
+
 def exception_fingerprint(err: BaseException) -> str:
     """Return a bounded private-safe location for an unexpected exception."""
 
@@ -234,7 +243,9 @@ class BeestatClient:
             try:
                 async with asyncio.timeout(self._timeout):
                     async with self._session.get(
-                        self._api_base, params=params
+                        self._api_base,
+                        params=params,
+                        allow_redirects=False,
                     ) as response:
                         if response.status in (401, 403):
                             raise BeestatAuthError(
@@ -248,6 +259,7 @@ class BeestatClient:
                             raise _BeestatNonRetryableError(
                                 f"{resource}.{method} returned HTTP {response.status}"
                             )
+                        _reject_http_redirect(response.status, resource, method)
                         if response.status >= 400:
                             raise BeestatApiError(
                                 f"{resource}.{method} returned HTTP {response.status}"

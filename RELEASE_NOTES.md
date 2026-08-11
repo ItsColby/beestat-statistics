@@ -1,3 +1,19 @@
+# Beestat Statistics v2026.8.16
+
+## Security
+
+- Refuse HTTP redirects for credential-bearing Beestat API requests so an
+  API-key query cannot be forwarded to a different endpoint.
+- Refuse redirects in the upstream API-surface checker so an optional GitHub
+  token remains confined to its approved GitHub hosts.
+
+## Quality
+
+- Run ShellCheck in the product-owned release harness instead of merely
+  installing it.
+- Pin the scheduled API-surface audit to Ubuntu 24.04 for reproducible workflow
+  behavior.
+
 # Beestat Statistics v2026.8.15
 
 ## Added

@@ -436,6 +436,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
+        api_surface_workflow = (
+            ROOT / ".github/workflows/beestat-api-surface.yaml"
+        ).read_text(encoding="utf-8")
         release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
             encoding="utf-8"
         )
@@ -476,6 +479,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn("matrix:", workflow)
         self.assertNotIn("ubuntu-latest", workflow)
         self.assertEqual(6, workflow.count("runs-on: ubuntu-24.04"))
+        self.assertNotIn("ubuntu-latest", api_surface_workflow)
+        self.assertEqual(1, api_surface_workflow.count("runs-on: ubuntu-24.04"))
         self.assertIn(
             '"${source_git[@]}" ls-files --cached --others --exclude-standard -z',
             release_runner,
@@ -549,6 +554,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "python -m ruff check custom_components tests scripts", release_runner
         )
         self.assertIn('"shellcheck-py==0.11.0.1"', release_runner)
+        self.assertIn("shellcheck scripts/verify-release-local.sh", release_runner)
         self.assertIn(
             "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
             release_runner,

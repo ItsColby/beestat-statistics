@@ -206,6 +206,29 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.call_count, 1)
         sleep.assert_not_awaited()
 
+    async def test_redirect_is_rejected_without_forwarding_credentials(self) -> None:
+        session = _FakeSession([_FakeResponse({}, status=302)])
+        client = self.api.BeestatClient(
+            session,
+            "secret-token",
+            "https://api.test/",
+            retries=3,
+        )
+        sleep = AsyncMock()
+
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaisesRegex(
+                self.api.BeestatApiError,
+                r"thermostat\.read_id refused HTTP redirect 302",
+            ),
+        ):
+            await client.async_read_id("thermostat")
+
+        self.assertEqual(session.call_count, 1)
+        self.assertEqual(session.allow_redirects, [False])
+        sleep.assert_not_awaited()
+
     async def test_transient_http_error_is_retried(self) -> None:
         session = _FakeSession(
             [
@@ -387,9 +410,11 @@ class _FakeSession:
     def __init__(self, payloads: list[object]) -> None:
         self._payloads = iter(payloads)
         self.call_count = 0
+        self.allow_redirects: list[bool] = []
 
-    def get(self, _url, *, params):
+    def get(self, _url, *, params, allow_redirects: bool):
         self.call_count += 1
+        self.allow_redirects.append(allow_redirects)
         response = next(self._payloads)
         return (
             response if isinstance(response, _FakeResponse) else _FakeResponse(response)
