@@ -81,28 +81,28 @@ _THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, str, bool], ...] 
     ),
     (
         "hot_temperature_alert_enabled",
-        "Hot temperature alert",
+        "Hot temperature alert enabled",
         "hot_temperature_alert_enabled",
         "hotTempAlertEnabled",
         False,
     ),
     (
         "cold_temperature_alert_enabled",
-        "Cold temperature alert",
+        "Cold temperature alert enabled",
         "cold_temperature_alert_enabled",
         "coldTempAlertEnabled",
         False,
     ),
     (
         "wifi_offline_alert_enabled",
-        "Wi-Fi offline alert",
+        "Wi-Fi offline alert enabled",
         "wifi_offline_alert_enabled",
         "wifiOfflineAlert",
         False,
     ),
     (
         "service_reminder_enabled",
-        "Service reminder",
+        "Service reminder enabled",
         "service_reminder_enabled",
         "serviceRemindMe",
         False,
@@ -196,7 +196,7 @@ class BeestatThermostatAudioBinarySensor(
     """Expose microphone state when an Ecobee model supplies it."""
 
     _attr_has_entity_name = True
-    _attr_name = "Microphone"
+    _attr_name = "Microphone enabled"
     _attr_translation_key = "microphone_enabled"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False

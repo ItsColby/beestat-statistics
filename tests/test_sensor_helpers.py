@@ -395,6 +395,33 @@ class SensorHelpersTest(unittest.TestCase):
             "Configured profile room temperature spread",
             descriptions["current_profile_room_temperature_spread"].name,
         )
+        for key in (
+            "current_profile_room_temperature_spread",
+            "heat_cool_minimum_delta",
+            "temperature_correction",
+            "heating_differential",
+            "cooling_differential",
+        ):
+            self.assertEqual("temperature_delta", descriptions[key].device_class, key)
+        for key in (
+            "compressor_minimum_off_time",
+            "compressor_minimum_outdoor_temperature",
+            "heat_cool_minimum_delta",
+            "temperature_correction",
+            "heating_differential",
+            "cooling_differential",
+            "heating_dissipation_time",
+            "cooling_dissipation_time",
+            "hot_temperature_alert",
+            "cold_temperature_alert",
+            "high_humidity_alert",
+            "low_humidity_alert",
+            "service_reminder_interval",
+            "playback_volume",
+        ):
+            self.assertIsNone(descriptions[key].state_class, key)
+        for key in ("high_humidity_alert", "low_humidity_alert"):
+            self.assertEqual("humidity", descriptions[key].device_class, key)
         self.assertEqual(
             "_filter_forecast_snapshot_attributes",
             descriptions["filter_due_date"].extra_attributes_fn.func.__name__,
@@ -562,7 +589,9 @@ class SensorHelpersTest(unittest.TestCase):
         sensor.SensorDeviceClass = types.SimpleNamespace(
             DATE="date",
             DURATION="duration",
+            HUMIDITY="humidity",
             TEMPERATURE="temperature",
+            TEMPERATURE_DELTA="temperature_delta",
             TIMESTAMP="timestamp",
         )
         sensor.SensorEntity = object

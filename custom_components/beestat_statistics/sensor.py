@@ -89,7 +89,6 @@ class ThermostatSettingSensorSpec:
     value_type: str
     device_class: SensorDeviceClass | None = None
     unit: str | None = None
-    measurement: bool = False
 
 
 THERMOSTAT_SETTING_SENSOR_SPECS = (
@@ -98,27 +97,24 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "Temperature correction",
         "tempCorrection",
         "temperature",
-        SensorDeviceClass.TEMPERATURE,
+        SensorDeviceClass.TEMPERATURE_DELTA,
         UnitOfTemperature.FAHRENHEIT,
-        True,
     ),
     ThermostatSettingSensorSpec(
         "heating_differential",
         "Heating differential",
         "stage1HeatingDifferentialTemp",
         "temperature",
-        None,
+        SensorDeviceClass.TEMPERATURE_DELTA,
         UnitOfTemperature.FAHRENHEIT,
-        True,
     ),
     ThermostatSettingSensorSpec(
         "cooling_differential",
         "Cooling differential",
         "stage1CoolingDifferentialTemp",
         "temperature",
-        None,
+        SensorDeviceClass.TEMPERATURE_DELTA,
         UnitOfTemperature.FAHRENHEIT,
-        True,
     ),
     ThermostatSettingSensorSpec(
         "heating_dissipation_time",
@@ -127,7 +123,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "integer",
         SensorDeviceClass.DURATION,
         "s",
-        True,
     ),
     ThermostatSettingSensorSpec(
         "cooling_dissipation_time",
@@ -136,7 +131,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "integer",
         SensorDeviceClass.DURATION,
         "s",
-        True,
     ),
     ThermostatSettingSensorSpec(
         "hot_temperature_alert",
@@ -145,7 +139,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
-        True,
     ),
     ThermostatSettingSensorSpec(
         "cold_temperature_alert",
@@ -154,25 +147,22 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
-        True,
     ),
     ThermostatSettingSensorSpec(
         "high_humidity_alert",
         "High humidity alert threshold",
         "humidityHighAlert",
         "nonnegative_integer",
-        None,
+        SensorDeviceClass.HUMIDITY,
         "%",
-        True,
     ),
     ThermostatSettingSensorSpec(
         "low_humidity_alert",
         "Low humidity alert threshold",
         "humidityLowAlert",
         "nonnegative_integer",
-        None,
+        SensorDeviceClass.HUMIDITY,
         "%",
-        True,
     ),
     ThermostatSettingSensorSpec(
         "last_service_date",
@@ -195,7 +185,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "integer",
         None,
         "months",
-        True,
     ),
     ThermostatSettingSensorSpec(
         "playback_volume",
@@ -204,7 +193,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "audio_integer",
         None,
         "%",
-        True,
     ),
 )
 
@@ -674,6 +662,7 @@ def _thermostat_sensor_descriptions(
             ),
             name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
+            device_class=SensorDeviceClass.TEMPERATURE_DELTA,
             native_unit_of_measurement=temperature_unit,
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -703,7 +692,6 @@ def _thermostat_sensor_descriptions(
             translation_key="compressor_minimum_off_time",
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement="s",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -732,7 +720,6 @@ def _thermostat_sensor_descriptions(
             translation_key="compressor_minimum_outdoor_temperature",
             device_class=SensorDeviceClass.TEMPERATURE,
             native_unit_of_measurement="°F",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -759,8 +746,8 @@ def _thermostat_sensor_descriptions(
             ),
             name="Heat cool minimum delta",
             translation_key="heat_cool_minimum_delta",
+            device_class=SensorDeviceClass.TEMPERATURE_DELTA,
             native_unit_of_measurement="°F",
-            state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(
@@ -1103,7 +1090,6 @@ def _thermostat_sensor_descriptions(
             translation_key=spec.key,
             device_class=spec.device_class,
             native_unit_of_measurement=spec.unit,
-            state_class=(SensorStateClass.MEASUREMENT if spec.measurement else None),
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             available_fn=partial(

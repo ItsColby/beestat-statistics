@@ -312,11 +312,14 @@
   Scheduled profile and next transition are local projections of the cached
   Beestat schedule and do not claim the thermostat's live hold/mode state.
 - Keep the configured-profile room temperature spread enabled as one compact
-  diagnostic measurement with unrecorded configured room-name/count attributes;
-  do not present configured membership as Follow Me's momentary occupancy choice,
-  and retain legacy participating attributes for compatibility. Keep
-  advanced Ecobee settings disabled by default in the entity registry; the
-  response-only configuration action remains the complete private audit surface.
+  temperature-delta diagnostic measurement with unrecorded configured
+  room-name/count attributes; do not present configured membership as Follow
+  Me's momentary occupancy choice, and retain legacy participating attributes
+  for compatibility. Keep advanced Ecobee settings disabled by default in the
+  entity registry. Treat their numeric values as static configuration rather
+  than present-time measurements, and name binary configuration states
+  explicitly as enabled/disabled. The response-only configuration action
+  remains the complete private audit surface.
 - Keep partial-import and active-alert evidence bounded in ordinary entity
   state. Preserve complete counts/categories, retain at most three
   private-identifier-free examples, and put broader aggregate evidence in

@@ -313,15 +313,19 @@ The per-thermostat **Configured profile room temperature spread** sensor follows
 the sensors configured in the current Beestat comfort profile while reading
 their mapped local HomeKit temperature entities. It does not claim which sensor
 Follow Me is momentarily weighting. It rebuilds immediately from local state
-changes and profile transitions without cloud I/O; legacy participating-sensor
-attributes remain available for compatibility. Advanced setting entities such
+changes and profile transitions without cloud I/O, uses Home Assistant's native
+temperature-delta semantics, and retains legacy participating-sensor attributes
+for compatibility. Advanced setting entities such
 as Auto Away, Follow Me, Smart Circulation, preheat/precool, compressor
 protection, staging differentials and dissipation times, temperature correction,
 temperature/humidity alert policies, service reminders, Wi-Fi alerts, microphone
 state, playback volume, heat/cool minimum delta, and hold action are disabled by
 default so they remain discoverable without crowding routine device and dashboard
-surfaces. The response-only configuration action remains the exhaustive private
-audit surface.
+surfaces. Static numeric settings preserve their native semantic unit but do not
+opt into Recorder long-term measurement statistics, and binary setting names say
+`enabled` so they cannot be mistaken for active alerts or microphone activity.
+The response-only configuration action remains the exhaustive private audit
+surface.
 
 ## Recorder Statistics
 

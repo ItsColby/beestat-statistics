@@ -8,7 +8,7 @@
       "auto_away_enabled": {
         "name": "Auto away"
       },
-      "cold_temperature_alert_enabled": {"name": "Cold temperature alert"},
+      "cold_temperature_alert_enabled": {"name": "Cold temperature alert enabled"},
       "equipment_alert": {
         "name": "Equipment alert"
       },
@@ -21,8 +21,8 @@
       "follow_me_enabled": {
         "name": "Follow me"
       },
-      "hot_temperature_alert_enabled": {"name": "Hot temperature alert"},
-      "microphone_enabled": {"name": "Microphone"},
+      "hot_temperature_alert_enabled": {"name": "Hot temperature alert enabled"},
+      "microphone_enabled": {"name": "Microphone enabled"},
       "cloud_data_stale": {
         "name": "Cloud data stale"
       },
@@ -44,11 +44,11 @@
       "sensor_in_use": {
         "name": "Sensor in use"
       },
-      "service_reminder_enabled": {"name": "Service reminder"},
+      "service_reminder_enabled": {"name": "Service reminder enabled"},
       "smart_circulation_enabled": {
         "name": "Smart circulation"
       },
-      "wifi_offline_alert_enabled": {"name": "Wi-Fi offline alert"}
+      "wifi_offline_alert_enabled": {"name": "Wi-Fi offline alert enabled"}
     },
     "button": {
       "import_statistics": {

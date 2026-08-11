@@ -1,3 +1,25 @@
+# Beestat Statistics v2026.8.15
+
+## Added
+
+- Make selected privacy-safe Ecobee configuration settings discoverable as
+  disabled-by-default diagnostic entities while retaining the complete private
+  response-only configuration action.
+
+## Changed
+
+- Describe alert, service-reminder, Wi-Fi, and microphone configuration states
+  explicitly as enabled so they cannot be mistaken for active conditions.
+- Use native temperature-delta semantics for correction, differential, and
+  current-profile room-spread values.
+- Keep static numeric configuration settings out of Recorder long-term
+  measurement statistics.
+
+## Fixed
+
+- Label the room-temperature spread as configured comfort-profile membership,
+  while retaining its stable entity identity and compatibility attributes.
+
 # Beestat Statistics v2026.8.14
 
 ## Fixed
