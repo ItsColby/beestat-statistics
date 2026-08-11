@@ -101,7 +101,7 @@ class ThermostatMetadata:
     next_scheduled_climate_name: str | None
     next_scheduled_at: datetime | None
     schedule_profiles: tuple[ScheduleProfile, ...]
-    active_sensor_count: int
+    active_sensor_count: int | None
     active_sensor_names: tuple[str, ...]
     current_profile_sensor_names: tuple[str, ...]
     active_alert_count: int
@@ -111,14 +111,14 @@ class ThermostatMetadata:
 
 @dataclass(frozen=True, slots=True)
 class SensorMetadata:
-    """Beestat sensor metadata useful for comfort-profile diagnostics."""
+    """Beestat sensor metadata useful for source diagnostics."""
 
     sensor_id: int
     thermostat_id: int | None
     name: str | None
     identifier: str | None
     sensor_type: str | None
-    in_use: bool
+    in_use: bool | None
     inactive: bool
     deleted: bool
 
@@ -1324,7 +1324,7 @@ def _build_sensor_metadata(
             name=_string_or_none(row.get("name")),
             identifier=_string_or_none(row.get("identifier")),
             sensor_type=_string_or_none(row.get("type")),
-            in_use=_bool(row.get("in_use")),
+            in_use=_optional_bool(row.get("in_use")),
             inactive=_bool(row.get("inactive")),
             deleted=_bool(row.get("deleted")),
         )
@@ -1351,15 +1351,24 @@ def _build_thermostat_metadata(
         )
         data_begin = _parse_datetime(row.get("data_begin"))
         data_end = _parse_datetime(row.get("data_end"))
+        eligible_sensors = tuple(
+            item
+            for item in sensor_metadata.values()
+            if item.thermostat_id == thermostat.thermostat_id
+            and not item.inactive
+            and not item.deleted
+        )
         active_sensors = tuple(
             sorted(
                 item.name or str(item.sensor_id)
-                for item in sensor_metadata.values()
-                if item.thermostat_id == thermostat.thermostat_id
-                and item.in_use
-                and not item.inactive
-                and not item.deleted
+                for item in eligible_sensors
+                if item.in_use is True
             )
+        )
+        active_sensor_count = (
+            None
+            if any(item.in_use is None for item in eligible_sensors)
+            else len(active_sensors)
         )
         current_ref, current_name, current_profile_sensors = _current_profile(row)
         schedule = _schedule_snapshot(row, fetched_at, local_tz)
@@ -1379,7 +1388,7 @@ def _build_thermostat_metadata(
             next_scheduled_climate_name=schedule["next_name"],
             next_scheduled_at=schedule["next_at"],
             schedule_profiles=schedule["profiles"],
-            active_sensor_count=len(active_sensors),
+            active_sensor_count=active_sensor_count,
             active_sensor_names=active_sensors,
             current_profile_sensor_names=tuple(
                 sensor.name or "Unnamed sensor" for sensor in current_profile_sensors
@@ -1945,9 +1954,19 @@ def _bool(value: Any) -> bool:
 
 
 def _optional_bool(value: Any) -> bool | None:
-    if value is None:
-        return None
-    return _bool(value)
+    """Return an explicit source boolean without manufacturing false."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return None
 
 
 def _float_or_zero(value: Any) -> float:

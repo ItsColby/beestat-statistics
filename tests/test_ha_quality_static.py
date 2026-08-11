@@ -1409,13 +1409,14 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             'name="Runtime summary latest date"',
             'name="Runtime summary lag days"',
             'name="Current comfort profile"',
+            'name="Beestat-reported in-use sensor count"',
             'name="Filter runtime hours"',
             'name="Filter recent runtime hours per day"',
             'name="Filter due date"',
         ):
             self.assertIn(expected, sensor_text)
         for expected in (
-            '_attr_name = "Sensor in use"',
+            '_attr_name = "Beestat-reported sensor in use"',
             '_attr_name = "Active alert"',
             '_attr_name = "Equipment alert"',
             '_attr_name = "Filter due"',
@@ -1430,6 +1431,44 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn('name="Import statistics"', button_text)
         self.assertIn('_attr_name = "Mark filter changed"', button_text)
         self.assertIn('_attr_name = "Filter changed date"', date_text)
+
+        translations = _json_file(
+            "custom_components/beestat_statistics/translations/en.json"
+        )
+        self.assertEqual(
+            translations["entity"]["sensor"]["active_sensor_count"]["name"],
+            "Beestat-reported in-use sensor count",
+        )
+        self.assertEqual(
+            translations["entity"]["binary_sensor"]["sensor_in_use"]["name"],
+            "Beestat-reported sensor in use",
+        )
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "Beestat sensor participation in the active comfort profile",
+            readme,
+        )
+        self.assertNotIn(
+            "Beestat says are active in the current comfort profile",
+            readme,
+        )
+
+    def test_reported_sensor_use_icons_do_not_imply_occupancy(self) -> None:
+        """Reported upstream metadata should use neutral sensor icons."""
+
+        icons = _json_file("custom_components/beestat_statistics/icons.json")
+        sensor_in_use = icons["entity"]["binary_sensor"]["sensor_in_use"]
+        active_sensor_count = icons["entity"]["sensor"]["active_sensor_count"]
+
+        self.assertEqual("mdi:home-thermometer", sensor_in_use["default"])
+        self.assertEqual("mdi:home-thermometer", sensor_in_use["state"]["off"])
+        self.assertEqual("mdi:thermometer-check", sensor_in_use["state"]["on"])
+        self.assertEqual("mdi:home-thermometer", active_sensor_count["default"])
+        self.assertEqual("mdi:home-thermometer", active_sensor_count["range"]["0"])
+        self.assertEqual("mdi:thermometer-check", active_sensor_count["range"]["1"])
+        self.assertNotIn("account", str(sensor_in_use))
+        self.assertNotIn("account", str(active_sensor_count))
 
     def test_entity_unique_ids_do_not_repeat_integration_scope(self) -> None:
         const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(

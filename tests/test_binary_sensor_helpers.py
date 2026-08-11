@@ -230,6 +230,38 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(by_key["wifi_offline_alert_enabled"].is_on)
         self.assertTrue(by_key["service_reminder_enabled"].is_on)
         self.assertFalse(by_key["microphone_enabled"].is_on)
+        sensor_in_use = by_key["sensor_in_use"]
+        self.assertEqual(
+            "Beestat-reported sensor in use",
+            sensor_in_use._attr_name,
+        )
+        self.assertTrue(sensor_in_use.available)
+        self.assertTrue(sensor_in_use.is_on)
+        fake_coordinator.data = replace(
+            data,
+            sensor_metadata={
+                10: replace(data.sensor_metadata[10], in_use=None),
+            },
+        )
+        self.assertTrue(sensor_in_use.available)
+        self.assertIsNone(sensor_in_use.is_on)
+        fake_coordinator.data = replace(data, sensor_metadata={})
+        self.assertFalse(sensor_in_use.available)
+        fake_coordinator.data = replace(
+            data,
+            sensor_metadata={
+                10: replace(data.sensor_metadata[10], inactive=True),
+            },
+        )
+        self.assertFalse(sensor_in_use.available)
+        fake_coordinator.data = replace(
+            data,
+            sensor_metadata={
+                10: replace(data.sensor_metadata[10], deleted=True),
+            },
+        )
+        self.assertFalse(sensor_in_use.available)
+        fake_coordinator.data = data
         self.assertEqual(
             "Hot temperature alert enabled",
             by_key["hot_temperature_alert_enabled"]._attr_name,

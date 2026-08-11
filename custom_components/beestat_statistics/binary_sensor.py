@@ -443,7 +443,7 @@ class BeestatSensorInUseBinarySensor(
     CoordinatorEntity[BeestatRuntimeDataCoordinator],
     BinarySensorEntity,
 ):
-    """Expose whether Beestat reports a sensor as active in the comfort profile."""
+    """Expose Beestat's per-sensor in-use metadata without reinterpreting it."""
 
     _attr_has_entity_name = True
     _unrecorded_attributes = frozenset(
@@ -461,7 +461,7 @@ class BeestatSensorInUseBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, sensor.device_id)
         self._sensor = sensor
-        self._attr_name = "Sensor in use"
+        self._attr_name = "Beestat-reported sensor in use"
         self._attr_translation_key = "sensor_in_use"
         self._attr_unique_id = sensor_entity_unique_id(
             sensor.sensor_id, "sensor_in_use"
@@ -491,7 +491,7 @@ class BeestatSensorInUseBinarySensor(
         """Return whether Beestat reports this sensor as in use."""
 
         metadata = self._metadata
-        if metadata is None:
+        if metadata is None or metadata.in_use is None:
             return None
         return metadata.in_use and not metadata.deleted and not metadata.inactive
 
