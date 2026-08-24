@@ -73,6 +73,7 @@ class ThermostatRuntimeSummary:
     filter_changed_source: str | None
     filter_runtime_hours: float | None
     recent_runtime_hours_per_day: float | None
+    filter_runtime_threshold_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -980,6 +981,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     thermostat_rows,
                     today,
                 ),
+                filter_runtime_threshold_date=_filter_runtime_threshold_date(
+                    thermostat_rows,
+                    changed_date,
+                    thermostat,
+                    changed_source,
+                ),
             )
 
         thermostat_metadata = _build_thermostat_metadata(
@@ -1211,6 +1218,49 @@ def _filter_runtime_hours(
             else None
         ),
     )
+
+
+def _filter_runtime_threshold_date(
+    rows: list[dict[str, Any]],
+    changed_date: date | None,
+    thermostat: ConfiguredThermostat,
+    changed_source: str | None,
+) -> date | None:
+    """Return the first source date whose cumulative runtime met the threshold."""
+
+    if changed_date is None:
+        return None
+    start_date = changed_date
+    change_day_baseline_seconds: float | None = None
+    if changed_source == "home_assistant":
+        if (
+            thermostat.filter_changed_at is not None
+            and thermostat.filter_change_boundary_reconciled_at is None
+        ):
+            start_date += timedelta(days=1)
+        else:
+            change_day_baseline_seconds = (
+                thermostat.filter_change_day_runtime_baseline_seconds
+            )
+
+    rows_by_date: dict[date, list[dict[str, Any]]] = {}
+    for row in rows:
+        row_date = _parse_date(row.get("date"))
+        if row_date is not None and row_date >= start_date:
+            rows_by_date.setdefault(row_date, []).append(row)
+
+    cumulative_seconds = 0.0
+    threshold_seconds = thermostat.filter_lifetime_runtime_hours * 3600
+    for row_date in sorted(rows_by_date):
+        daily_seconds = _sum_fan_seconds(rows_by_date[row_date])
+        if daily_seconds is None:
+            return None
+        if row_date == changed_date and change_day_baseline_seconds is not None:
+            daily_seconds = max(daily_seconds - change_day_baseline_seconds, 0.0)
+        cumulative_seconds += daily_seconds
+        if cumulative_seconds >= threshold_seconds:
+            return row_date
+    return None
 
 
 def _raw_filter_boundary(

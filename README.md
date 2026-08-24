@@ -200,6 +200,11 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - runtime summary stale problem binary sensor
 - cloud data stale problem binary sensor
 
+The runtime due date is a projection until cumulative filter runtime reaches
+the configured threshold. After the threshold is crossed, it remains pinned to
+the first Beestat daily-summary date that met the threshold instead of moving
+forward with each local calendar day.
+
 Scheduled/next comfort profiles, filter due date and days remaining, alerts,
 and filter-maintenance controls form the primary thermostat surface. Beestat's
 current comfort profile is delayed cloud diagnostic context: it mirrors the

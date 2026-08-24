@@ -61,6 +61,11 @@ def build_filter_forecast(
         today,
         remaining_runtime_hours,
         recent_runtime_hours_per_day,
+        threshold_date=(
+            getattr(summary, "filter_runtime_threshold_date", None)
+            if summary is not None
+            else None
+        ),
     )
     max_age_due_date = (
         changed_date + timedelta(days=thermostat.filter_max_age_days)
@@ -126,7 +131,11 @@ def _runtime_due_date(
     today: date,
     remaining_runtime_hours: float | None,
     recent_runtime_hours_per_day: float | None,
+    *,
+    threshold_date: date | None,
 ) -> date | None:
+    if remaining_runtime_hours == 0 and threshold_date is not None:
+        return threshold_date
     if remaining_runtime_hours is None or recent_runtime_hours_per_day is None:
         return None
     if recent_runtime_hours_per_day <= 0:
