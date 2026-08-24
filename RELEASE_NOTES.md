@@ -1,3 +1,18 @@
+# Beestat Statistics v2026.8.24
+
+## Fixed
+
+- Keep a crossed filter runtime due date pinned to the first Beestat daily
+  summary that reached the configured lifetime threshold instead of moving it
+  forward to the current date on every local-day projection.
+- Preserve the existing projected due-date behavior before the threshold is
+  reached, including exact Home Assistant filter-change runtime boundaries.
+
+## Quality
+
+- Add regression coverage for the first threshold-crossing day, click-boundary
+  runtime exclusion, and stable overdue forecasts.
+
 # Beestat Statistics v2026.8.17
 
 ## Changed

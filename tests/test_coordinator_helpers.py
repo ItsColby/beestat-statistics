@@ -661,6 +661,54 @@ class CoordinatorHelpersTest(unittest.TestCase):
             4.0,
         )
 
+    def test_filter_runtime_threshold_date_is_first_crossing_day(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_lifetime_runtime_hours=4,
+            filter_change_day_runtime_baseline_seconds=28800,
+        )
+        rows = [
+            {"date": "2026-07-05", "sum_fan": 36000},
+            {"date": "2026-07-06", "sum_fan": 3600},
+            {"date": "2026-07-07", "sum_fan": 7200},
+        ]
+
+        self.assertEqual(
+            self.coordinator._filter_runtime_threshold_date(
+                rows,
+                date(2026, 7, 5),
+                thermostat,
+                "home_assistant",
+            ),
+            date(2026, 7, 7),
+        )
+
+    def test_pending_filter_boundary_excludes_change_day_from_threshold(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone_a",
+            name="Zone A",
+            filter_lifetime_runtime_hours=2,
+            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
+        )
+        rows = [
+            {"date": "2026-07-05", "sum_fan": 14400},
+            {"date": "2026-07-06", "sum_fan": 3600},
+            {"date": "2026-07-07", "sum_fan": 3600},
+        ]
+
+        self.assertEqual(
+            self.coordinator._filter_runtime_threshold_date(
+                rows,
+                date(2026, 7, 5),
+                thermostat,
+                "home_assistant",
+            ),
+            date(2026, 7, 7),
+        )
+
     def test_runtime_hours_clamps_corrected_change_day_below_click_baseline(
         self,
     ) -> None:

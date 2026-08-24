@@ -184,6 +184,35 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertFalse(forecast.due)
         self.assertTrue(forecast.due_soon)
 
+    def test_filter_forecast_retains_crossed_runtime_threshold_date(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+            filter_notice_days=7,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 8, 3),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=397.6,
+            recent_runtime_hours_per_day=18.3,
+            filter_runtime_threshold_date=date(2026, 8, 15),
+        )
+
+        forecast = self.sensor.build_filter_forecast(
+            thermostat,
+            summary,
+            today=date(2026, 8, 24),
+        )
+
+        self.assertEqual(forecast.remaining_runtime_hours, 0.0)
+        self.assertEqual(forecast.runtime_due_date, date(2026, 8, 15))
+        self.assertEqual(forecast.due_date, date(2026, 8, 15))
+        self.assertEqual(forecast.days_remaining, -9)
+        self.assertTrue(forecast.due)
+
     def test_filter_due_date_snapshot_is_atomic_and_content_revisioned(self) -> None:
         changed_at = datetime(2026, 6, 18, 14, 30, tzinfo=UTC)
         thermostat = self.config_model.ConfiguredThermostat(
