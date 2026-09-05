@@ -406,16 +406,24 @@ Home Assistant `2026.8.0` requires Python `3.14.2` or newer. The GitHub validati
 
 This repository is a HACS custom integration. The Beestat API client is intentionally in-tree and uses Home Assistant's shared aiohttp websession. If this integration is ever prepared for Home Assistant Core inclusion, split the Beestat client into an async, tagged, open-source PyPI package before submission.
 
-Local pure-module checks:
+Dependency-light tests without Home Assistant or containers. On Windows, install
+`tzdata` for the tests' IANA time zones:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "mypy==2.3.0" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install tzdata
+.\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
+```
+
+Additional local static checks in a virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
 .\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\shellcheck.exe scripts\verify-release-local.sh
-.\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
 $env:GH_TOKEN = gh auth token
 if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }
 try {
@@ -437,6 +445,9 @@ The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream chan
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
 Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and a second dependency-closed lane targets exact current same-month patch Core `2026.8.1` with harness `0.13.355`. Each lane installs its exact harness and Core requirements separately, runs a literal `python -m pip check` after the final dependency installation, and then runs the complete Home Assistant tests. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+
+Strict mypy requires Home Assistant dependencies and runs in the `minimum` lane
+of `scripts/verify-release-local.ps1`.
 
 Supported-minimum lane:
 

@@ -571,7 +571,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn(
             ".\\.venv\\Scripts\\python.exe -m pip install "
-            '"ruff==0.16.2" "mypy==2.3.0" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
+            '"ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
             readme,
         )
         local_zizmor_block = (
