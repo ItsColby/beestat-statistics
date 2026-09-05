@@ -415,11 +415,10 @@ python -m venv .venv
 .\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 ```
 
-Additional local static checks in a virtual environment:
+Additional local static checks using the virtual environment prepared above:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
-.\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
