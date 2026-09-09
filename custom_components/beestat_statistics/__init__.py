@@ -79,6 +79,7 @@ from .config_payload import (
     normalize_point_lookback_days,
     normalize_scan_interval_seconds,
 )
+from .config_rows import positive_resource_id
 from .configuration import configuration_response
 from .const import (
     API_BASE,
@@ -369,6 +370,25 @@ class SummaryImportPlan:
     overlap_days: int | None
     fallback_reason: str | None
 
+    @classmethod
+    def full(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        fallback_reason: str,
+    ) -> SummaryImportPlan:
+        """Build an unseeded complete baseline with its existing fallback reason."""
+
+        return cls(
+            rows=rows,
+            seeds={},
+            mode="full",
+            window_start=None,
+            window_end=None,
+            overlap_days=None,
+            fallback_reason=fallback_reason,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedImport:
@@ -418,6 +438,14 @@ class BeestatStatisticsImporter:
         self._coordinator = coordinator
         self._point_lookback_days = point_lookback_days
         self._lock = asyncio.Lock()
+        self._unloaded = False
+        coordinator.beestat_config_entry.async_on_unload(self._async_unload)
+
+    @callback
+    def _async_unload(self) -> None:
+        """Prevent old service references from starting work after unload."""
+
+        self._unloaded = True
 
     async def async_import_statistics(
         self,
@@ -430,6 +458,35 @@ class BeestatStatisticsImporter:
         thermostat_id: int | None = None,
     ) -> ImportResult:
         """Sync Beestat and import external statistics."""
+
+        if self._unloaded:
+            raise RuntimeError("Beestat Statistics config entry is unloaded")
+        return (
+            await self._coordinator.beestat_config_entry.async_create_background_task(
+                self._hass,
+                self._async_import_statistics(
+                    point_lookback_days=point_lookback_days,
+                    skip_sync=skip_sync,
+                    force_full_summary=force_full_summary,
+                    rebuild_start=rebuild_start,
+                    rebuild_end=rebuild_end,
+                    thermostat_id=thermostat_id,
+                ),
+                f"{DOMAIN}_import_statistics",
+            )
+        )
+
+    async def _async_import_statistics(
+        self,
+        *,
+        point_lookback_days: int | None,
+        skip_sync: bool,
+        force_full_summary: bool,
+        rebuild_start: dt_date | None,
+        rebuild_end: dt_date | None,
+        thermostat_id: int | None,
+    ) -> ImportResult:
+        """Run one serialized import owned by the config-entry lifecycle."""
 
         async with self._lock:
             lookback_days = point_lookback_days or self._point_lookback_days
@@ -605,38 +662,23 @@ class BeestatStatisticsImporter:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="forced_full_baseline",
             )
 
         statistic_ids = cumulative_statistic_ids(runtime_data.config, cached_rows)
         if not statistic_ids:
-            return SummaryImportPlan(
-                rows=cached_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                cached_rows,
                 fallback_reason="no_cumulative_statistics",
             )
 
         latest_by_id = await self._async_latest_cumulative_starts(statistic_ids)
         if len(latest_by_id) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="missing_latest_recorder_statistics",
             )
 
@@ -653,13 +695,8 @@ class BeestatStatisticsImporter:
         )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="empty_summary_window",
             )
 
@@ -671,13 +708,8 @@ class BeestatStatisticsImporter:
         )
         if len(seeds) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="missing_prior_recorder_seed",
             )
 
@@ -693,13 +725,8 @@ class BeestatStatisticsImporter:
                 "Falling back to full Beestat summary baseline after windowed read failed"
             )
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="summary_window_read_failed",
             )
 
@@ -876,9 +903,11 @@ class BeestatStatisticsImporter:
 
         rows_by_id: dict[int, list[dict[str, Any]]] = {}
         sensor_ids = sorted(
-            spec.sensor_id
-            for spec in build_sensor_specs(runtime_data.config)
-            if spec.sensor_id in configured_sensor_ids
+            {
+                spec.sensor_id
+                for spec in build_sensor_specs(runtime_data.config)
+                if spec.sensor_id in configured_sensor_ids
+            }
         )
         for sensor_id in sensor_ids:
             rows: list[dict[str, Any]] = []
@@ -1289,15 +1318,12 @@ async def async_setup_entry(
 
         import_scheduler.schedule()
 
-    filter_changed_entity_ids = _filter_changed_entity_ids(coordinator.data)
-    if filter_changed_entity_ids:
-        entry.async_on_unload(
-            async_track_state_change_event(
-                hass,
-                filter_changed_entity_ids,
-                async_schedule_import,
-            )
-        )
+    _async_track_runtime_entity_states(
+        hass,
+        entry,
+        _filter_changed_entity_ids,
+        async_schedule_import,
+    )
 
     remove_interval = async_track_time_interval(
         hass,
@@ -1549,17 +1575,37 @@ def _async_migrate_homekit_device_assignments(
 
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
-    target_device_ids = _mapped_unique_id_device_ids(data)
+    target_device_ids = _mapped_resource_device_ids(data)
     moved_count = 0
     for entity_entry in er.async_entries_for_config_entry(
         entity_registry,
         entry.entry_id,
     ):
-        if entity_entry.config_entry_id != entry.entry_id:
+        if (
+            entity_entry.config_entry_id != entry.entry_id
+            or entity_entry.platform != DOMAIN
+        ):
             continue
-        if entity_entry.unique_id not in target_device_ids:
+        resource_type, separator, resource_suffix = entity_entry.unique_id.partition(
+            "_"
+        )
+        resource_id, suffix_separator, suffix = resource_suffix.partition("_")
+        resource_key = (resource_type, resource_id)
+        if (
+            not separator
+            or not suffix_separator
+            or not suffix
+            or resource_key not in target_device_ids
+        ):
             continue
-        target_device_id = target_device_ids[entity_entry.unique_id]
+        target_device_id = target_device_ids[resource_key]
+        if target_device_id is None and _is_current_resource_fallback(
+            device_registry,
+            entity_entry.device_id,
+            entry.entry_id,
+            resource_key,
+        ):
+            continue
         if entity_entry.device_id == target_device_id:
             continue
         entity_registry.async_update_entity(
@@ -1590,35 +1636,37 @@ def _async_migrate_homekit_device_assignments(
         )
 
 
-def _mapped_unique_id_device_ids(
+def _mapped_resource_device_ids(
     data: BeestatRuntimeData,
-) -> dict[str, str | None]:
-    """Return Beestat unique IDs that should attach to HomeKit devices."""
+) -> dict[tuple[str, str], str | None]:
+    """Return target devices for every stable thermostat and sensor identity."""
 
-    mappings: dict[str, str | None] = {}
-    for thermostat in data.config.thermostats:
-        device_id = thermostat.device_id
-        for suffix in _THERMOSTAT_ENTITY_SUFFIXES:
-            mappings[thermostat_entity_unique_id(thermostat.thermostat_id, suffix)] = (
-                device_id
-            )
-        mappings[
-            thermostat_entity_unique_id(thermostat.thermostat_id, "active_alert")
-        ] = device_id
-        mappings[
-            thermostat_entity_unique_id(
-                thermostat.thermostat_id,
-                "runtime_summary_stale",
-            )
-        ] = device_id
-        mappings[
-            thermostat_entity_unique_id(thermostat.thermostat_id, "cloud_data_stale")
-        ] = device_id
+    return {
+        **{
+            ("thermostat", str(thermostat.thermostat_id)): thermostat.device_id
+            for thermostat in data.config.thermostats
+        },
+        **{
+            ("sensor", str(sensor.sensor_id)): sensor.device_id
+            for sensor in data.config.sensors
+        },
+    }
 
-    for sensor in data.config.sensors:
-        device_id = sensor.device_id
-        mappings[sensor_entity_unique_id(sensor.sensor_id, "sensor_in_use")] = device_id
-    return mappings
+
+def _is_current_resource_fallback(
+    registry: dr.DeviceRegistry,
+    device_id: str | None,
+    entry_id: str,
+    resource_key: tuple[str, str],
+) -> bool:
+    """Preserve only the current resource's exclusively owned fallback device."""
+
+    return (
+        device_id is not None
+        and (device := registry.async_get(device_id)) is not None
+        and is_beestat_only_device(device, entry_id)
+        and device.identifiers == {(DOMAIN, "_".join(resource_key))}
+    )
 
 
 def _mapped_source_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
@@ -1665,23 +1713,19 @@ def _mapped_source_device_ids(data: BeestatRuntimeData | None) -> set[str]:
 
 
 @callback
-def _room_temperature_entity_ids(data: BeestatRuntimeData | None) -> tuple[str, ...]:
+def _room_temperature_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
     """Return mapped temperature sources used by profile-aware projections."""
 
     if data is None:
-        return ()
-    return tuple(
-        sorted(
-            {
-                entity_id
-                for entity_id in (
-                    *(item.temperature_entity_id for item in data.config.thermostats),
-                    *(item.temperature_entity_id for item in data.config.sensors),
-                )
-                if entity_id is not None
-            }
+        return set()
+    return {
+        entity_id
+        for entity_id in (
+            *(item.temperature_entity_id for item in data.config.thermostats),
+            *(item.temperature_entity_id for item in data.config.sensors),
         )
-    )
+        if entity_id is not None
+    }
 
 
 @callback
@@ -1691,18 +1735,35 @@ def _async_track_room_temperature_sources(
 ) -> Callable[[], None]:
     """Reproject current-profile spreads on local temperature state changes."""
 
+    @callback
+    def handle_temperature_change(_event: Event[Any]) -> None:
+        entry.runtime_data.coordinator.async_rebuild_runtime_from_cached_rows()
+
+    return _async_track_runtime_entity_states(
+        hass,
+        entry,
+        _room_temperature_entity_ids,
+        handle_temperature_change,
+    )
+
+
+@callback
+def _async_track_runtime_entity_states(
+    hass: HomeAssistant,
+    entry: BeestatStatisticsConfigEntry,
+    sources: Callable[[BeestatRuntimeData | None], Iterable[str]],
+    action: Callable[[Event[Any]], None],
+) -> Callable[[], None]:
+    """Keep one state listener aligned with the current normalized source set."""
+
     coordinator = entry.runtime_data.coordinator
     tracked_entity_ids: tuple[str, ...] = ()
     remove_state_listener: Callable[[], None] | None = None
 
     @callback
-    def handle_temperature_change(_event: Event[Any]) -> None:
-        coordinator.async_rebuild_runtime_from_cached_rows()
-
-    @callback
     def rebind_state_listener() -> None:
         nonlocal tracked_entity_ids, remove_state_listener
-        entity_ids = _room_temperature_entity_ids(coordinator.data)
+        entity_ids = tuple(sorted(set(sources(coordinator.data))))
         if entity_ids == tracked_entity_ids:
             return
         if remove_state_listener is not None:
@@ -1712,7 +1773,7 @@ def _async_track_room_temperature_sources(
             async_track_state_change_event(
                 hass,
                 entity_ids,
-                handle_temperature_change,
+                action,
             )
             if entity_ids
             else None
@@ -1836,16 +1897,14 @@ def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:
     return mappings
 
 
-def _filter_changed_entity_ids(data: BeestatRuntimeData | None) -> list[str]:
+def _filter_changed_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
     if data is None:
-        return []
-    return sorted(
-        {
-            thermostat.filter_changed_entity_id
-            for thermostat in data.config.thermostats
-            if thermostat.filter_changed_entity_id is not None
-        }
-    )
+        return set()
+    return {
+        thermostat.filter_changed_entity_id
+        for thermostat in data.config.thermostats
+        if thermostat.filter_changed_entity_id is not None
+    }
 
 
 @callback
@@ -2259,7 +2318,7 @@ def _format_beestat_time(value: datetime) -> str:
 def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
     mapping: dict[int, int] = {}
     for row in rows:
-        sensor_id = _row_int(row, "id", "sensor_id")
+        sensor_id = _row_int(row, "sensor_id", "id")
         thermostat_id = _row_int(row, "thermostat_id")
         if sensor_id is not None and thermostat_id is not None:
             mapping[sensor_id] = thermostat_id
@@ -2269,7 +2328,7 @@ def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
 def _thermostat_data_end_map(rows: list[dict[str, Any]]) -> dict[int, datetime]:
     mapping: dict[int, datetime] = {}
     for row in rows:
-        thermostat_id = _row_int(row, "id", "thermostat_id")
+        thermostat_id = _row_int(row, "thermostat_id", "id")
         data_end = _parse_beestat_time(row.get("data_end"))
         if thermostat_id is not None and data_end is not None:
             mapping[thermostat_id] = data_end
@@ -2278,13 +2337,8 @@ def _thermostat_data_end_map(rows: list[dict[str, Any]]) -> dict[int, datetime]:
 
 def _row_int(row: dict[str, Any], *fields: str) -> int | None:
     for field in fields:
-        value = row.get(field)
-        if value in (None, ""):
-            continue
-        try:
-            return int(value)
-        except OverflowError, TypeError, ValueError:
-            continue
+        if (value := positive_resource_id(row.get(field))) is not None:
+            return value
     return None
 
 
@@ -2301,19 +2355,26 @@ def _parse_beestat_time(value: Any) -> datetime | None:
             return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    try:
+        return parsed.astimezone(UTC)
+    except OverflowError, ValueError:
+        return None
 
 
 def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str, Any]]:
     deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
         key: tuple[Any, ...]
-        if row.get("runtime_sensor_id") is not None:
-            key = ("runtime_sensor_id", row["runtime_sensor_id"])
-        elif row.get("runtime_thermostat_id") is not None:
-            key = ("runtime_thermostat_id", row["runtime_thermostat_id"])
-        elif row.get("timestamp") is not None:
-            key = (id_field, row.get(id_field), "timestamp", row["timestamp"])
+        if (runtime_sensor_id := _row_int(row, "runtime_sensor_id")) is not None:
+            key = ("runtime_sensor_id", runtime_sensor_id)
+        elif (
+            runtime_thermostat_id := _row_int(row, "runtime_thermostat_id")
+        ) is not None:
+            key = ("runtime_thermostat_id", runtime_thermostat_id)
+        elif (resource_id := _row_int(row, id_field)) is not None and (
+            timestamp := _parse_beestat_time(row.get("timestamp"))
+        ) is not None:
+            key = (id_field, resource_id, "timestamp", timestamp)
         else:
             key = (
                 "row",

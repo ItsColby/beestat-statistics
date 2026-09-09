@@ -343,26 +343,9 @@ def _thermostat_summary_diagnostics(
         ),
         "cloud_data_lag_minutes": metadata.data_lag_minutes if metadata else None,
         "active_alert_count": metadata.active_alert_count if metadata else None,
-        "climate_entity_id": _thermostat_mapping(
-            data,
-            summary.thermostat_id,
-            "climate_entity_id",
-        ),
-        "temperature_entity_id": _thermostat_mapping(
-            data,
-            summary.thermostat_id,
-            "temperature_entity_id",
-        ),
+        "climate_entity_id": thermostat.climate_entity_id,
+        "temperature_entity_id": thermostat.temperature_entity_id,
     }
-
-
-def _thermostat_mapping(
-    data: BeestatRuntimeData, thermostat_id: int, field: str
-) -> Any:
-    for thermostat in data.config.thermostats:
-        if thermostat.thermostat_id == thermostat_id:
-            return getattr(thermostat, field)
-    return None
 
 
 def _redaction_values(data: Mapping[str, Any]) -> tuple[str, ...]:

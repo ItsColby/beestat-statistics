@@ -1,17 +1,5 @@
 # Beestat Statistics
 
-## Local release validation
-
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1`
-before publishing a release candidate. It uses the `Ubuntu-24.04` WSL2
-distribution and rootless Podman to run the same local-tree unit,
-minimum/current Home Assistant, and Hassfest validation classes as the hosted
-workflow. Images are pinned by digest. HACS validation reads a pushed repository
-through GitHub's API, so the hosted HACS job remains the independent public
-metadata and release gate rather than receiving a local GitHub credential. The
-hosted unit and Home Assistant jobs call this same script in `native` mode, so
-future validation changes have one product-owned command surface.
-
 Home Assistant custom integration for importing Beestat HVAC history and enriching local Ecobee/HomeKit thermostat and room-sensor entities with Beestat-only context.
 
 ## Source Model
@@ -55,7 +43,7 @@ The preferred configuration path is the Home Assistant UI. The options flow expo
 - thermostat mapping overrides
 - room-sensor mapping overrides
 
-Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
+Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. One Beestat Statistics config entry owns the account connection and its selected thermostats and room sensors; multiple entries and config subentries are not supported.
 
 Credential-bearing API requests never follow redirects. If Beestat moves the
 endpoint, update the validated HTTPS API URL through **Reconfigure** instead of
@@ -71,7 +59,7 @@ beestat_statistics:
     hours: 6
 ```
 
-`api_key` is required. `point_lookback_days` defaults to 45 and is capped at 366. `scan_interval` defaults to 6 hours. On startup, YAML is imported into a Home Assistant config entry so entities can attach to devices and diagnostics.
+On startup, YAML creates or updates the Home Assistant config entry so entities can attach to devices and diagnostics.
 
 If YAML later supplies a different API key or API URL, the integration validates
 the candidate before changing the saved connection. It applies the replacement
@@ -118,34 +106,32 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all current unambiguous thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. The confirmation recomputes against current cached mappings and options immediately before saving: a changed target is shown again for confirmation, and unrelated concurrent option changes are preserved. Individual mapping forms reject a newly introduced cross-device or duplicate-device claim. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing, ambiguous, or conflicting matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+In the integration options, choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all unambiguous thermostat and room-sensor matches in one update. Choose **Map a thermostat** or **Map a room sensor** for an individual correction. Confirmation rechecks current cached mappings and options before saving: changed targets require confirmation again, and unrelated concurrent option changes are preserved. Individual forms reject new cross-device or duplicate-device claims. Missing, ambiguous, or conflicting matches remain unresolved; automatic name matching is only an onboarding fallback and is never persisted without confirmation.
 
-Advanced thermostat override fields:
+Confirmed UI mappings retain stable source identity across entity-ID renames and removal/restoration, without recreating the Beestat entry. YAML remains a portable entity-ID owner for recovery, import, and bulk setups; update it manually after mapped entity-ID renames. Use **Choose Beestat sources** for inclusion instead of one-off `enabled` overrides.
 
-- `id`: Beestat thermostat ID.
-- `slug`: optional stable statistic/helper slug.
+Advanced override fields shared by thermostats and room sensors:
+
+- `id`: the Beestat thermostat or sensor ID for that row.
+- `slug`: optional stable statistic slug; thermostat slugs also control the default filter-helper lookup.
 - `name`: optional fallback display name.
-- `climate_entity_id`: matching Home Assistant `climate` entity.
 - `temperature_entity_id`: matching Home Assistant temperature `sensor` entity.
 - `occupancy_entity_id`: matching Home Assistant occupancy `binary_sensor` entity.
 - `motion_entity_id`: matching Home Assistant motion `binary_sensor` entity.
+- `enabled`: set to `false` to ignore the thermostat or room sensor.
+
+Advanced thermostat override fields:
+
+- `climate_entity_id`: matching Home Assistant `climate` entity.
 - `filter_changed_entity_id`: optional Home Assistant `input_datetime` helper used as the filter-runtime start date.
 - `filter_lifetime_runtime_hours`: runtime-hours replacement threshold. Defaults to 250.
 - `filter_max_age_days`: calendar-age replacement threshold. Defaults to 90.
 - `filter_notice_days`: notice-window days before the calculated due date. Defaults to 7.
-- `enabled`: set to `false` to ignore a Beestat thermostat.
 
 Advanced room-sensor override fields:
 
-- `id`: Beestat sensor ID.
 - `thermostat_id`: optional Beestat thermostat ID when the sensor row does not carry one.
-- `slug`: optional stable statistic slug.
-- `name`: optional fallback display name.
-- `temperature_entity_id`: matching Home Assistant temperature `sensor` entity.
-- `occupancy_entity_id`: matching Home Assistant occupancy `binary_sensor` entity.
-- `motion_entity_id`: matching Home Assistant motion `binary_sensor` entity.
 - `include_temperature`, `include_air_quality`, `include_co2`, `include_voc`: override which Beestat point-history fields are imported as Recorder statistics.
-- `enabled`: set to `false` to ignore a Beestat room sensor.
 
 To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation when the validated thermostat fingerprint cannot prove the connection matches the saved Beestat account and it may belong to a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed possible account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
 
@@ -406,16 +392,23 @@ Home Assistant `2026.8.0` requires Python `3.14.2` or newer. The GitHub validati
 
 This repository is a HACS custom integration. The Beestat API client is intentionally in-tree and uses Home Assistant's shared aiohttp websession. If this integration is ever prepared for Home Assistant Core inclusion, split the Beestat client into an async, tagged, open-source PyPI package before submission.
 
-Local pure-module checks:
+Dependency-light tests without Home Assistant or containers. On Windows, install
+`tzdata` for the tests' IANA time zones:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "mypy==2.3.0" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install tzdata
 .\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
+```
+
+Additional local static checks using the virtual environment prepared above:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
 .\.venv\Scripts\python.exe -m compileall -q custom_components\beestat_statistics tests scripts
 .\.venv\Scripts\ruff.exe check custom_components tests scripts
 .\.venv\Scripts\ruff.exe format --check custom_components tests scripts
 .\.venv\Scripts\shellcheck.exe scripts\verify-release-local.sh
-.\.venv\Scripts\python.exe -m mypy --strict custom_components/beestat_statistics
 $env:GH_TOKEN = gh auth token
 if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }
 try {
@@ -432,35 +425,49 @@ Upstream Beestat API drift check:
 .\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
 ```
 
-The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream changes before refreshing it with `--update`; do not treat a changed snapshot as approval to broaden the Home Assistant integration scope.
+The checked-in snapshot is `docs/beestat-api-surface.json`. The checker reads one
+immutable upstream commit, verifies downloaded Git blobs, and rejects incomplete
+inventories. Review upstream changes before refreshing it with `--update`; a
+changed snapshot does not expand the integration scope. Updates replace the
+snapshot atomically only after every read and validation succeeds.
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and a second dependency-closed lane targets exact current same-month patch Core `2026.8.1` with harness `0.13.355`. Each lane installs its exact harness and Core requirements separately, runs a literal `python -m pip check` after the final dependency installation, and then runs the complete Home Assistant tests. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+Home Assistant harness checks require Linux with Python `3.14.2` or newer.
+`requirements-ha-test.txt` owns the supported minimum, Core `2026.8.0`;
+`requirements-ha-current.txt` owns the current compatibility target, Core
+`2026.9.1`. Both lanes use an exactly matching published Home Assistant harness,
+install Core separately, run `python -m pip check` after the final installation,
+and execute the complete test tree. Strict mypy runs in the minimum lane.
+Native Windows Python cannot substitute for the Linux Home Assistant harness.
 
-Supported-minimum lane:
-
-```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.354
-python -m pip install --upgrade -r requirements-ha-test.txt
-python -m pip check
-pytest tests -q
-```
-
-Current same-month patch lane:
+Run the complete local validation through the pinned containers on Windows
+using Ubuntu 24.04 WSL2 and rootless Podman:
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.355
-python -m pip install --upgrade -r requirements-ha-current.txt
-python -m pip check
-pytest tests -q
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1
 ```
 
-On Windows, run the same harness through Docker Desktop or WSL from the repository root:
+Use `-Mode unit`, `minimum`, `current`, or `release` for a focused lane. The
+`release` lane validates integration metadata with Hassfest; it does not publish.
+The container backend snapshots tracked and nonignored new files, including
+uncommitted changes. Images are pinned by digest, and each Python lane uses an
+isolated environment. `all` runs every lane and fails if any lane fails.
+On Linux, the same command surface is:
 
-```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests -q"
+```bash
+bash scripts/verify-release-local.sh all
 ```
+
+The default container backend requires Podman. Hosted CI uses `native` as the
+second argument, creates disposable Python environments, and requires Go for
+actionlint and Docker for Hassfest. Commands resolve the repository from the
+script location. HACS remains a hosted check of the pushed repository.
+
+The public-safety guard scans the current contents of tracked and nonignored
+new files, including filenames. It rejects links, unreadable or oversized files,
+and unreviewed binary content. This is a working-tree check, not a Git-history
+audit.
 
 The workflow pins every third-party action to a full commit SHA and runs
 exact-pinned Ruff, mypy, actionlint, ShellCheck, and `zizmor` in auditor mode.
@@ -476,7 +483,7 @@ Every release follows this order:
 1. Create a release-candidate branch from current `main`.
 2. Open a pull request and require terminal success for **Unit tests**, **Home
    Assistant minimum integration tests (Core 2026.8.0)**, **Home Assistant
-   current-patch integration tests (Core 2026.8.1)**, **Hassfest**, **HACS**,
+   current integration tests (Core 2026.9.1)**, **Hassfest**, **HACS**,
    the aggregate **Release gate**, and CodeQL's **Analyze (actions)**, **Analyze
    (python)**, and **CodeQL** checks.
 3. Merge through default-branch protection without bypass, using squash or

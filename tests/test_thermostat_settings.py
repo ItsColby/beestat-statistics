@@ -136,6 +136,53 @@ class ThermostatSettingsTest(unittest.TestCase):
 
         self.assertEqual(snapshots, {})
 
+    def test_last_row_owns_settings_including_deletion_and_restoration(self) -> None:
+        thermostat_rows = ({"thermostat_id": 1, "ecobee_thermostat_id": 2},)
+        active = {"ecobee_thermostat_id": 2, "settings": {"autoAway": True}}
+        for field in ("inactive", "deleted"):
+            removed = {"ecobee_thermostat_id": 2, field: True}
+            with self.subTest(field=field):
+                self.assertEqual(
+                    self.settings.build_thermostat_settings_snapshots(
+                        thermostat_rows, [active, removed]
+                    ),
+                    {},
+                )
+                restored = self.settings.build_thermostat_settings_snapshots(
+                    thermostat_rows, [removed, active]
+                )
+                self.assertTrue(self.settings.boolean_setting(restored[1], "autoAway"))
+
+    def test_integer_settings_do_not_truncate_fractional_values(self) -> None:
+        for value, expected in ((3, 3), (3.0, 3), (3.5, None), (True, None)):
+            with self.subTest(value=value):
+                snapshot = self.settings.ThermostatSettingsSnapshot(
+                    thermostat_id=1,
+                    source_details={},
+                    settings={"coolStages": value},
+                    audio={"playbackVolume": value},
+                )
+                self.assertEqual(
+                    self.settings.integer_setting(snapshot, "coolStages"), expected
+                )
+                self.assertEqual(
+                    self.settings.audio_integer_setting(snapshot, "playbackVolume"),
+                    expected,
+                )
+
+    def test_malformed_source_ids_cannot_replace_settings_for_valid_identity(
+        self,
+    ) -> None:
+        rows = [{"ecobee_thermostat_id": None, "id": 1, "settings": {"autoAway": True}}]
+        rows.extend(
+            {"ecobee_thermostat_id": value, "settings": {"autoAway": False}}
+            for value in (True, 1.5, 0, -1)
+        )
+        snapshot = self.settings.build_thermostat_settings_snapshots(
+            ({"thermostat_id": None, "id": 2, "ecobee_thermostat_id": 1},), rows
+        )[2]
+        self.assertTrue(self.settings.boolean_setting(snapshot, "autoAway"))
+
 
 if __name__ == "__main__":
     unittest.main()

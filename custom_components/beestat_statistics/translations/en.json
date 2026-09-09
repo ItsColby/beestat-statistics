@@ -6,7 +6,7 @@
         "name": "Active alert"
       },
       "auto_away_enabled": {
-        "name": "Auto away"
+        "name": "Auto away enabled"
       },
       "cold_temperature_alert_enabled": {"name": "Cold temperature alert enabled"},
       "equipment_alert": {
@@ -19,7 +19,7 @@
         "name": "Filter due soon"
       },
       "follow_me_enabled": {
-        "name": "Follow me"
+        "name": "Follow me enabled"
       },
       "hot_temperature_alert_enabled": {"name": "Hot temperature alert enabled"},
       "microphone_enabled": {"name": "Microphone enabled"},
@@ -36,17 +36,17 @@
         "name": "Runtime summary stale"
       },
       "precooling_enabled": {
-        "name": "Precooling"
+        "name": "Precooling enabled"
       },
       "preheating_enabled": {
-        "name": "Preheating"
+        "name": "Preheating enabled"
       },
       "sensor_in_use": {
         "name": "Beestat-reported sensor in use"
       },
       "service_reminder_enabled": {"name": "Service reminder enabled"},
       "smart_circulation_enabled": {
-        "name": "Smart circulation"
+        "name": "Smart circulation enabled"
       },
       "wifi_offline_alert_enabled": {"name": "Wi-Fi offline alert enabled"}
     },

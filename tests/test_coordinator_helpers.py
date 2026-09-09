@@ -132,6 +132,19 @@ class CoordinatorHelpersTest(unittest.TestCase):
             )
         )
 
+    def test_negative_or_boolean_runtime_cannot_reduce_filter_usage(self) -> None:
+        self.assertEqual(
+            self.coordinator._sum_fan_seconds(
+                [
+                    {"sum_fan": 3600},
+                    {"sum_fan": -1800},
+                    {"sum_fan": "-7200"},
+                    {"sum_fan": True},
+                ]
+            ),
+            3600,
+        )
+
     def test_profile_room_spread_uses_mapped_local_values_and_rejects_unknown(
         self,
     ) -> None:
@@ -285,6 +298,18 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0,
         )
 
+    def test_temperature_state_rejects_overflow_after_unit_conversion(self) -> None:
+        state = types.SimpleNamespace(
+            state="1e308",
+            attributes={"unit_of_measurement": "°C"},
+        )
+
+        self.assertIsNone(self.coordinator._temperature_state_value(state, "°F"))
+        self.assertEqual(
+            self.coordinator._temperature_state_value(state, "°C"),
+            (1e308, "°C"),
+        )
+
     def test_profile_room_spread_preserves_equal_names_and_fails_ambiguous_identity(
         self,
     ) -> None:
@@ -359,6 +384,22 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(projection.value, 4)
         self.assertEqual(projection.participating_sensor_count, 2)
         self.assertEqual(projection.valid_sensor_count, 2)
+
+        state_values["sensor.room_10"].state = "-1e308"
+        state_values["sensor.room_11"].state = "1e308"
+        overflowed = self.coordinator._build_room_temperature_spreads(
+            hass,
+            self.config_model.BeestatConfig(
+                thermostats=(thermostat,),
+                sensors=sensors,
+            ),
+            thermostat_metadata,
+            sensor_metadata,
+        )[1]
+        self.assertEqual(overflowed.valid_sensor_count, 2)
+        self.assertIsNone(overflowed.value)
+        state_values["sensor.room_10"].state = "70"
+        state_values["sensor.room_11"].state = "74"
 
         sensor_metadata[20] = self.coordinator.SensorMetadata(
             sensor_id=20,
@@ -444,6 +485,21 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 {"thermostat_id": 1, "date": "2026-07-01", "sum_fan": 7200},
                 {"thermostat_id": 3, "date": "2026-07-01", "sum_fan": 1800},
             ),
+        )
+
+    def test_malformed_source_ids_cannot_replace_real_resource_rows(self) -> None:
+        rows = [{"id": 1, "name": "Real"}]
+        rows.extend({"id": value, "name": "Malformed"} for value in (True, 1.5, 0, -1))
+        self.assertEqual(
+            self.coordinator._effective_resource_rows(rows, "id"),
+            ({"id": 1, "name": "Real"},),
+        )
+        self.assertEqual(self.coordinator._row_int({"id": 1.0}, "id"), 1)
+        self.assertEqual(
+            self.coordinator._row_int(
+                {"thermostat_id": True, "id": "2"}, "thermostat_id", "id"
+            ),
+            2,
         )
 
     def test_projection_change_ignores_local_date_without_sensitive_state(self) -> None:
@@ -556,6 +612,8 @@ class CoordinatorHelpersTest(unittest.TestCase):
         summary_calls: list[tuple[str, str]] = []
         built: list[tuple[date | None, ZoneInfo, datetime]] = []
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
+        coordinator._refresh_lock = asyncio.Lock()
+        coordinator._closed = False
         coordinator.data = None
         coordinator._local_tz = ZoneInfo("America/New_York")
         coordinator._timezone_revision = 0
@@ -796,6 +854,44 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 changed_at,
             )
         )
+
+    def test_raw_filter_boundary_uses_last_row_per_absolute_timestamp(self) -> None:
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+        rows = [
+            {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+            {"timestamp": "invalid", "fan": 300},
+            {"timestamp": "2026-07-05T17:40:00-04:00", "fan": 120},
+            {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+            {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+        ]
+
+        boundary = self.coordinator._raw_filter_boundary(rows, changed_at)
+
+        self.assertEqual(boundary.baseline_seconds, 300)
+        rows.append({"timestamp": "2026-07-05T21:40:00+00:00", "deleted": True})
+        self.assertEqual(
+            self.coordinator._raw_filter_boundary(rows, changed_at).baseline_seconds,
+            180,
+        )
+
+    def test_unrepresentable_utc_timestamps_do_not_break_source_projection(
+        self,
+    ) -> None:
+        for value in (
+            "0001-01-01T00:00:00+01:00",
+            "9999-12-31T23:59:59-01:00",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(self.coordinator._parse_datetime(value))
+
+    def test_invalid_timezone_keys_use_configured_fallback(self) -> None:
+        fallback = ZoneInfo("America/New_York")
+        for value in ("/etc/localtime", "../UTC", "missing/timezone", "UTC/../UTC"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.coordinator._row_timezone({"timezone": value}, fallback),
+                    fallback,
+                )
 
     def test_filter_boundary_status_distinguishes_pending_and_legacy_records(
         self,
@@ -1175,6 +1271,14 @@ class CoordinatorHelpersTest(unittest.TestCase):
             120,
         )
 
+    def test_extreme_future_source_timestamp_cannot_overflow_stale_deadline(self):
+        self.assertEqual(
+            self.coordinator._cloud_data_stale_deadline(
+                datetime.max.replace(tzinfo=UTC), 120
+            ),
+            datetime.max.replace(tzinfo=UTC),
+        )
+
     def test_next_local_midnight_tracks_dst_day_lengths(self) -> None:
         local_tz = ZoneInfo("America/New_York")
 
@@ -1449,6 +1553,123 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         CoordinatorHelpersTest._install_fake_homeassistant_modules
     )
 
+    def _owned_coordinator(self):
+        tasks = []
+        callbacks = []
+
+        def create_task(_hass, coroutine, _name):
+            task = asyncio.create_task(coroutine)
+            tasks.append(task)
+            return task
+
+        entry = types.SimpleNamespace(
+            async_on_unload=callbacks.append,
+            async_create_background_task=create_task,
+        )
+        hass = types.SimpleNamespace()
+        coordinator = self.coordinator.BeestatRuntimeDataCoordinator(
+            hass,
+            entry,
+            types.SimpleNamespace(),
+            local_tz=ZoneInfo("America/New_York"),
+        )
+        coordinator.hass = hass
+        return coordinator, tasks, callbacks
+
+    async def test_refresh_requests_serialize_and_publish_in_acquisition_order(self):
+        coordinator, tasks, _callbacks = self._owned_coordinator()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+        published = []
+
+        async def fetch(**_kwargs):
+            sequence = len(calls) + 1
+            calls.append(sequence)
+            if sequence == 1:
+                started.set()
+                await release.wait()
+            return sequence
+
+        coordinator._async_fetch_runtime_data_locked = fetch
+        coordinator.async_set_updated_data = published.append
+        first = asyncio.create_task(coordinator.async_refresh_runtime())
+        await started.wait()
+        second = asyncio.create_task(coordinator.async_refresh_runtime(skip_sync=True))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.assertEqual(calls, [1])
+        release.set()
+        self.assertEqual(await asyncio.gather(first, second), [1, 2])
+        self.assertEqual(published, [1, 2])
+        self.assertEqual(len(tasks), 2)
+
+    async def test_periodic_refresh_shares_the_manual_acquisition_lock(self):
+        coordinator, _tasks, _callbacks = self._owned_coordinator()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = []
+
+        async def fetch(**_kwargs):
+            sequence = len(calls) + 1
+            calls.append(sequence)
+            if sequence == 1:
+                started.set()
+                await release.wait()
+            return sequence
+
+        coordinator._async_fetch_runtime_data_locked = fetch
+        coordinator.async_set_updated_data = lambda _data: None
+        first = asyncio.create_task(coordinator._async_update_data())
+        await started.wait()
+        second = asyncio.create_task(coordinator.async_refresh_runtime())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.assertEqual(calls, [1])
+        release.set()
+        self.assertEqual(await asyncio.gather(first, second), [1, 2])
+
+    async def test_entry_task_cancellation_prevents_refresh_publication(self):
+        coordinator, tasks, callbacks = self._owned_coordinator()
+        started = asyncio.Event()
+        published = []
+
+        async def fetch(**_kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        coordinator._async_fetch_runtime_data_locked = fetch
+        coordinator.async_set_updated_data = published.append
+        request = asyncio.create_task(coordinator.async_refresh_runtime())
+        await started.wait()
+        for task in tasks:
+            task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await request
+        for close in callbacks:
+            close()
+        with self.assertRaises(asyncio.CancelledError):
+            await coordinator.async_refresh_runtime()
+        with self.assertRaises(asyncio.CancelledError):
+            await coordinator.async_dismiss_filter_alerts(1)
+        self.assertEqual(published, [])
+        self.assertIsNone(coordinator.last_error)
+        self.assertFalse(coordinator._refresh_lock.locked())
+        self.assertEqual(len(tasks), 1)
+
+    async def test_framework_refresh_schedules_projection_after_publication(self):
+        coordinator, _tasks, _callbacks = self._owned_coordinator()
+        schedules = []
+        coordinator._async_schedule_projection_boundary = lambda: schedules.append(True)
+        coordinator.last_update_success = True
+        coordinator._async_refresh_finished()
+        coordinator.last_update_success = False
+        coordinator._async_refresh_finished()
+        coordinator.last_update_success = True
+        coordinator._async_mark_closed()
+        coordinator._async_refresh_finished()
+        self.assertEqual(schedules, [True])
+
     def _attach_temporal_context(self, coordinator) -> None:
         coordinator.capture_temporal_context = lambda: self.coordinator.TemporalContext(
             datetime.now(UTC),
@@ -1529,6 +1750,24 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         return coordinator
+
+    async def test_normalized_integral_ids_match_summary_and_metadata(self) -> None:
+        now = datetime(2026, 7, 1, 16, tzinfo=UTC)
+        coordinator = self._cached_coordinator(evaluated_at=now)
+        data = coordinator._build_runtime_data(
+            [{"thermostat_id": 1.0, "date": "2026-07-01", "sum_fan": 3600}],
+            [{"id": 1.0, "name": "Zone", "data_end": now.isoformat()}],
+            [],
+            now,
+            now,
+            True,
+            None,
+            None,
+            evaluated_at=now,
+        )
+        self.assertEqual(data.thermostats[1].latest_date, date(2026, 7, 1))
+        self.assertEqual(data.thermostats[1].recent_runtime_hours_per_day, 1)
+        self.assertEqual(data.thermostat_metadata[1].data_end, now)
 
     async def test_cached_projection_crosses_schedule_boundary_without_io(self) -> None:
         before = datetime(2026, 7, 1, 13, 55, tzinfo=UTC)
@@ -1808,8 +2047,10 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         ].UpdateFailed
 
         with self.assertRaises(update_failed) as raised:
-            await self.coordinator.BeestatRuntimeDataCoordinator.async_refresh_runtime(
-                coordinator
+            await self.coordinator.BeestatRuntimeDataCoordinator._async_refresh_runtime(
+                coordinator,
+                skip_sync=False,
+                summary_window=False,
             )
 
         self.assertEqual(raised.exception.translation_domain, "beestat_statistics")

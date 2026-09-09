@@ -1008,6 +1008,37 @@ async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
     )
 
 
+async def test_import_flow_preserves_unowned_data_and_removes_omitted_yaml_rows(
+    hass: HomeAssistant,
+) -> None:
+    """A validated import replaces YAML mappings while preserving future data."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            **_add_mock_entry_data(),
+            "future": {"preserved": [1, 2]},
+            CONF_THERMOSTATS: [{CONF_ID: 1001, "enabled": False}],
+            CONF_SENSORS: [{CONF_ID: 2001, "enabled": False}],
+        },
+    )
+    with _mock_validate_input():
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={CONF_API_KEY: "yaml-key", CONF_API_BASE: API_BASE},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert dict(entry.data) == {
+        CONF_API_KEY: "yaml-key",
+        CONF_API_BASE: API_BASE,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
+        "future": {"preserved": [1, 2]},
+    }
+
+
 async def test_import_flow_preserves_external_data_update_during_validation(
     hass: HomeAssistant,
 ) -> None:
@@ -1880,7 +1911,7 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2004,7 +2035,7 @@ async def test_options_flow_reconfirms_changed_automatic_mapping_preview(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2023,7 +2054,7 @@ async def test_options_flow_reconfirms_changed_automatic_mapping_preview(
 
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2092,7 +2123,7 @@ async def test_options_flow_confirms_only_available_unpinned_mapping_fields(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2144,7 +2175,7 @@ async def test_options_flow_automatic_mapping_confirmation_fails_closed(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2186,7 +2217,7 @@ async def test_options_flow_automatic_mapping_confirmation_fails_closed(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2230,7 +2261,7 @@ async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2322,7 +2353,7 @@ async def test_options_flow_returns_to_source_scope_after_discovery_drift(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2348,12 +2379,12 @@ async def test_options_flow_returns_to_source_scope_after_discovery_drift(
 
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
             ),
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1002,
                 name="Zone B",
                 slug="zone_b",
@@ -2389,7 +2420,7 @@ async def test_options_flow_returns_to_source_scope_after_inactive_drift(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2440,7 +2471,7 @@ async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2458,12 +2489,12 @@ async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
 
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
             ),
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1002,
                 name="Zone B",
                 slug="zone_b",
@@ -2502,7 +2533,7 @@ async def test_options_flow_refreshes_source_scope_after_initial_inactive_drift(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2519,7 +2550,7 @@ async def test_options_flow_refreshes_source_scope_after_initial_inactive_drift(
 
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2553,8 +2584,8 @@ async def test_options_flow_reconfirms_changed_scope_removal_count(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
-            _configured_thermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
+            ConfiguredThermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
         ],
         sensors=[],
         thermostat_rows=[
@@ -2575,7 +2606,7 @@ async def test_options_flow_reconfirms_changed_scope_removal_count(
 
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
         ],
         sensors=[],
         thermostat_rows=[
@@ -2612,7 +2643,7 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2655,12 +2686,14 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
 
 async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     hass: HomeAssistant,
+    freezer: Any,
 ) -> None:
+    freezer.move_to(datetime(2026, 7, 6, 18, tzinfo=UTC))
     entry = _add_mock_entry(hass)
     local_tz = ZoneInfo("America/New_York")
     repair_at = (datetime.now(UTC) - timedelta(days=1)).astimezone(local_tz)
     repair_at = repair_at.replace(microsecond=0)
-    thermostat = _configured_thermostat(
+    thermostat = ConfiguredThermostat(
         thermostat_id=1001,
         name="Zone A",
         slug="zone_a",
@@ -2712,7 +2745,7 @@ async def test_repair_filter_change_boundary_rejects_inexact_local_wall_time(
 ) -> None:
     entry = _add_mock_entry(hass)
     local_tz = ZoneInfo("America/New_York")
-    thermostat = _configured_thermostat(
+    thermostat = ConfiguredThermostat(
         thermostat_id=1001,
         name="Zone A",
         slug="zone_a",
@@ -2761,7 +2794,7 @@ async def test_repair_filter_change_boundary_rejects_inexact_local_wall_time(
 async def test_native_filter_button_forwards_exact_aware_click_time(
     hass: HomeAssistant,
 ) -> None:
-    thermostat = _configured_thermostat(
+    thermostat = ConfiguredThermostat(
         thermostat_id=1001,
         name="Zone A",
         slug="zone_a",
@@ -2796,7 +2829,7 @@ async def test_native_filter_date_exposes_and_updates_click_boundary(
     changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
     reconciled_at = datetime.fromisoformat("2026-07-06T06:05:00+00:00")
     source_data_end = datetime.fromisoformat("2026-07-06T04:00:00+00:00")
-    thermostat = _configured_thermostat(
+    thermostat = ConfiguredThermostat(
         thermostat_id=1001,
         name="Zone A",
         slug="zone_a",
@@ -2864,7 +2897,7 @@ async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> N
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -2946,7 +2979,7 @@ async def test_options_flow_rejects_cross_device_thermostat_mapping(
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
         ],
         sensors=[],
     )
@@ -3022,8 +3055,8 @@ async def test_options_flow_rejects_duplicate_explicit_device_claim(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
-            _configured_thermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a"),
+            ConfiguredThermostat(thermostat_id=1002, name="Zone B", slug="zone_b"),
         ],
         sensors=[],
     )
@@ -3155,7 +3188,7 @@ async def test_options_flow_resolves_renamed_thermostat_mapping_default(
     )
     entry.runtime_data = _runtime_data(
         thermostats=[
-            _configured_thermostat(
+            ConfiguredThermostat(
                 thermostat_id=1001,
                 name="Zone A",
                 slug="zone_a",
@@ -3320,13 +3353,7 @@ def _add_mock_entry(
         domain=DOMAIN,
         title=CONFIG_TITLE,
         unique_id=CONFIG_ENTRY_UNIQUE_ID,
-        data=data
-        if data is not None
-        else {
-            CONF_API_KEY: "old-key",
-            CONF_API_BASE: API_BASE,
-            CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
-        },
+        data=data if data is not None else _add_mock_entry_data(),
         options=options
         if options is not None
         else {
@@ -3373,41 +3400,6 @@ def _runtime_data(
                 sensor_rows=tuple(sensor_rows or ()),
             )
         )
-    )
-
-
-def _configured_thermostat(
-    *,
-    thermostat_id: int,
-    name: str,
-    slug: str,
-    climate_entity_id: str | None = None,
-    temperature_entity_id: str | None = None,
-    occupancy_entity_id: str | None = None,
-    motion_entity_id: str | None = None,
-    device_id: str | None = None,
-    filter_change_day_runtime_baseline_seconds: float | None = None,
-    filter_changed_date: date | None = None,
-    filter_changed_at: datetime | None = None,
-    filter_change_boundary_reconciled_at: datetime | None = None,
-    filter_change_boundary_source_data_end: datetime | None = None,
-) -> ConfiguredThermostat:
-    return ConfiguredThermostat(
-        thermostat_id=thermostat_id,
-        name=name,
-        slug=slug,
-        climate_entity_id=climate_entity_id,
-        temperature_entity_id=temperature_entity_id,
-        occupancy_entity_id=occupancy_entity_id,
-        motion_entity_id=motion_entity_id,
-        device_id=device_id,
-        filter_changed_date=filter_changed_date,
-        filter_changed_at=filter_changed_at,
-        filter_change_day_runtime_baseline_seconds=(
-            filter_change_day_runtime_baseline_seconds
-        ),
-        filter_change_boundary_reconciled_at=(filter_change_boundary_reconciled_at),
-        filter_change_boundary_source_data_end=(filter_change_boundary_source_data_end),
     )
 
 

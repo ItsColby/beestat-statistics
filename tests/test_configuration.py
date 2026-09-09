@@ -208,6 +208,32 @@ class ConfigurationResponseTest(unittest.TestCase):
         self.assertNotIn("address", serialized)
         self.assertNotIn("secret", serialized)
 
+    def test_malformed_source_id_cannot_replace_valid_configuration_details(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="zone_a", name="Zone A"
+        )
+        response = self.configuration.configuration_response(
+            entry_id="entry-1",
+            entry_data={},
+            entry_options={},
+            config=self.config_model.BeestatConfig(
+                thermostats=(thermostat,), sensors=()
+            ),
+            point_lookback_days=45,
+            scan_interval_seconds=21600,
+            thermostat_rows=(
+                {"thermostat_id": None, "id": 1, "model_number": "valid-model"},
+                {"id": True, "model_number": "malformed-boolean"},
+                {"id": 1.5, "model_number": "malformed-fraction"},
+            ),
+        )
+        self.assertEqual(
+            response["source_details"]["thermostats"],
+            [{"thermostat_id": 1, "model_number": "valid-model"}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
@@ -393,7 +394,7 @@ def _set_source_scope_options(
     """Update enabled flags while preserving mapping fields and unknown rows."""
 
     source = options.get(key) if key in options else data.get(key)
-    items = [dict(item) for item in _override_items(source)]
+    items = _copy_override_items(source)
     enabled = set(enabled_ids)
     explicitly_enabled = set(explicitly_enabled_ids)
     for item_id in sorted(set(known_ids)):
@@ -406,7 +407,19 @@ def _set_source_scope_options(
         else:
             item[CONF_ENABLED] = False
 
-    items = [item for item in items if set(item) != {CONF_ID}]
+    identity_counts = Counter(
+        override_id(item) for item in items if isinstance(item, dict)
+    )
+    items = [
+        item
+        for item in items
+        if not (
+            isinstance(item, dict)
+            and set(item) == {CONF_ID}
+            and override_id(item) in known_ids
+            and identity_counts[override_id(item)] == 1
+        )
+    ]
     if items or key in data:
         new_options[key] = items
     else:
@@ -424,7 +437,7 @@ def _update_override_options(
 ) -> dict[str, Any]:
     new_options = dict(options)
     source = options.get(key) if key in options else data.get(key)
-    items = [dict(item) for item in _override_items(source)]
+    items = _copy_override_items(source)
     item = _find_override_item(items, item_id)
     for field in managed_fields:
         if field not in updates:
@@ -438,14 +451,22 @@ def _update_override_options(
     return new_options
 
 
-def _find_override_item(items: list[dict[str, Any]], item_id: int) -> dict[str, Any]:
+def _find_override_item(items: list[Any], item_id: int) -> dict[str, Any]:
     for item in reversed(items):
-        if override_id(item) == item_id:
+        if isinstance(item, dict) and override_id(item) == item_id:
             item[CONF_ID] = item_id
             return item
     item = {CONF_ID: item_id}
     items.append(item)
     return item
+
+
+def _copy_override_items(value: Any) -> list[Any]:
+    """Copy editable rows while retaining unowned malformed or future values."""
+
+    if not isinstance(value, list):
+        return []
+    return [dict(item) if isinstance(item, dict) else item for item in value]
 
 
 def _override_items(value: Any) -> tuple[dict[str, Any], ...]:

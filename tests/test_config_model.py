@@ -366,6 +366,69 @@ class ConfigModelTest(unittest.TestCase):
         self.assertIsNone(config.thermostats[0].climate_entity_id)
         self.assertIsNone(config.thermostats[0].device_id)
 
+    def test_unresolved_reference_blocks_same_device_and_thermostat_fallback(
+        self,
+    ) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={"source": FakeDeviceEntry(name="Zone A")},
+            entries=[
+                FakeEntityEntry("climate.zone_a", "source"),
+                FakeEntityEntry(
+                    "sensor.zone_a_temperature",
+                    "source",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+        missing_reference = {
+            "registry_entry_id": "missing-entry",
+            "domain": "sensor",
+            "platform": "homekit_controller",
+            "unique_id": "missing-temperature",
+        }
+        for target in ("thermostats", "sensors"):
+            with self.subTest(target=target):
+                overrides = {
+                    "thermostats": [
+                        {"id": 1001, "climate_entity_id": "climate.zone_a"}
+                    ],
+                    "sensors": [{"id": 2001}],
+                }
+                overrides[target][0].update(
+                    temperature_entity_id="sensor.missing",
+                    temperature_entity_ref=missing_reference,
+                )
+                config = config_model.build_beestat_config(
+                    FakeHass({}),
+                    thermostat_rows=({"id": 1001, "name": "Zone A"},),
+                    sensor_rows=(
+                        {"id": 2001, "thermostat_id": 1001, "type": "thermostat"},
+                    ),
+                    config_data=overrides,
+                )
+                self.assertEqual(config.thermostats[0].device_id, "source")
+                selected = (
+                    config.thermostats[0]
+                    if target == "thermostats"
+                    else config.sensors[0]
+                )
+                self.assertIsNone(selected.temperature_entity_id)
+
+    def test_invalid_canonical_override_cannot_reinterpret_legacy_alias(self) -> None:
+        override = {"id": -1, "thermostat_id": 1001, "filter_notice_days": 3}
+        config = config_model.build_beestat_config(
+            FakeHass({}),
+            thermostat_rows=({"id": 1001, "name": "Zone A"},),
+            sensor_rows=(),
+            config_data={"thermostats": [override]},
+        )
+        self.assertEqual(len(config.thermostats), 1)
+        self.assertEqual(config.thermostats[0].thermostat_id, 1001)
+        self.assertEqual(config.thermostats[0].filter_notice_days, 7)
+        self.assertEqual(
+            override, {"id": -1, "thermostat_id": 1001, "filter_notice_days": 3}
+        )
+
     def test_reports_explicit_override_entity_references(self) -> None:
         references = config_model.configured_override_entity_ids(
             {

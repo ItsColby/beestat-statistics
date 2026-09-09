@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .config_rows import effective_override_items
+from .config_rows import effective_override_items, override_id
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_CLIMATE_ENTITY_REF,
@@ -177,7 +177,7 @@ def migrate_option_entity_references(
             continue
         rows: list[Any] = []
         for value_item in value:
-            if not isinstance(value_item, dict):
+            if not isinstance(value_item, dict) or override_id(value_item) is None:
                 rows.append(value_item)
                 continue
             item = dict(value_item)

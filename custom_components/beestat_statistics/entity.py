@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.device_registry import DeviceInfo
 
-    from .coordinator import BeestatRuntimeDataCoordinator
+    from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
 else:
     try:
         from homeassistant.helpers.device_registry import DeviceInfo
@@ -75,11 +75,7 @@ def async_register_service_device(
     registry = dr.async_get(hass)
     registry.async_get_or_create(
         config_entry_id=entry.entry_id,
-        identifiers={SERVICE_IDENTIFIER},
-        name=SERVICE_NAME,
-        manufacturer="Beestat",
-        entry_type=DeviceEntryType.SERVICE,
-        configuration_url=CONFIGURATION_URL,
+        **service_device_info(),
     )
 
 
@@ -199,3 +195,26 @@ def room_sensor_device_info(sensor: ConfiguredSensor) -> DeviceInfo | None:
         model="Room sensor via Beestat",
         configuration_url=CONFIGURATION_URL,
     )
+
+
+def mapping_summary(data: BeestatRuntimeData) -> dict[str, int]:
+    """Return the shared entity-state counts for HomeKit device mappings."""
+
+    thermostat_count = len(data.config.thermostats)
+    mapped_thermostat_count = sum(
+        1 for thermostat in data.config.thermostats if thermostat.device_id is not None
+    )
+    room_sensor_count = len(data.config.sensors)
+    mapped_room_sensor_count = sum(
+        1 for sensor in data.config.sensors if sensor.device_id is not None
+    )
+    return {
+        "thermostat_count": thermostat_count,
+        "mapped_thermostat_count": mapped_thermostat_count,
+        "unmapped_thermostat_count": thermostat_count - mapped_thermostat_count,
+        "local_thermostat_count": data.config.local_thermostat_count,
+        "room_sensor_count": room_sensor_count,
+        "mapped_room_sensor_count": mapped_room_sensor_count,
+        "unmapped_room_sensor_count": room_sensor_count - mapped_room_sensor_count,
+        "local_room_sensor_count": data.config.local_room_sensor_count,
+    }

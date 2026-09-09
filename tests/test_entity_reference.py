@@ -272,6 +272,32 @@ class EntityReferenceTest(unittest.TestCase):
             (effective,),
         )
 
+    def test_migration_preserves_unowned_malformed_rows(self) -> None:
+        registry = FakeEntityRegistry(
+            [
+                FakeEntityEntry(
+                    "registry-a",
+                    "climate.zone_a",
+                    "climate",
+                    "homekit_controller",
+                    "source-climate",
+                )
+            ]
+        )
+        options = {
+            "thermostats": [
+                {"id": True, "climate_entity_id": "climate.zone_a"},
+                {"id": 1.5, "climate_entity_id": "climate.zone_a"},
+                {"future": True, "climate_entity_id": "climate.zone_a"},
+                "future row",
+                None,
+            ]
+        }
+        self.assertEqual(
+            entity_reference.migrate_option_entity_references(registry, options),
+            options,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

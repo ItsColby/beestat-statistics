@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, time, timedelta
@@ -33,6 +34,7 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
+from .config_rows import positive_resource_id
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -211,6 +213,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             config_entry=config_entry,
         )
         self._client = client
+        self._refresh_lock = asyncio.Lock()
+        self._closed = False
         self._beestat_config_entry = config_entry
         self._local_tz = local_tz
         self._cloud_data_stale_threshold_minutes = cloud_data_stale_threshold_minutes(
@@ -247,6 +251,13 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._cancel_projection_boundary: Callable[[], None] | None = None
         config_entry.async_on_unload(self._async_cancel_filter_boundary_retry)
         config_entry.async_on_unload(self._async_cancel_projection_boundary)
+        config_entry.async_on_unload(self._async_mark_closed)
+
+    @callback
+    def _async_mark_closed(self) -> None:
+        """Reject work retained by callers after the config entry unloads."""
+
+        self._closed = True
 
     @property
     def status(self) -> str:
@@ -428,6 +439,13 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._async_schedule_projection_boundary(data)
 
     @callback
+    def _async_refresh_finished(self) -> None:
+        """Schedule cached projections after framework-owned refreshes too."""
+
+        if self.last_update_success and not self._closed:
+            self._async_schedule_projection_boundary()
+
+    @callback
     def _async_schedule_projection_boundary(
         self,
         data: BeestatRuntimeData | None = None,
@@ -535,6 +553,25 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     ) -> BeestatRuntimeData:
         """Refresh Beestat runtime summary data and notify coordinator entities."""
 
+        if self._closed:
+            raise asyncio.CancelledError
+        return await self._beestat_config_entry.async_create_background_task(
+            self.hass,
+            self._async_refresh_runtime(
+                skip_sync=skip_sync,
+                summary_window=summary_window,
+            ),
+            f"{DOMAIN}_runtime_refresh",
+        )
+
+    async def _async_refresh_runtime(
+        self,
+        *,
+        skip_sync: bool,
+        summary_window: bool,
+    ) -> BeestatRuntimeData:
+        """Refresh in an entry-owned task that is cancelled during unload."""
+
         try:
             data = await self._async_fetch_runtime_data(
                 skip_sync=skip_sync,
@@ -558,6 +595,17 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
     async def async_dismiss_filter_alerts(self, thermostat_id: int) -> int:
         """Dismiss active Beestat filter alerts for one thermostat."""
+
+        if self._closed:
+            raise asyncio.CancelledError
+        return await self._beestat_config_entry.async_create_background_task(
+            self.hass,
+            self._async_dismiss_filter_alerts(thermostat_id),
+            f"{DOMAIN}_dismiss_filter_alerts",
+        )
+
+    async def _async_dismiss_filter_alerts(self, thermostat_id: int) -> int:
+        """Dismiss alerts only while the requesting config entry remains loaded."""
 
         self.last_filter_alert_dismiss_attempt_at = datetime.now(UTC)
         self.last_filter_alert_dismiss_thermostat_id = thermostat_id
@@ -649,6 +697,22 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         skip_sync: bool,
         summary_window: bool = False,
     ) -> BeestatRuntimeData:
+        """Serialize acquisition and its pending-boundary writes for this entry."""
+
+        async with self._refresh_lock:
+            if self._closed:
+                raise asyncio.CancelledError
+            return await self._async_fetch_runtime_data_locked(
+                skip_sync=skip_sync,
+                summary_window=summary_window,
+            )
+
+    async def _async_fetch_runtime_data_locked(
+        self,
+        *,
+        skip_sync: bool,
+        summary_window: bool,
+    ) -> BeestatRuntimeData:
         try:
             sync_success_at = self.data.sync_success_at if self.data else None
             metadata_sync_success_at = (
@@ -695,6 +759,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 entry_runtime_config_data(_typed_config_entry(self)),
             )
             await self._async_reconcile_pending_filter_boundaries(config)
+            summary_rows_full = True
+            summary_window_start = None
+            summary_window_end = None
             if summary_window:
                 config = build_beestat_config(
                     self.hass,
@@ -728,9 +795,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                             "runtime_thermostat_summary"
                         )
                         temporal_context = self.capture_temporal_context()
-                        summary_rows_full = True
-                        summary_window_start = None
-                        summary_window_end = None
                         break
 
                     temporal_context = self.capture_temporal_context()
@@ -751,15 +815,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                         "runtime_thermostat_summary"
                     )
                     temporal_context = self.capture_temporal_context()
-                    summary_rows_full = True
-                    summary_window_start = None
-                    summary_window_end = None
             else:
                 rows = await self._client.async_read_id("runtime_thermostat_summary")
                 temporal_context = self.capture_temporal_context()
-                summary_rows_full = True
-                summary_window_start = None
-                summary_window_end = None
             data = self._build_runtime_data(
                 rows,
                 list(thermostat_rows_tuple),
@@ -955,7 +1013,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             thermostat_rows = [
                 row
                 for row in rows_tuple
-                if str(row.get("thermostat_id")) == str(thermostat.thermostat_id)
+                if _row_int(row, "thermostat_id") == thermostat.thermostat_id
             ]
             latest_date = _latest_row_date(thermostat_rows)
             lag_days = (today - latest_date).days if latest_date is not None else None
@@ -1267,15 +1325,20 @@ def _raw_filter_boundary(
     rows: list[dict[str, Any]],
     changed_at: datetime,
 ) -> RawFilterBoundary | None:
-    """Return a five-minute boundary once raw data covers the click bucket."""
+    """Return a covered boundary, using the last source row per UTC timestamp."""
 
     if changed_at.tzinfo is None:
         raise ValueError("changed_at must be timezone-aware")
     changed_at = changed_at.astimezone(UTC)
-    parsed_rows = [
-        (timestamp, row)
+    effective_rows = {
+        timestamp: row
         for row in rows
         if (timestamp := _parse_datetime(row.get("timestamp"))) is not None
+    }
+    parsed_rows = [
+        (timestamp, row)
+        for timestamp, row in effective_rows.items()
+        if not _bool(row.get("deleted"))
     ]
     if not parsed_rows:
         return None
@@ -1390,15 +1453,7 @@ def _build_thermostat_metadata(
 ) -> dict[int, ThermostatMetadata]:
     metadata: dict[int, ThermostatMetadata] = {}
     for thermostat in thermostats:
-        row = next(
-            (
-                item
-                for item in thermostat_rows
-                if str(item.get("thermostat_id") or item.get("id"))
-                == str(thermostat.thermostat_id)
-            ),
-            {},
-        )
+        row = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
         data_begin = _parse_datetime(row.get("data_begin"))
         data_end = _parse_datetime(row.get("data_end"))
         eligible_sensors = tuple(
@@ -1532,7 +1587,7 @@ def _build_room_temperature_spreads(
             else None
         )
         projections[thermostat.thermostat_id] = RoomTemperatureSpread(
-            value=spread,
+            value=_finite_float(spread),
             unit=resolved_unit,
             participating_sensor_count=len(participating_names),
             valid_sensor_count=len(valid),
@@ -1570,7 +1625,11 @@ def _temperature_state_value(
         return None
     destination = target_unit or source_unit
     converted = _convert_temperature(value, source_unit, destination)
-    return (converted, destination) if converted is not None else None
+    return (
+        (converted, destination)
+        if converted is not None and isfinite(converted)
+        else None
+    )
 
 
 def _convert_temperature(value: float, source: str, target: str) -> float | None:
@@ -1727,7 +1786,7 @@ def _schedule_snapshot(
     if not isinstance(program, dict):
         return _empty_schedule_snapshot()
 
-    profile_by_ref = _schedule_profiles_by_ref(program)
+    profile_by_ref = schedule_profiles_by_ref(program)
     profiles = tuple(profile_by_ref.values())
     schedule = program.get("schedule")
     if not _valid_schedule(schedule):
@@ -1766,10 +1825,6 @@ def _empty_schedule_snapshot() -> dict[str, Any]:
     }
 
 
-def _schedule_profiles_by_ref(program: dict[str, Any]) -> dict[str, ScheduleProfile]:
-    return schedule_profiles_by_ref(program)
-
-
 def _valid_schedule(value: Any) -> bool:
     if not isinstance(value, list) or len(value) != 7:
         return False
@@ -1783,7 +1838,7 @@ def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
             continue
         try:
             return ZoneInfo(value)
-        except ZoneInfoNotFoundError:
+        except ZoneInfoNotFoundError, ValueError:
             continue
     return fallback
 
@@ -1828,12 +1883,13 @@ def _profile_name(profile: ScheduleProfile | None, ref: str | None) -> str | Non
     return ref
 
 
-def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
+def _active_alert_rows(row: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield undismissed, unacknowledged source alerts in their source order."""
+
     alerts = row.get("alerts")
     if not isinstance(alerts, list):
-        return ()
+        return
 
-    guids: list[str] = []
     for alert in alerts:
         if not isinstance(alert, dict):
             continue
@@ -1841,6 +1897,12 @@ def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
             continue
         if str(alert.get("acknowledgement", "")).lower() == "acknowledged":
             continue
+        yield alert
+
+
+def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
+    guids: list[str] = []
+    for alert in _active_alert_rows(row):
         if not _is_filter_alert(alert):
             continue
         guid = _string_or_none(alert.get("guid"))
@@ -1861,28 +1923,17 @@ def _is_filter_alert(alert: dict[str, Any]) -> bool:
 
 
 def _active_alerts(row: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-    alerts = row.get("alerts")
-    if not isinstance(alerts, list):
-        return ()
-    active: list[dict[str, Any]] = []
-    for alert in alerts:
-        if not isinstance(alert, dict):
-            continue
-        if _bool(alert.get("dismissed")):
-            continue
-        if str(alert.get("acknowledgement", "")).lower() == "acknowledged":
-            continue
-        active.append(
-            {
-                "code": alert.get("code") or alert.get("alertNumber"),
-                "type": alert.get("notificationType") or alert.get("source"),
-                "severity": alert.get("severity"),
-                "timestamp": alert.get("timestamp")
-                or _join_date_time(alert.get("date"), alert.get("time")),
-                "text": alert.get("text"),
-            }
-        )
-    return tuple(active)
+    return tuple(
+        {
+            "code": alert.get("code") or alert.get("alertNumber"),
+            "type": alert.get("notificationType") or alert.get("source"),
+            "severity": alert.get("severity"),
+            "timestamp": alert.get("timestamp")
+            or _join_date_time(alert.get("date"), alert.get("time")),
+            "text": alert.get("text"),
+        }
+        for alert in _active_alert_rows(row)
+    )
 
 
 def _join_date_time(date_value: Any, time_value: Any) -> str | None:
@@ -1915,11 +1966,14 @@ def _cloud_data_stale_deadline(
 ) -> datetime:
     """Return when rounded cloud lag first exceeds the shared threshold."""
 
-    return data_end + timedelta(
-        minutes=threshold_minutes,
-        seconds=30,
-        microseconds=1,
-    )
+    try:
+        return data_end + timedelta(
+            minutes=threshold_minutes,
+            seconds=30,
+            microseconds=1,
+        )
+    except OverflowError:
+        return datetime.max.replace(tzinfo=UTC)
 
 
 def _parse_date(value: Any) -> date | None:
@@ -1946,18 +2000,16 @@ def _parse_datetime(value: Any) -> datetime | None:
             return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    try:
+        return parsed.astimezone(UTC)
+    except OverflowError:
+        return None
 
 
 def _row_int(row: dict[str, Any], *fields: str) -> int | None:
     for field in fields:
-        value = row.get(field)
-        if value in (None, ""):
-            continue
-        try:
-            return int(value)
-        except OverflowError, TypeError, ValueError:
-            continue
+        if (value := positive_resource_id(row.get(field))) is not None:
+            return value
     return None
 
 
@@ -2020,8 +2072,10 @@ def _optional_bool(value: Any) -> bool | None:
 
 
 def _float_or_zero(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
     try:
         parsed = float(value)
     except OverflowError, TypeError, ValueError:
         return 0.0
-    return parsed if isfinite(parsed) else 0.0
+    return parsed if isfinite(parsed) and parsed >= 0 else 0.0

@@ -105,7 +105,7 @@ def _text_or_none(value: Any) -> str | None:
 
 
 def _finite_float_or_none(value: Any) -> float | None:
-    if value in (None, ""):
+    if isinstance(value, bool) or value in (None, ""):
         return None
     try:
         parsed = float(value)
@@ -115,11 +115,13 @@ def _finite_float_or_none(value: Any) -> float | None:
 
 
 def _nonnegative_int_or_none(value: Any) -> int | None:
-    if value in (None, ""):
+    if isinstance(value, bool) or value in (None, ""):
         return None
     try:
         parsed = int(value)
     except OverflowError, TypeError, ValueError:
+        return None
+    if isinstance(value, float) and value != parsed:
         return None
     return parsed if parsed >= 0 else None
 

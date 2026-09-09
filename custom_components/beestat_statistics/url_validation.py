@@ -9,7 +9,14 @@ def normalize_api_base(value: object) -> str:
     """Return a bounded HTTPS API base or raise ``ValueError``."""
 
     text = str(value).strip()
-    if not text or "\\" in text or any(character.isspace() for character in text):
+    if (
+        not text
+        or "\\" in text
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in text
+        )
+    ):
         raise ValueError("Invalid Beestat API URL")
     try:
         parsed = urlsplit(text)

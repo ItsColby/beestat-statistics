@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 from datetime import UTC, datetime
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = "beestat/app"
 BRANCH = "master"
 GITHUB_API_ROOT = f"https://api.github.com/repos/{REPO}"
-RAW_ROOT = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
+RAW_ROOT = f"https://raw.githubusercontent.com/{REPO}"
 ALLOWED_REQUEST_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+SHA_RE = re.compile(r"[0-9a-f]{40}")
 DEFAULT_SNAPSHOT = (
     Path(__file__).resolve().parents[1] / "docs" / "beestat-api-surface.json"
 )
@@ -142,29 +146,35 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    expected = None
+    if not args.update:
+        try:
+            expected = json.loads(args.snapshot.read_text(encoding="utf-8"))
+            validate_surface(expected)
+        except OSError, ValueError, TypeError, KeyError:
+            print("Missing or invalid API surface snapshot.", file=sys.stderr)
+            return 2
+
     try:
         current = fetch_surface()
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as err:
-        print(f"Failed to fetch Beestat API surface: {err}", file=sys.stderr)
-        return 2
-
-    if args.update:
-        args.snapshot.parent.mkdir(parents=True, exist_ok=True)
-        args.snapshot.write_text(
-            json.dumps(current, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        print(f"Updated {args.snapshot}")
-        return 0
-
-    if not args.snapshot.is_file():
+        validate_surface(current)
+    except (OSError, HTTPException, ValueError, TypeError, KeyError) as err:
         print(
-            f"Missing snapshot {args.snapshot}. Run with --update first.",
+            f"Failed to fetch a complete Beestat API surface ({type(err).__name__}).",
             file=sys.stderr,
         )
         return 2
 
-    expected = json.loads(args.snapshot.read_text(encoding="utf-8"))
+    if args.update:
+        try:
+            _write_snapshot(args.snapshot, current)
+        except OSError:
+            print("Unable to write the API surface snapshot.", file=sys.stderr)
+            return 2
+        print(f"Updated {args.snapshot}")
+        return 0
+
+    assert expected is not None
     differences = diff_surface(expected, current)
     if differences:
         print("Beestat API surface drift detected:", file=sys.stderr)
@@ -182,22 +192,55 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _write_snapshot(path: Path, surface: dict[str, Any]) -> None:
+    """Replace the snapshot only after the complete new file has been written."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(json.dumps(surface, indent=2, sort_keys=True) + "\n")
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def fetch_surface() -> dict[str, Any]:
     """Fetch the current upstream surface from the official Beestat app repo."""
 
     commit = _request_json(f"{GITHUB_API_ROOT}/commits/{BRANCH}")
-    tree = _request_json(f"{GITHUB_API_ROOT}/git/trees/{BRANCH}?recursive=1")["tree"]
+    commit_sha = _checked_sha(commit["sha"])
+    tree_sha = _checked_sha(commit["commit"]["tree"]["sha"])
+    tree_result = _request_json(f"{GITHUB_API_ROOT}/git/trees/{tree_sha}?recursive=1")
+    if tree_result.get("truncated") is not False or not isinstance(
+        tree_result.get("tree"), list
+    ):
+        raise ValueError("Incomplete upstream tree")
+    tree = tree_result["tree"]
     blob_sha_by_path = {
-        item["path"]: item["sha"]
+        item["path"]: _checked_sha(item["sha"])
         for item in tree
-        if item.get("type") == "blob" and isinstance(item.get("path"), str)
+        if isinstance(item, dict)
+        and item.get("type") == "blob"
+        and isinstance(item.get("path"), str)
     }
 
     watched_files: dict[str, dict[str, Any]] = {}
     for path in WATCH_PATHS:
-        text = _request_text(f"{RAW_ROOT}/{path}")
+        blob_sha = blob_sha_by_path[path]
+        text = _request_text(f"{RAW_ROOT}/{commit_sha}/{path}")
+        raw = text.encode("utf-8")
+        actual_sha = hashlib.sha1(
+            f"blob {len(raw)}\0".encode() + raw, usedforsecurity=False
+        ).hexdigest()
+        if actual_sha != blob_sha:
+            raise ValueError("Upstream blob content does not match its tree")
         watched_files[path] = {
-            "blob_sha": blob_sha_by_path.get(path),
+            "blob_sha": blob_sha,
             "exposed": extract_exposed_methods(text),
             "checks": behavior_checks(path, text),
         }
@@ -211,7 +254,7 @@ def fetch_surface() -> dict[str, Any]:
             "api_docs_url": "https://api.beestat.io/doc",
         },
         "snapshot": {
-            "commit_sha": commit["sha"],
+            "commit_sha": commit_sha,
             "commit_date": commit["commit"]["committer"]["date"],
             "commit_message": commit["commit"]["message"],
             "captured_at": datetime.now(UTC).isoformat(),
@@ -222,23 +265,82 @@ def fetch_surface() -> dict[str, Any]:
     }
 
 
+def _checked_sha(value: Any) -> str:
+    if not isinstance(value, str) or SHA_RE.fullmatch(value) is None:
+        raise ValueError("Invalid upstream object ID")
+    return value
+
+
+def validate_surface(surface: Any) -> None:
+    """Reject incomplete snapshots rather than comparing an empty file set."""
+
+    if not isinstance(surface, dict) or surface.get("schema_version") != 1:
+        raise ValueError("Invalid surface schema")
+    _checked_sha(surface["snapshot"]["commit_sha"])
+    if not isinstance(surface.get("source"), dict) or not isinstance(
+        surface.get("integration_decisions"), list
+    ):
+        raise TypeError("Missing surface metadata")
+    paths = surface.get("watch_paths")
+    files = surface.get("watched_files")
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or not all(isinstance(path, str) for path in paths)
+        or len(set(paths)) != len(paths)
+        or not isinstance(files, dict)
+        or set(paths) != set(files)
+    ):
+        raise ValueError("Invalid watched file inventory")
+    for value in files.values():
+        _validate_file(value)
+
+
+def _validate_file(value: Any) -> None:
+    if not isinstance(value, dict):
+        raise TypeError("Invalid watched file")
+    _checked_sha(value["blob_sha"])
+    checks = value.get("checks")
+    if not isinstance(checks, dict) or not all(
+        isinstance(key, str) and isinstance(check, bool)
+        for key, check in checks.items()
+    ):
+        raise ValueError("Invalid behavior checks")
+    exposed = value["exposed"]
+    if exposed is not None and (
+        not isinstance(exposed, dict)
+        or set(exposed) != {"public", "private"}
+        or not all(
+            isinstance(methods, list)
+            and all(isinstance(method, str) for method in methods)
+            for methods in exposed.values()
+        )
+    ):
+        raise ValueError("Invalid exposed methods")
+
+
 def diff_surface(expected: dict[str, Any], current: dict[str, Any]) -> list[str]:
     """Return human-readable differences in watched API files."""
 
-    differences: list[str] = []
+    differences = [
+        f"{key} changed"
+        for key in ("schema_version", "source", "watch_paths", "integration_decisions")
+        if expected.get(key) != current.get(key)
+    ]
     expected_files = expected.get("watched_files", {})
     current_files = current.get("watched_files", {})
     for path in sorted(set(expected_files) | set(current_files)):
         if path not in expected_files:
-            differences.append(f"{path} is newly watched upstream")
+            differences.append("A new watched file was added")
             continue
         if path not in current_files:
-            differences.append(f"{path} is missing upstream")
+            differences.append("A watched file is missing upstream")
             continue
         expected_file = comparable_file(expected_files[path])
         current_file = comparable_file(current_files[path])
         if expected_file != current_file:
-            differences.append(f"{path} changed from {expected_file} to {current_file}")
+            label = path if path in WATCH_PATHS else "Unknown watched file"
+            differences.append(f"{label} changed")
     return differences
 
 
@@ -308,7 +410,10 @@ def behavior_checks(path: str, text: str) -> dict[str, bool]:
 
 
 def _request_json(url: str) -> Any:
-    return json.loads(_request_text(url))
+    value = json.loads(_request_text(url))
+    if not isinstance(value, dict):
+        raise TypeError("Expected an upstream JSON object")
+    return value
 
 
 def _validated_request_url(url: str) -> str:
@@ -319,22 +424,29 @@ def _validated_request_url(url: str) -> str:
         or parsed.username is not None
         or parsed.password is not None
         or parsed.port not in (None, 443)
+        or parsed.fragment
+        or any(ord(char) < 32 or ord(char) == 127 for char in url)
     ):
         raise ValueError("Unsupported API surface URL")
     return url
 
 
 def _request_text(url: str) -> str:
+    validated_url = _validated_request_url(url)
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "beestat-statistics-api-surface-check",
     }
-    if token := os.environ.get("GITHUB_TOKEN"):
+    if urlsplit(validated_url).hostname == "api.github.com" and (
+        token := os.environ.get("GITHUB_TOKEN")
+    ):
         headers["Authorization"] = f"Bearer {token}"
-    validated_url = _validated_request_url(url)
     request = Request(validated_url, headers=headers)  # noqa: S310 - validated HTTPS host
     with _URL_OPENER.open(request, timeout=30) as response:
-        return response.read().decode("utf-8")
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ValueError("Upstream response exceeds the size limit")
+        return raw.decode("utf-8")
 
 
 if __name__ == "__main__":
