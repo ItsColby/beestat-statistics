@@ -1,3 +1,35 @@
+# Beestat Statistics v2026.9.8
+
+## Fixed
+
+- Cancel running and queued imports and refreshes when the integration unloads,
+  preventing stale callers from continuing after shutdown.
+- Read each selected sensor's history once per import and deduplicate normalized
+  point identities before writing Recorder statistics.
+- Preserve saved source references and malformed or future override rows during
+  configuration updates, and reject mapping conflicts introduced by registry
+  changes before confirmation.
+- Keep invalid dates and non-finite arithmetic from disrupting valid statistics
+  and filter forecasts. Refresh room-temperature spread units and filter-button
+  availability with the current source state.
+- Classify mixed active alerts independently and sanitize filter-date action
+  failures while preserving authentication recovery.
+
+## Changed
+
+- Label boolean configuration diagnostics as enabled settings so they are not
+  confused with active equipment or alarm states.
+
+## Quality
+
+- Consolidate shared mapping, metadata, import-plan and statistics helpers while
+  preserving entity identifiers, Recorder series and configuration behavior.
+- Verify upstream API snapshots against one immutable source revision, and fail
+  closed when public-source scanning or test discovery is incomplete.
+- Validate Home Assistant Core 2026.8.0 and 2026.9.1 with matching, isolated test
+  environments. Keep local and hosted validation aligned and report every failed
+  validation lane.
+
 # Beestat Statistics v2026.8.24
 
 ## Fixed
