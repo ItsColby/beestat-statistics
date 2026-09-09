@@ -14,6 +14,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
@@ -834,6 +835,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         candidate = _automatic_mapping_options(
             self.config_entry,
             er.async_get(self.hass),
+            dr.async_get(self.hass),
         )
         if candidate is None:
             self._pending_automatic_mapping_signature = None
@@ -886,6 +888,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                     self.config_entry,
                     er.async_get(self.hass),
                     candidate_options,
+                    dr.async_get(self.hass),
                 ):
                     errors["base"] = "mapping_device_conflict"
                 else:
@@ -988,6 +991,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                     self.config_entry,
                     er.async_get(self.hass),
                     candidate_options,
+                    dr.async_get(self.hass),
                 ):
                     errors["base"] = "mapping_device_conflict"
                 else:
@@ -1421,6 +1425,7 @@ def _has_new_mapping_device_conflicts(
     entry: config_entries.ConfigEntry,
     entity_registry: Any,
     candidate_options: Mapping[str, Any],
+    device_registry: Any = None,
 ) -> bool:
     """Return whether an options update introduces a mapping-device conflict."""
 
@@ -1428,6 +1433,7 @@ def _has_new_mapping_device_conflicts(
         configured_mapping_device_conflicts(
             entry_runtime_config_data(entry),
             entity_registry,
+            device_registry,
         )
     )
     candidate_config = dict(entry.data)
@@ -1435,7 +1441,9 @@ def _has_new_mapping_device_conflicts(
         if key in candidate_options:
             candidate_config[key] = candidate_options[key]
     candidate = set(
-        configured_mapping_device_conflicts(candidate_config, entity_registry)
+        configured_mapping_device_conflicts(
+            candidate_config, entity_registry, device_registry
+        )
     )
     return not candidate.issubset(current)
 
@@ -1443,6 +1451,7 @@ def _has_new_mapping_device_conflicts(
 def _automatic_mapping_options(
     entry: config_entries.ConfigEntry,
     registry: Any,
+    device_registry: Any = None,
 ) -> _AutomaticMappingCandidate | None:
     """Build one options update from cached ambiguity-safe automatic mappings."""
 
@@ -1518,7 +1527,7 @@ def _automatic_mapping_options(
 
     if (
         thermostat_count == 0 and sensor_count == 0
-    ) or _has_new_mapping_device_conflicts(entry, registry, options):
+    ) or _has_new_mapping_device_conflicts(entry, registry, options, device_registry):
         return None
     return _AutomaticMappingCandidate(
         options=options,

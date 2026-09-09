@@ -86,7 +86,16 @@ Configuration fields:
 
 By default, no thermostat IDs, room names, or room sensor names are required. Beestat thermostat and sensor metadata is discovered from the account, and local HomeKit/Ecobee entity names take priority when they can be matched. Open the integration options and choose **Choose Beestat sources** to include only a subset. Newly discovered active sources remain included by default; explicit exclusions are preserved across discovery refreshes. If a discovered ID, label, or active/inactive state changes while the selection form or its destructive confirmation is open, Home Assistant shows the refreshed source set or removal count before accepting the change. Excluding a source stops its native entities from updating and omits it from future statistics imports, but does not delete external Recorder statistics already imported for it.
 
-Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Automatic mappings are one-to-one: when multiple Beestat sources compete for the same local device at the same confidence, every conflicting source remains unresolved; a unique name match can win over a weaker single-device fallback. Every explicit mapping must select entities from one source device, and the same source device cannot be explicitly assigned to multiple thermostat mappings or multiple room-sensor mappings. Conflicting explicit mappings remain detached and raise a Repair instead of silently linking to the first selected device. Explicit mappings also reserve their local device from automatic reuse. Use the mapping options to resolve conflicts deliberately.
+Automatic matching prefers HomeKit devices with Ecobee manufacturer/entity signals. If HomeKit omits that metadata, Ecobee-shaped thermostat and room-sensor devices can still match by name. Automatic mappings are one-to-one: when multiple Beestat sources compete for the same local device at the same confidence, every conflicting source remains unresolved; a unique name match can win over a weaker single-device fallback. Every explicit mapping must select entities from one physical source device, and the same source device cannot be explicitly assigned to multiple thermostat mappings or multiple room-sensor mappings. Conflicting explicit mappings remain detached, suppress their temperature projections, and raise a Repair instead of silently linking to the first selected device. Explicit mappings also reserve their local device from automatic reuse. Use the mapping options to resolve conflicts deliberately.
+
+For a physical thermostat probe, you can explicitly select the Ecobee temperature
+sensor alongside the same thermostat's HomeKit climate, motion, and occupancy
+entities. The integration verifies the built-in probe identity against the
+thermostat hardware serial; names and areas do not establish a match. This keeps
+the physical reading distinct from the displayed temperature, which may combine
+participating rooms. Ecobee cloud availability and update timing still apply to
+that selected probe. If it becomes unavailable, it is not replaced by the
+displayed temperature; HomeKit remains the local control source.
 
 Advanced YAML can pin Beestat IDs to existing HomeKit entities when automatic name matching is not enough:
 
@@ -318,7 +327,7 @@ For an exact local configuration audit, call the read-only `beestat_statistics.g
 
 The per-thermostat **Configured profile room temperature spread** sensor follows
 the sensors configured in the current Beestat comfort profile while reading
-their mapped local HomeKit temperature entities. It does not claim which sensor
+their explicitly mapped Home Assistant temperature entities. It does not claim which sensor
 Follow Me is momentarily weighting. It rebuilds immediately from local state
 changes and profile transitions without cloud I/O, uses Home Assistant's native
 temperature-delta semantics, and retains legacy participating-sensor attributes

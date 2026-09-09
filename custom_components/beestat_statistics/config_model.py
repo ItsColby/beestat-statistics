@@ -52,6 +52,7 @@ from .entity_reference import (
     has_explicit_entity_mapping,
     resolve_override_entity_id,
 )
+from .source_identity import physical_thermostat_probe_devices
 
 _AIR_QUALITY_CAPABILITIES = {"airquality", "air_quality"}
 _CO2_CAPABILITIES = {"co2", "co2ppm", "co2_concentration"}
@@ -371,10 +372,12 @@ def configured_unresolved_entity_ids(
 def configured_mapping_device_conflicts(
     config_data: Mapping[str, Any],
     entity_registry: Any,
+    device_registry: Any = None,
 ) -> tuple[MappingDeviceConflict, ...]:
     """Return cross-device and duplicate explicit source-device claims."""
 
     conflicts: list[MappingDeviceConflict] = []
+    probe_devices = physical_thermostat_probe_devices(entity_registry, device_registry)
     for key, fields, resource_type in (
         (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS, "thermostat"),
         (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS, "sensor"),
@@ -388,8 +391,11 @@ def configured_mapping_device_conflicts(
                 entity_registry,
                 item,
                 fields,
+                probe_devices,
             )
-            if len(device_ids) > 1:
+            if len(device_ids) > 1 or _mixed_probe_mapping_unproven(
+                entity_registry, item, fields, probe_devices
+            ):
                 conflicts.append(
                     MappingDeviceConflict(
                         resource_type=resource_type,
@@ -397,7 +403,11 @@ def configured_mapping_device_conflicts(
                         reason="cross_device",
                     )
                 )
-            for device_id in device_ids:
+            # Reserve both native registrations as well as the physical owner.
+            claimed_devices = set(device_ids) | set(
+                _explicit_registry_device_ids(entity_registry, item, fields)
+            )
+            for device_id in claimed_devices:
                 claims_by_device.setdefault(device_id, []).append(resource_id)
         conflicts.extend(
             MappingDeviceConflict(
@@ -520,6 +530,7 @@ def _build_thermostats(
                 used_slugs,
                 thermostat_id,
                 local_by_id.get(thermostat_id),
+                mapping_conflicted=thermostat_id in conflicted_ids,
             )
         )
 
@@ -533,6 +544,8 @@ def _thermostat_from_row(
     used_slugs: set[str],
     thermostat_id: int,
     local: LocalEcobeeDevice | None,
+    *,
+    mapping_conflicted: bool,
 ) -> ConfiguredThermostat:
     fallback_name = (
         _string_or_none(row.get("name"))
@@ -588,7 +601,9 @@ def _thermostat_from_row(
         climate_entity_id=_mapped_entity_id(
             override, CONF_CLIMATE_ENTITY_ID, local.climate_entity_id if local else None
         ),
-        temperature_entity_id=_mapped_entity_id(
+        temperature_entity_id=None
+        if mapping_conflicted
+        else _mapped_entity_id(
             override,
             CONF_TEMPERATURE_ENTITY_ID,
             local.temperature_entity_id if local else None,
@@ -767,7 +782,9 @@ def _sensor_from_row(
                 row, _VOC_CAPABILITIES, fallback_field="voc_concentration"
             ),
         ),
-        temperature_entity_id=_mapped_entity_id(
+        temperature_entity_id=None
+        if mapping_conflicted
+        else _mapped_entity_id(
             override, CONF_TEMPERATURE_ENTITY_ID, temperature_entity_id
         ),
         occupancy_entity_id=_mapped_entity_id(
@@ -918,14 +935,50 @@ def _explicit_local_devices(
     return tuple(matched.values())
 
 
+def _mixed_probe_mapping_unproven(
+    registry: Any,
+    override: Mapping[str, Any],
+    fields: tuple[str, ...],
+    probe_devices: Mapping[str, str],
+) -> bool:
+    """Keep the cross-integration exception closed when a source detaches."""
+
+    entries = {
+        field: registry.async_get(entity_id)
+        for field in fields
+        if (entity_id := resolve_override_entity_id(registry, override, field))
+        is not None
+    }
+    temperature = entries.get(CONF_TEMPERATURE_ENTITY_ID)
+    if temperature is None or getattr(temperature, "platform", None) != "ecobee":
+        return False
+    homekit_entries = [
+        entry
+        for entry in entries.values()
+        if getattr(entry, "platform", None) == _HOMEKIT_PLATFORM
+    ]
+    if not homekit_entries:
+        return False
+    owner = probe_devices.get(temperature.entity_id)
+    return owner is None or any(entry.device_id != owner for entry in homekit_entries)
+
+
 def _explicit_registry_device_ids(
     registry: Any,
     override: Mapping[str, Any],
     fields: tuple[str, ...],
+    probe_devices: Mapping[str, str] | None = None,
 ) -> tuple[str, ...]:
     """Return distinct registry device IDs selected by explicit entity fields."""
 
     device_ids: set[str] = set()
+    physical_devices: dict[str, str] = {}
+    temperature_id = resolve_override_entity_id(
+        registry, override, CONF_TEMPERATURE_ENTITY_ID
+    )
+    if probe_devices and temperature_id is not None and temperature_id in probe_devices:
+        temperature = registry.async_get(temperature_id)
+        physical_devices[temperature.device_id] = probe_devices[temperature_id]
     for field in fields:
         entity_id = resolve_override_entity_id(registry, override, field)
         if entity_id is None:
@@ -933,6 +986,7 @@ def _explicit_registry_device_ids(
         entry = registry.async_get(entity_id)
         device_id = getattr(entry, "device_id", None) if entry is not None else None
         if device_id:
+            device_id = physical_devices.get(device_id, device_id)
             device_ids.add(str(device_id))
     return tuple(sorted(device_ids))
 
@@ -1181,10 +1235,13 @@ def _mapping_device_conflicts_for_hass(
     """Return mapping conflicts when the Home Assistant registry is available."""
 
     try:
+        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
         from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
     except ImportError:
         return ()
-    return configured_mapping_device_conflicts(config_data, er.async_get(hass))
+    return configured_mapping_device_conflicts(
+        config_data, er.async_get(hass), dr.async_get(hass)
+    )
 
 
 def _resolved_override_map(

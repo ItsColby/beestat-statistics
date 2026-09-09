@@ -128,8 +128,8 @@
   management, device-identifier, notification-recipient, or access-code data.
   It must not serialize arbitrary future fields, expose credentials, or become
   a second write owner for Ecobee settings.
-- Current-profile room temperature spread is an I/O-free local projection of
-  explicitly mapped HomeKit temperature entities. Profile participants resolve
+- Current-profile room temperature spread is an I/O-free projection of
+  explicitly mapped Home Assistant temperature entities. Profile participants resolve
   from Ecobee's capability-qualified climate sensor identifier through the
   Beestat sensor identifier and internal sensor ID to one configured mapping;
   mutable or duplicate display names are never identity. Profile changes use
@@ -171,7 +171,7 @@
   automatic Beestat thermostat or room-sensor row; a higher-confidence unique
   name match wins over a weaker fallback, while explicit mappings reserve their
   source device. Every explicit mapping must resolve its selected entities to
-  one foreign source device, and one source device may be claimed by at most
+  one physical source device, and one source device may be claimed by at most
   one explicit mapping of the same resource type. Options reject newly
   introduced conflicts; saved conflicts raise an actionable Repair and fail
   device linking closed for every affected row instead of selecting the first
@@ -179,6 +179,19 @@
   candidates and recomputes them against current cached mappings and options
   before saving; target drift requires confirmation again. It never silently
   persists name matches without explicit confirmation.
+- An explicitly selected Ecobee built-in thermostat temperature sensor may use
+  its separate cloud device registration alongside the same thermostat's HomeKit
+  climate, motion, and occupancy entities. The native source proof requires the
+  Ecobee entity platform and exact `<identifier>-ei:0-temperature` unique ID,
+  one Ecobee device identifier, and one uniquely matching Ecobee-manufacturer
+  HomeKit climate device hardware serial. Ambiguous, missing, or contradictory
+  evidence retains the cross-device conflict. Both registrations reserve the
+  physical device against duplicate explicit mappings. This does not merge
+  registry devices, persist an alias table, or change any control source.
+  Runtime, options, and Repairs share this proof and observe registry changes
+  on both devices. A mapping conflict suppresses temperature projections as
+  well as device linking until repaired. An unavailable selected physical
+  probe stays unavailable; its display/control temperature is not a fallback.
 - Entity- and device-registry lifecycle listeners rebuild only the cached runtime
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate
