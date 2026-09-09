@@ -570,6 +570,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "test_coordinator_runtime_ha.py",
                 "test_runtime_ha.py",
                 "test_entity_runtime_ha.py",
+                "test_source_identity_ha.py",
             },
         )
         ha_modules = tuple(

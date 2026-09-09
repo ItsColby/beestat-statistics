@@ -323,6 +323,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
         issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
         entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
         selector = types.ModuleType("homeassistant.helpers.selector")
         voluptuous = types.ModuleType("voluptuous")
 
@@ -366,6 +367,7 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         helpers.aiohttp_client = aiohttp_client
         helpers.issue_registry = issue_registry
         helpers.entity_registry = entity_registry
+        helpers.device_registry = device_registry
         helpers.selector = selector
         homeassistant.helpers = helpers
 

@@ -1159,10 +1159,7 @@ class ConfigModelTest(unittest.TestCase):
         thermostat = config.thermostats[0]
         self.assertIsNone(thermostat.device_id)
         self.assertEqual(thermostat.climate_entity_id, "climate.zone_a")
-        self.assertEqual(
-            thermostat.temperature_entity_id,
-            "sensor.zone_b_temperature",
-        )
+        self.assertIsNone(thermostat.temperature_entity_id)
 
     def test_duplicate_explicit_device_claims_fail_linking_closed(self) -> None:
         entries = [

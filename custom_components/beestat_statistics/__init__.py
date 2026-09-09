@@ -153,6 +153,7 @@ from .issues import (
     async_set_yaml_connection_change_issue,
 )
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+from .source_identity import is_thermostat_identity_source
 from .statistics_builder import (
     CumulativeStatisticSeed,
     StatisticsSeries,
@@ -1812,6 +1813,25 @@ def _async_track_source_device_relinks(
     watched_device_ids = _mapped_source_device_ids(coordinator.data)
 
     @callback
+    def track_registered_devices() -> None:
+        # The physical probe may belong to the paired Ecobee registration while
+        # enrichment remains attached to HomeKit. Observe identity changes on both.
+        # Unselected candidate thermostats can introduce or remove ambiguity.
+        watched_entity_ids.update(
+            source.entity_id
+            for source in entity_registry.entities.values()
+            if is_thermostat_identity_source(source)
+        )
+        watched_device_ids.update(
+            source.device_id
+            for entity_id in watched_entity_ids
+            if (source := entity_registry.async_get(entity_id)) is not None
+            and source.device_id is not None
+        )
+
+    track_registered_devices()
+
+    @callback
     def handle_coordinator_update() -> None:
         data = coordinator.data
         watched_entity_ids.update(_mapped_source_entity_ids(data))
@@ -1822,7 +1842,9 @@ def _async_track_source_device_relinks(
             )
         )
         watched_device_ids.update(_mapped_source_device_ids(data))
+        track_registered_devices()
         _async_migrate_homekit_device_assignments(hass, entry, data)
+        _async_update_mapping_device_conflicts_issue(hass, entry)
 
     @callback
     def reconcile_assignments() -> None:
@@ -1835,6 +1857,11 @@ def _async_track_source_device_relinks(
             for key in ("entity_id", "old_entity_id")
             if (value := event.data.get(key)) is not None
         }
+        if any(
+            is_thermostat_identity_source(entity_registry.async_get(entity_id))
+            for entity_id in changed_entity_ids
+        ):
+            track_registered_devices()
         if watched_entity_ids.isdisjoint(
             changed_entity_ids
         ) and not _entity_registry_event_matches_references(
@@ -2025,6 +2052,7 @@ def _async_update_mapping_device_conflicts_issue(
     conflicts = configured_mapping_device_conflicts(
         entry_runtime_config_data(entry),
         er.async_get(hass),
+        dr.async_get(hass),
     )
     if not conflicts:
         ir.async_delete_issue(hass, DOMAIN, _MAPPING_DEVICE_CONFLICTS_ISSUE_ID)

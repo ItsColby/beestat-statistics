@@ -1,3 +1,23 @@
+# Beestat Statistics v2026.9.9
+
+## Fixed
+
+- Allow a physical Ecobee thermostat temperature sensor to be mapped alongside
+  the same thermostat's HomeKit entities after verifying its hardware identity.
+  Keep the physical reading distinct from the displayed temperature, which may
+  combine participating rooms.
+- Recheck mappings when device identities or source associations change. Invalid
+  or ambiguous mappings raise a Repair and suppress affected temperature
+  projections until the identity is restored or the mapping is corrected.
+
+## Compatibility
+
+- Preserve existing HomeKit-only and Ecobee-only mappings, entity identifiers,
+  and Recorder statistics. No configuration migration is required.
+- Selected Ecobee physical probes retain their cloud availability and update
+  timing. An unavailable probe is not replaced by the displayed temperature;
+  HomeKit control sources remain unchanged.
+
 # Beestat Statistics v2026.9.8
 
 ## Fixed
