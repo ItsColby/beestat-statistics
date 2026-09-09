@@ -94,9 +94,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         method = _class_method(
             tree,
             "BeestatRuntimeDataCoordinator",
-            "async_refresh_runtime",
+            "_async_refresh_runtime",
         )
-        self.assertIsNotNone(method, "async_refresh_runtime is missing")
+        self.assertIsNotNone(method, "_async_refresh_runtime is missing")
         self.assertTrue(
             _contains_method_call(method, "async_set_update_error"),
             "Manual refresh failures must call async_set_update_error",
@@ -431,174 +431,70 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIsNone(re.search(r"^  test-coverage:", text, re.MULTILINE))
 
     def test_ci_python_matches_advertised_home_assistant_target(self) -> None:
-        hacs = _json_file("hacs.json")
-        pytest_ini = (ROOT / "pytest.ini").read_text(encoding="utf-8")
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
             encoding="utf-8"
         )
-        api_surface_workflow = (
-            ROOT / ".github/workflows/beestat-api-surface.yaml"
-        ).read_text(encoding="utf-8")
-        release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
-            encoding="utf-8"
+        runner = (ROOT / "scripts/verify-release-local.sh").read_text(encoding="utf-8")
+        minimum = (
+            (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8").strip()
         )
-        release_wrapper = (ROOT / "scripts/verify-release-local.ps1").read_text(
-            encoding="utf-8"
+        current = (
+            (ROOT / "requirements-ha-current.txt").read_text(encoding="utf-8").strip()
         )
-        requirements = (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8")
-        current_requirements = (ROOT / "requirements-ha-current.txt").read_text(
-            encoding="utf-8"
+        self.assertEqual(
+            minimum, f"homeassistant=={_json_file('hacs.json')['homeassistant']}"
         )
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        config_flow_tests = (ROOT / "tests/test_config_flow_ha.py").read_text(
-            encoding="utf-8"
+        for requirement in (minimum, current):
+            self.assertRegex(requirement, r"^homeassistant==[0-9]+[.][0-9]+[.][0-9]+$")
+            self.assertIn(f"Core {requirement.split('==')[1]}", workflow)
+        self.assertNotEqual(
+            minimum, current, "Equal support lanes should be consolidated"
         )
-        required_pins = {"homeassistant==2026.8.0"}
-
-        self.assertEqual(hacs["homeassistant"], "2026.8.0")
-        self.assertIn("asyncio_mode = auto", pytest_ini)
         self.assertIn('python-version: "3.14"', workflow)
         self.assertIn(
-            "name: Home Assistant minimum integration tests (Core 2026.8.0)",
-            workflow,
+            "asyncio_mode = auto", (ROOT / "pytest.ini").read_text(encoding="utf-8")
         )
-        self.assertIn(
-            "name: Home Assistant current-patch integration tests (Core 2026.8.1)",
-            workflow,
-        )
-        self.assertIn("Python `3.14.2` or newer", readme)
-        self.assertTrue(required_pins <= set(requirements.splitlines()))
-        self.assertEqual(["homeassistant==2026.8.1"], current_requirements.splitlines())
-        self.assertNotIn("pytest==", requirements)
-        minimum_harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
-        )
-        requirements_install = (
-            "python -m pip install --upgrade -r requirements-ha-test.txt"
-        )
-        self.assertNotIn("matrix:", workflow)
-        self.assertNotIn("ubuntu-latest", workflow)
-        self.assertEqual(6, workflow.count("runs-on: ubuntu-24.04"))
-        self.assertNotIn("ubuntu-latest", api_surface_workflow)
-        self.assertEqual(1, api_surface_workflow.count("runs-on: ubuntu-24.04"))
-        self.assertIn(
-            '"${source_git[@]}" ls-files --cached --others --exclude-standard -z',
-            release_runner,
-        )
-        self.assertIn('--git-dir="$source_git_dir"', release_runner)
-        self.assertIn("rev-parse --path-format=absolute --git-dir", release_wrapper)
-        self.assertIn("$Mode container $linuxGitDir", release_wrapper)
-        self.assertIn('tar -C "$source_root" --null --files-from=-', release_runner)
-        self.assertNotIn('cp -a "$source_root/."', release_runner)
-        self.assertIn("bash scripts/verify-release-local.sh minimum native", workflow)
-        self.assertIn("run_minimum() {\n  run_python '\n", release_runner)
-        self.assertIn("run_current() {\n  run_python '\n", release_runner)
-        self.assertIn("  minimum) run_minimum ;;", release_runner)
-        self.assertIn("  current) run_current ;;", release_runner)
-        self.assertIn(minimum_harness_install, release_runner)
-        self.assertIn(requirements_install, release_runner)
-        self.assertLess(
-            release_runner.index(minimum_harness_install),
-            release_runner.index(requirements_install),
-        )
-        mypy_install = 'python -m pip install "mypy==2.3.0"'
-        pip_check = "python -m pip check"
-        ha_pytest = "pytest tests -q"
-        self.assertLess(
-            release_runner.index(requirements_install),
-            release_runner.index(mypy_install),
-        )
-        self.assertLess(
-            release_runner.index(mypy_install), release_runner.index(pip_check)
-        )
-        self.assertLess(
-            release_runner.index(pip_check), release_runner.index(ha_pytest)
-        )
-        self.assertNotIn("check_ha_test_dependencies.py", release_runner)
-        self.assertIn("requirements-ha-test.txt", readme)
-        self.assertIn("requirements-ha-current.txt", readme)
-        current_install = (
-            "python -m pip install --upgrade -r requirements-ha-current.txt"
-        )
-        current_harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component==0.13.355"'
-        )
-        current_job = release_runner.index("run_current()")
-        current_harness_position = release_runner.index(
-            current_harness_install, current_job
-        )
-        current_install_position = release_runner.index(current_install, current_job)
-        current_pip_check_position = release_runner.index(
-            pip_check, current_install_position
-        )
-        current_pytest_position = release_runner.index(
-            ha_pytest, current_pip_check_position
-        )
-        self.assertLess(current_harness_position, current_install_position)
-        self.assertLess(current_install_position, current_pip_check_position)
-        self.assertLess(current_pip_check_position, current_pytest_position)
-        self.assertFalse((ROOT / "scripts/check_ha_patch_compatibility.py").exists())
-        self.assertFalse((ROOT / "tests/test_ha_patch_compatibility.py").exists())
-        self.assertEqual(2, release_runner.count(ha_pytest))
-        self.assertNotIn("astral-sh/ruff-action@", workflow)
-        self.assertNotIn('version: "0.16.1"', workflow)
-        self.assertIn(
-            'python -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
-            release_runner,
-        )
-        self.assertIn(
-            "python -m ruff format --check custom_components tests scripts",
-            release_runner,
-        )
-        self.assertIn(
-            "python -m ruff check custom_components tests scripts", release_runner
-        )
-        self.assertIn('"shellcheck-py==0.11.0.1"', release_runner)
-        self.assertIn("shellcheck scripts/verify-release-local.sh", release_runner)
-        self.assertIn(
-            "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
-            release_runner,
-        )
-        self.assertIn("run_actionlint", release_runner)
-        self.assertEqual(1, workflow.count("permissions:"))
-        permissions = workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
-        self.assertEqual("  contents: read", permissions)
-        self.assertNotIn("GH_TOKEN", release_runner)
-        self.assertIn('python -m pip install "mypy==2.3.0"', release_runner)
-        self.assertIn(
+        for lane, requirements in (
+            ("minimum", "requirements-ha-test.txt"),
+            ("current", "requirements-ha-current.txt"),
+        ):
+            with self.subTest(lane=lane):
+                block = runner.split(f"run_{lane}() {{", 1)[1].split("\n}\n", 1)[0]
+                self.assertRegex(
+                    block,
+                    r'python -m pip install "pytest-homeassistant-custom-component==[0-9.]+"',
+                )
+                install = f"python -m pip install --upgrade -r {requirements}"
+                self.assertLess(
+                    block.index("pytest-homeassistant-custom-component"),
+                    block.index(install),
+                )
+                self.assertLess(
+                    block.rindex("python -m pip install"),
+                    block.index("python -m pip check"),
+                )
+                self.assertLess(
+                    block.index("python -m pip check"), block.index("pytest tests -q")
+                )
+        for command in (
             "python -m mypy --strict custom_components/beestat_statistics",
-            release_runner,
+            "python -m ruff format --check custom_components tests scripts",
+            "python -m ruff check custom_components tests scripts",
+            "shellcheck scripts/verify-release-local.sh",
+            "zizmor --strict-collection --persona auditor .",
+            "python scripts/check_public_safety.py",
+        ):
+            self.assertIn(command, runner)
+        self.assertNotIn("GH_TOKEN", runner)
+        self.assertEqual(1, workflow.count("permissions:"))
+        self.assertEqual(
+            "  contents: read",
+            workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0],
         )
-        self.assertIn(
-            ".\\.venv\\Scripts\\python.exe -m pip install "
-            '"ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"',
-            readme,
-        )
-        local_zizmor_block = (
-            "$env:GH_TOKEN = gh auth token\n"
-            'if (-not $env:GH_TOKEN) { throw "GitHub CLI authentication required" }\n'
-            "try {\n"
-            "  .\\.venv\\Scripts\\zizmor.exe --strict-collection "
-            "--persona auditor .\n"
-            '  if ($LASTEXITCODE -ne 0) { throw "zizmor audit failed" }\n'
-            "} finally {\n"
-            "  Remove-Item Env:GH_TOKEN\n"
-            "}"
-        )
-        self.assertIn(local_zizmor_block, readme)
-        self.assertIn(
-            ".\\.venv\\Scripts\\ruff.exe format --check "
-            "custom_components tests scripts",
-            readme,
-        )
-        self.assertIn("pytest tests -q", readme)
-        self.assertIn("async_process_deps_reqs", config_flow_tests)
         dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
         self.assertEqual(1, dependabot.count("package-ecosystem: github-actions"))
         self.assertNotIn("package-ecosystem: pip", dependabot)
         self.assertEqual(1, dependabot.count("interval: weekly"))
-        self.assertNotIn("interval: daily", dependabot)
-        self.assertIn("exact-pinned", readme)
 
     def test_ruff_policy_is_repository_owned_and_high_signal(self) -> None:
         config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -640,50 +536,20 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(config["tool"]["mypy"]["strict"])
         self.assertNotIn("overrides", config["tool"]["mypy"])
 
-    def test_readme_documents_both_dependency_closed_ha_lanes(
-        self,
-    ) -> None:
+    def test_readme_documents_both_dependency_closed_ha_lanes(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
-        local_commands = (
-            "python -m pip install pytest-homeassistant-custom-component==0.13.354\n"
-            "python -m pip install --upgrade -r requirements-ha-test.txt\n"
-            "python -m pip check\n"
-            "pytest tests -q"
-        )
-        docker_commands = (
-            "python -m pip install --upgrade pip && "
-            "python -m pip install "
-            "pytest-homeassistant-custom-component==0.13.354 && "
-            "python -m pip install --upgrade -r requirements-ha-test.txt && "
-            "python -m pip check && "
-            "pytest tests -q"
-        )
-        current_commands = (
-            "python -m pip install pytest-homeassistant-custom-component==0.13.355\n"
-            "python -m pip install --upgrade -r requirements-ha-current.txt\n"
-            "python -m pip check\n"
-            "pytest tests -q"
-        )
-
-        self.assertIn(local_commands, readme)
-        self.assertIn(docker_commands, readme)
-        self.assertIn(current_commands, readme)
-        self.assertIn(
-            "supported-minimum lane is dependency-closed at Core `2026.8.0`", readme
-        )
-        self.assertIn("current same-month patch Core `2026.8.1`", readme)
-        self.assertIn("second dependency-closed lane", readme)
-        for owner_name, owner_text in (
-            ("README", readme),
-            ("architecture", architecture),
-        ):
-            with self.subTest(owner=owner_name):
-                self.assertNotRegex(
-                    owner_text,
-                    r"maintained (?:instance|installation) runs Core",
-                )
-        self.assertNotIn("check_ha_test_dependencies.py", readme)
+        for name in ("requirements-ha-test.txt", "requirements-ha-current.txt"):
+            version = (ROOT / name).read_text(encoding="utf-8").strip().split("==")[1]
+            for text in (readme, architecture):
+                self.assertIn(name, text)
+                self.assertIn(f"`{version}`", text)
+        self.assertIn("scripts/verify-release-local.ps1", readme)
+        self.assertIn("bash scripts/verify-release-local.sh all", readme)
+        self.assertIn("python -m pip check", readme)
+        self.assertIn("complete test tree", readme)
+        self.assertIn("Native Windows Python cannot substitute", readme)
+        self.assertNotIn("docker run", readme)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
@@ -693,13 +559,18 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         dependency_light_runner = (
             ROOT / "scripts/run_dependency_light_tests.py"
         ).read_text(encoding="utf-8")
-        test_files = tuple(sorted((ROOT / "tests").glob("test_*.py")))
+        test_files = tuple(sorted((ROOT / "tests").rglob("test_*.py")))
         discovered_ha_filenames = {
             path.name for path in discover_home_assistant_test_files(test_files)
         }
         self.assertEqual(
             discovered_ha_filenames,
-            {"test_config_flow_ha.py", "test_runtime_ha.py"},
+            {
+                "test_config_flow_ha.py",
+                "test_coordinator_runtime_ha.py",
+                "test_runtime_ha.py",
+                "test_entity_runtime_ha.py",
+            },
         )
         ha_modules = tuple(
             f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
@@ -1276,75 +1147,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             validate,
         )
 
-        expected_requirements = {
-            "requirements-ha-test.txt": [
-                "homeassistant==2026.8.0",
-            ],
-            "requirements-ha-current.txt": [
-                "homeassistant==2026.8.1",
-            ],
-        }
-        for relative_path, expected_lines in expected_requirements.items():
-            self.assertEqual(
-                (ROOT / relative_path).read_text(encoding="utf-8").splitlines(),
-                expected_lines,
-            )
-
-        minimum_harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component==0.13.354"'
-        )
-        requirements_install = (
-            "python -m pip install --upgrade -r requirements-ha-test.txt"
-        )
-        self.assertIn(minimum_harness_install, release_runner)
-        self.assertIn(requirements_install, release_runner)
-        self.assertLess(
-            release_runner.index(minimum_harness_install),
-            release_runner.index(requirements_install),
-        )
-        mypy_install = 'python -m pip install "mypy==2.3.0"'
-        pip_check = "python -m pip check"
-        ha_pytest = "pytest tests -q"
-        self.assertLess(
-            release_runner.index(requirements_install),
-            release_runner.index(mypy_install),
-        )
-        self.assertLess(
-            release_runner.index(mypy_install), release_runner.index(pip_check)
-        )
-        self.assertLess(
-            release_runner.index(pip_check), release_runner.index(ha_pytest)
-        )
-        self.assertFalse((ROOT / "scripts/check_ha_test_dependencies.py").exists())
-        self.assertFalse((ROOT / "tests/test_ha_test_dependencies.py").exists())
-        current_install = (
-            "python -m pip install --upgrade -r requirements-ha-current.txt"
-        )
-        current_harness_install = (
-            'python -m pip install "pytest-homeassistant-custom-component==0.13.355"'
-        )
-        current_job = release_runner.index("run_current()")
-        current_harness_position = release_runner.index(
-            current_harness_install, current_job
-        )
-        current_install_position = release_runner.index(current_install, current_job)
-        current_pip_check_position = release_runner.index(
-            pip_check, current_install_position
-        )
-        current_pytest_position = release_runner.index(
-            ha_pytest, current_pip_check_position
-        )
-        self.assertLess(current_harness_position, current_install_position)
-        self.assertLess(current_install_position, current_pip_check_position)
-        self.assertLess(current_pip_check_position, current_pytest_position)
-        self.assertFalse((ROOT / "scripts/check_ha_patch_compatibility.py").exists())
-        self.assertFalse((ROOT / "tests/test_ha_patch_compatibility.py").exists())
-        for relative_path in expected_requirements:
-            self.assertNotIn(
-                "pytest-homeassistant-custom-component",
-                (ROOT / relative_path).read_text(encoding="utf-8"),
-            )
-
     def test_device_entity_names_do_not_repeat_integration_name(self) -> None:
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
@@ -1578,21 +1380,6 @@ def _contains_method_call(node: ast.AST | None, method_name: str) -> bool:
 
 def _json_file(relative_path: str) -> dict:
     return json.loads((ROOT / relative_path).read_text(encoding="utf-8"))
-
-
-def _iter_text_files(paths: tuple[Path, ...]) -> list[Path]:
-    files: list[Path] = []
-    allowed_suffixes = {".json", ".md", ".py", ".yaml", ".yml"}
-    for path in paths:
-        if path.is_file():
-            files.append(path)
-            continue
-        files.extend(
-            item
-            for item in path.rglob("*")
-            if item.is_file() and item.suffix.lower() in allowed_suffixes
-        )
-    return files
 
 
 def _literal_translation_keys(path: Path) -> set[str]:

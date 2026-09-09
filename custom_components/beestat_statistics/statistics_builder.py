@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from .config_model import BeestatConfig
 from .config_model import build_sensor_statistics as build_sensor_specs
+from .config_rows import positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
     RUNTIME_FIELD_GROUPS,
@@ -75,7 +76,7 @@ def cumulative_statistic_ids(
             f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
             for runtime_slug, _runtime_label, field in DETAILED_RUNTIME_FIELDS
             if any(
-                (_as_float(row.get(field)) or 0.0) != 0
+                (_as_float(row.get(field)) or 0.0) > 0
                 for _local_day, row in thermostat_rows
             )
         )
@@ -166,7 +167,7 @@ def build_runtime_statistics(
                 )
             )
         for runtime_slug, runtime_label, field in DETAILED_RUNTIME_FIELDS:
-            if not any((_as_float(row.get(field)) or 0.0) != 0 for _, row in rows):
+            if not any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows):
                 continue
             series.append(
                 _build_cumulative_runtime_series(
@@ -245,6 +246,8 @@ def build_summary_sum_statistics(
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
                 value = _as_float(row.get(spec.field)) or 0.0
+                if value < 0:
+                    break
                 next_total = _finite_add(total, value)
                 if next_total is None:
                     break
@@ -471,7 +474,7 @@ def _summary_rows_by_thermostat(
 ) -> dict[int, list[tuple[date, dict[str, Any]]]]:
     rows_by_thermostat: dict[int, dict[date, dict[str, Any]]] = {}
     for row in summary_rows:
-        thermostat_id = _as_int(row.get("thermostat_id"))
+        thermostat_id = positive_resource_id(row.get("thermostat_id"))
         local_day = _parse_summary_day_or_none(row)
         if thermostat_id is None or local_day is None:
             continue
@@ -505,7 +508,7 @@ def _parse_timestamp_day(value: Any, local_tz: ZoneInfo) -> date | None:
         return None
     try:
         return _parse_timestamp(str(value), local_tz).date()
-    except ValueError:
+    except OverflowError, ValueError:
         return None
 
 
@@ -517,8 +520,11 @@ def _hours_for_fields(
     row: dict[str, Any],
     fields: tuple[str, ...],
 ) -> float | None:
+    values = tuple(_as_float(row.get(field)) or 0.0 for field in fields)
+    if any(value < 0 for value in values):
+        return None
     try:
-        hours = fsum((_as_float(row.get(field)) or 0.0) / 3600 for field in fields)
+        hours = fsum(value / 3600 for value in values)
     except OverflowError:
         return None
     return hours if isfinite(hours) else None
@@ -540,19 +546,10 @@ def _finite_add(left: float, right: float | None) -> float | None:
 
 
 def _as_float(value: Any) -> float | None:
-    if value in (None, "", "unknown", "unavailable"):
+    if isinstance(value, bool) or value in (None, "", "unknown", "unavailable"):
         return None
     try:
         parsed = float(value)
     except OverflowError, TypeError, ValueError:
         return None
     return parsed if isfinite(parsed) else None
-
-
-def _as_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except OverflowError, TypeError, ValueError:
-        return None

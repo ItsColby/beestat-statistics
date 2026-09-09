@@ -72,6 +72,7 @@ class SensorHelpersTest(unittest.TestCase):
         _load_module("entity")
         _load_module("runtime")
         self.thermostat_settings = _load_module("thermostat_settings")
+        self.profile = _load_module("profile")
         self.sensor = _load_module("sensor")
 
     def tearDown(self) -> None:
@@ -213,6 +214,76 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertEqual(forecast.days_remaining, -9)
         self.assertTrue(forecast.due)
 
+    def test_filter_forecast_retains_calendar_limit_when_runtime_date_overflows(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=100000,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 7, 1),
+            filter_changed_source="native",
+            filter_runtime_hours=0,
+            recent_runtime_hours_per_day=0.01,
+        )
+        forecast = self.sensor.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertIsNone(forecast.runtime_due_date)
+        self.assertEqual(forecast.due_date, date(2026, 9, 29))
+
+        summary.filter_changed_date = date.max
+        summary.recent_runtime_hours_per_day = 0
+        forecast = self.sensor.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertIsNone(forecast.max_age_due_date)
+        self.assertIsNone(forecast.due_date)
+
+    def test_filter_forecast_already_consumed_runtime_is_due_while_hvac_idle(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="main", name="Main"
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 7, 1),
+            filter_changed_source="native",
+            filter_runtime_hours=250,
+            recent_runtime_hours_per_day=0,
+        )
+        forecast = self.sensor.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertEqual(forecast.runtime_due_date, date(2026, 7, 5))
+        self.assertTrue(forecast.due)
+
+    def test_profile_numeric_fields_reject_booleans_and_fractional_minutes(
+        self,
+    ) -> None:
+        program = {
+            "climates": [
+                {
+                    "climateRef": "home",
+                    "heatTemp": True,
+                    "coolTemp": False,
+                    "ventilatorMinOnTime": 2.5,
+                }
+            ]
+        }
+        profile = self.profile.schedule_profiles_by_ref(program)["home"]
+        self.assertIsNone(profile.heat_temperature)
+        self.assertIsNone(profile.cool_temperature)
+        self.assertIsNone(profile.ventilator_min_on_time)
+        for value, expected in ((True, None), (2.0, 2), ("3", 3), (-1, None)):
+            with self.subTest(value=value):
+                program["climates"][0]["ventilatorMinOnTime"] = value
+                profile = self.profile.schedule_profiles_by_ref(program)["home"]
+                self.assertEqual(profile.ventilator_min_on_time, expected)
+
     def test_filter_due_date_snapshot_is_atomic_and_content_revisioned(self) -> None:
         changed_at = datetime(2026, 6, 18, 14, 30, tzinfo=UTC)
         thermostat = self.config_model.ConfiguredThermostat(
@@ -349,6 +420,20 @@ class SensorHelpersTest(unittest.TestCase):
             "equipment",
         )
         self.assertEqual(self.sensor._classify_active_alerts(()), "none")
+
+    def test_maintenance_alert_does_not_hide_an_unknown_or_equipment_alert(
+        self,
+    ) -> None:
+        maintenance = {"text": "Replace the filter"}
+        unknown = {"code": "unrecognized_code"}
+        equipment = {"text": "System fault: not cooling"}
+        self.assertEqual(
+            self.sensor._classify_active_alerts((maintenance, unknown)), "unknown"
+        )
+        self.assertEqual(
+            self.sensor._classify_active_alerts((equipment, maintenance, unknown)),
+            "equipment",
+        )
 
     def test_entity_surface_keeps_primary_entities_and_classifies_details(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
@@ -542,6 +627,33 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertEqual(2, attributes["configured_sensor_count"])
         self.assertEqual(["Bedroom", "Office"], attributes["configured_sensor_names"])
         self.assertEqual(2, attributes["participating_sensor_count"])
+
+    def test_spread_unit_follows_recovered_and_updated_projection(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="main", name="Main"
+        )
+        coordinator = types.SimpleNamespace(
+            hass=object(),
+            data=types.SimpleNamespace(room_temperature_spreads={}),
+        )
+        description = next(
+            description
+            for description in self.sensor._thermostat_sensor_descriptions(
+                thermostat=thermostat
+            )
+            if description.translation_key == "current_profile_room_temperature_spread"
+        )
+        entity = self.sensor.BeestatSensor(coordinator, description, None)
+        self.assertIsNone(entity.native_unit_of_measurement)
+        self.assertFalse(entity.available)
+        for unit, value in (("°C", 2.0), ("°F", 3.6)):
+            with self.subTest(unit=unit):
+                coordinator.data.room_temperature_spreads[1] = types.SimpleNamespace(
+                    unit=unit, value=value
+                )
+                self.assertEqual(entity.native_unit_of_measurement, unit)
+                self.assertEqual(entity.native_value, value)
+                self.assertTrue(entity.available)
 
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(

@@ -8,16 +8,26 @@ from typing import Any
 from .const import CONF_ID
 
 
+def positive_resource_id(value: Any) -> int | None:
+    """Normalize an exact positive source identity without numeric truncation."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    try:
+        parsed = int(value)
+    except OverflowError, ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def override_id(item: Mapping[str, Any]) -> int | None:
-    """Return a normalized override ID across current and legacy row shapes."""
+    """Resolve the first present identity field; malformed owners remain unowned."""
 
     for key in (CONF_ID, "sensor_id", "thermostat_id"):
-        try:
-            value = int(item.get(key, -1))
-        except OverflowError, TypeError, ValueError:
-            continue
-        if value >= 0:
-            return value
+        if key in item:
+            return positive_resource_id(item[key])
     return None
 
 

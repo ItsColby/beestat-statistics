@@ -50,31 +50,31 @@ else:
 PARALLEL_UPDATES = 0
 
 _THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, str, bool], ...] = (
-    ("auto_away_enabled", "Auto away", "auto_away_enabled", "autoAway", False),
+    ("auto_away_enabled", "Auto away enabled", "auto_away_enabled", "autoAway", False),
     (
         "follow_me_enabled",
-        "Follow me",
+        "Follow me enabled",
         "follow_me_enabled",
         "followMeComfort",
         False,
     ),
     (
         "smart_circulation_enabled",
-        "Smart circulation",
+        "Smart circulation enabled",
         "smart_circulation_enabled",
         "smartCirculation",
         False,
     ),
     (
         "preheating_enabled",
-        "Preheating",
+        "Preheating enabled",
         "preheating_enabled",
         "disablePreHeating",
         True,
     ),
     (
         "precooling_enabled",
-        "Precooling",
+        "Precooling enabled",
         "precooling_enabled",
         "disablePreCooling",
         True,

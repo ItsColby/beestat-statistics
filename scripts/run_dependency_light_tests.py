@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
 import sys
 import unittest
@@ -44,21 +45,58 @@ def discover_home_assistant_test_files(
 def dependency_light_test_files() -> tuple[Path, ...]:
     """Return every test module that does not directly require the HA harness."""
 
-    test_files = tuple(sorted(TESTS.glob("test_*.py")))
+    test_files = tuple(sorted(TESTS.rglob("test_*.py")))
+    if any(path.parent != TESTS for path in test_files):
+        raise RuntimeError("Dependency-light discovery requires flat tests/test_*.py")
     ha_test_files = set(discover_home_assistant_test_files(test_files))
     if not ha_test_files:
         raise RuntimeError("No Home Assistant test modules were discovered")
-    return tuple(path for path in test_files if path not in ha_test_files)
+    selected = tuple(path for path in test_files if path not in ha_test_files)
+    if not selected:
+        raise RuntimeError("No dependency-light test modules were discovered")
+    return selected
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Run the dependency-light suite without importing HA-only modules."""
 
-    suite = unittest.TestSuite()
-    for path in dependency_light_test_files():
-        suite.addTests(unittest.TestLoader().discover(str(TESTS), pattern=path.name))
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    try:
+        suite = _load_suite(dependency_light_test_files())
+    except (OSError, RuntimeError, SyntaxError, ImportError) as err:
+        print(f"Dependency-light discovery failed: {err}", file=sys.stderr)
+        return 2
     result = unittest.TextTestRunner(verbosity=1).run(suite)
-    return 0 if result.wasSuccessful() else 1
+    return 0 if result.wasSuccessful() and result.testsRun > len(result.skipped) else 1
+
+
+def _load_suite(test_files: tuple[Path, ...]) -> unittest.TestSuite:
+    """Load every selected module and reject tests unittest would silently omit."""
+
+    suite = unittest.TestSuite()
+    for path in test_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if any(
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.name.startswith("test_")
+            for node in tree.body
+        ):
+            raise RuntimeError(f"{path.name} contains tests outside unittest.TestCase")
+        module_suite = unittest.TestLoader().discover(str(TESTS), pattern=path.name)
+        if not module_suite.countTestCases():
+            raise RuntimeError(f"{path.name} did not collect any tests")
+        module = sys.modules.get(path.stem)
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                candidate = getattr(module, node.name, None)
+                if isinstance(candidate, type) and not issubclass(
+                    candidate, unittest.TestCase
+                ):
+                    raise RuntimeError(
+                        f"{path.name} contains a non-unittest test class"
+                    )
+        suite.addTests(module_suite)
+    return suite
 
 
 if __name__ == "__main__":

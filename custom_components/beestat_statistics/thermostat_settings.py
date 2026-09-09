@@ -8,6 +8,8 @@ from datetime import date
 from math import isfinite
 from typing import Any
 
+from .config_rows import positive_resource_id
+
 # These fields are deliberately explicit. The upstream ecobee_thermostat row also
 # contains account, location, billing, utility, management, device-identifier, and
 # access-code data. None of those broad/private objects may cross this boundary.
@@ -219,20 +221,24 @@ def build_thermostat_settings_snapshots(
         row_id: row
         for row in ecobee_thermostat_rows
         if isinstance(row, dict)
-        if not _truthy(row.get("inactive")) and not _truthy(row.get("deleted"))
-        if (row_id := _int_or_none(row.get("ecobee_thermostat_id", row.get("id"))))
+        if (
+            row_id := positive_resource_id(row.get("ecobee_thermostat_id"))
+            or positive_resource_id(row.get("id"))
+        )
         is not None
     }
     snapshots: dict[int, ThermostatSettingsSnapshot] = {}
     for thermostat_row in thermostat_rows:
-        thermostat_id = _int_or_none(
-            thermostat_row.get("thermostat_id", thermostat_row.get("id"))
+        thermostat_id = positive_resource_id(
+            thermostat_row.get("thermostat_id")
+        ) or positive_resource_id(thermostat_row.get("id"))
+        ecobee_thermostat_id = positive_resource_id(
+            thermostat_row.get("ecobee_thermostat_id")
         )
-        ecobee_thermostat_id = _int_or_none(thermostat_row.get("ecobee_thermostat_id"))
         if thermostat_id is None or ecobee_thermostat_id is None:
             continue
         raw = raw_by_id.get(ecobee_thermostat_id)
-        if raw is None:
+        if raw is None or _truthy(raw.get("inactive")) or _truthy(raw.get("deleted")):
             continue
         settings = _safe_mapping(raw.get("settings"), _all_setting_fields())
         audio = _safe_mapping(raw.get("audio"), _AUDIO_FIELDS)
@@ -379,9 +385,12 @@ def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     try:
-        return int(value)
+        parsed = int(value)
     except OverflowError, TypeError, ValueError:
         return None
+    if isinstance(value, float) and value != parsed:
+        return None
+    return parsed
 
 
 def _truthy(value: Any) -> bool:

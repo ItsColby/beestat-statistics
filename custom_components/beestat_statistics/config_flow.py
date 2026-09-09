@@ -48,7 +48,7 @@ from .config_payload import (
     update_source_scope_options,
     update_thermostat_override_options,
 )
-from .config_rows import effective_override_items, override_id
+from .config_rows import effective_override_items, override_id, positive_resource_id
 from .const import (
     API_BASE,
     CONF_ACCOUNT_FINGERPRINT,
@@ -477,9 +477,15 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="configuration_changed")
         async_set_yaml_connection_change_issue(self.hass, active=False)
         options = merge_import_options(entry.options, data, options)
+        preserved_data = {
+            key: value
+            for key, value in entry_data_snapshot.items()
+            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
+        }
+        preserved_data.update(data)
         return self.async_update_reload_and_abort(
             entry,
-            data=data,
+            data=preserved_data,
             options=options,
             reason="already_configured",
             reload_even_if_entry_is_unchanged=False,
@@ -1100,11 +1106,8 @@ def _account_fingerprint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _row_identifier(row: Mapping[str, Any]) -> str | None:
     """Return the Beestat row identifier used for account fingerprinting."""
 
-    for key in ("thermostat_id", "id"):
-        value = row.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return None
+    value = _resource_row_id(row, "thermostat_id")
+    return str(value) if value is not None else None
 
 
 def _same_connection_data(
@@ -1276,7 +1279,7 @@ def _resource_options(
         labels[item_id] = str(item.name)
     rows = getattr(data, rows_attribute, ()) if data is not None else ()
     for row in rows:
-        row_id = _resource_row_id(row)
+        row_id = _resource_row_id(row, config_id_attribute)
         if row_id is None:
             continue
         label = row.get("name") or f"{fallback_label} {row_id}"
@@ -1284,17 +1287,10 @@ def _resource_options(
         if _source_flag_enabled(row.get("inactive")):
             inactive.add(row_id)
     config_data = entry_runtime_config_data(entry)
-    for item in config_data.get(override_key, ()):
-        if not isinstance(item, Mapping):
-            continue
-        raw_item_id = item.get(CONF_ID)
-        if raw_item_id is None:
-            continue
-        try:
-            item_id = int(raw_item_id)
-        except OverflowError, TypeError, ValueError:
-            continue
-        labels.setdefault(item_id, f"Saved {fallback_label.lower()} {item_id}")
+    for item in effective_override_items(config_data.get(override_key)):
+        saved_id = override_id(item)
+        assert saved_id is not None
+        labels.setdefault(saved_id, f"Saved {fallback_label.lower()} {saved_id}")
 
     return sorted(
         (
@@ -1312,15 +1308,10 @@ def _resource_options(
     )
 
 
-def _resource_row_id(row: Mapping[str, Any]) -> int | None:
-    for key in ("thermostat_id", "sensor_id", "id"):
-        value = row.get(key)
-        if value in (None, ""):
-            continue
-        try:
-            return int(value)
-        except OverflowError, TypeError, ValueError:
-            continue
+def _resource_row_id(row: Mapping[str, Any], id_field: str) -> int | None:
+    for key in (id_field, "id"):
+        if (value := positive_resource_id(row.get(key))) is not None:
+            return value
     return None
 
 
@@ -1348,6 +1339,7 @@ def _inactive_resource_ids(
     entry: config_entries.ConfigEntry,
     *,
     rows_attribute: str,
+    id_field: str,
 ) -> set[int]:
     runtime = getattr(entry, "runtime_data", None)
     data = runtime.coordinator.data if runtime is not None else None
@@ -1355,7 +1347,7 @@ def _inactive_resource_ids(
     return {
         item_id
         for row in rows
-        if (item_id := _resource_row_id(row)) is not None
+        if (item_id := _resource_row_id(row, id_field)) is not None
         and _source_flag_enabled(row.get("inactive"))
     }
 
@@ -1402,6 +1394,7 @@ def _source_scope_candidate(
                 & _inactive_resource_ids(
                     entry,
                     rows_attribute="thermostat_rows",
+                    id_field="thermostat_id",
                 )
             )
         ),
@@ -1413,6 +1406,7 @@ def _source_scope_candidate(
                 & _inactive_resource_ids(
                     entry,
                     rows_attribute="sensor_rows",
+                    id_field="sensor_id",
                 )
             )
         ),
@@ -1524,7 +1518,9 @@ def _automatic_mapping_options(
             mapped_fields=mapped_fields,
         )
 
-    if thermostat_count == 0 and sensor_count == 0:
+    if (
+        thermostat_count == 0 and sensor_count == 0
+    ) or _has_new_mapping_device_conflicts(entry, registry, options):
         return None
     return _AutomaticMappingCandidate(
         options=options,
@@ -1545,7 +1541,7 @@ def _effective_override(
         (
             item
             for item in effective_override_items(config_data.get(key))
-            if _resource_row_id(item) == item_id
+            if override_id(item) == item_id
         ),
         {},
     )

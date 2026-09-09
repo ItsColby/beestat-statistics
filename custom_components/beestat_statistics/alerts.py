@@ -16,7 +16,7 @@ def active_alert_examples(
 
     examples: list[dict[str, str]] = []
     for alert in alerts[:MAX_STATE_ALERT_EXAMPLES]:
-        example = {"category": classify_active_alerts((alert,))}
+        example = {"category": _classify_alert(alert)}
         for field in _STATE_ALERT_FIELDS:
             if (value := _bounded_scalar(alert.get(field))) is not None:
                 example[field] = value
@@ -40,9 +40,18 @@ def classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
 
     if not alerts:
         return "none"
+    categories = {_classify_alert(alert) for alert in alerts}
+    for category in ("equipment", "unknown", "maintenance"):
+        if category in categories:
+            return category
+    return "unknown"
+
+
+def _classify_alert(alert: dict[str, Any]) -> str:
+    """Classify one alert so a routine reminder cannot hide an unknown problem."""
+
     text = " ".join(
         str(alert.get(field) or "").lower()
-        for alert in alerts
         for field in ("code", "type", "severity", "text")
     )
     equipment_terms = (

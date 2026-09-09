@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -33,7 +34,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._old_modules = {key: sys.modules.get(key) for key in ("aiohttp",)}
         aiohttp = types.ModuleType("aiohttp")
-        aiohttp.ClientError = RuntimeError
+        aiohttp.ClientError = type("ClientError", (Exception,), {})
         aiohttp.ClientSession = object
         sys.modules["aiohttp"] = aiohttp
         self.api = _load_api_module()
@@ -106,7 +107,9 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            client.redact_error(RuntimeError("network-response-secret")),
+            client.redact_error(
+                self.api.aiohttp.ClientError("network-response-secret")
+            ),
             "Beestat network request failed",
         )
         self.assertEqual(
@@ -251,6 +254,34 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.call_count, 2)
         sleep.assert_awaited_once_with(2)
 
+    async def test_http_auth_failure_is_not_retried(self) -> None:
+        session = _FakeSession([_FakeResponse({}, status=401)])
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=3
+        )
+        sleep = AsyncMock()
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaises(self.api.BeestatAuthError),
+        ):
+            await client.async_read_id("thermostat")
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
+    async def test_cancelled_transport_propagates_without_retry(self) -> None:
+        session = _FakeSession([_FakeResponse({}, json_error=asyncio.CancelledError())])
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=3
+        )
+        sleep = AsyncMock()
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await client.async_read_id("thermostat")
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
     async def test_invalid_json_error_does_not_expose_parser_detail(self) -> None:
         secret = "parser-response-secret"
         session = _FakeSession([_FakeResponse({}, json_error=ValueError(secret))])
@@ -368,7 +399,7 @@ class _FakeResponse:
         *,
         status: int = 200,
         text: str | None = None,
-        json_error: Exception | None = None,
+        json_error: BaseException | None = None,
         include_content_length: bool = True,
     ) -> None:
         self.status = status
@@ -395,7 +426,7 @@ class _FakeResponse:
 
 
 class _FakeContent:
-    def __init__(self, body: bytes, read_error: Exception | None = None) -> None:
+    def __init__(self, body: bytes, read_error: BaseException | None = None) -> None:
         self._body = body
         self._read_error = read_error
 

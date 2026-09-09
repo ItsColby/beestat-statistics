@@ -28,11 +28,62 @@ def _load_module(name: str):
 
 
 _load_module("const")
+config_rows = _load_module("config_rows")
 config_payload = _load_module("config_payload")
 
 
 class ConfigPayloadTest(unittest.TestCase):
     """Validate dependency-free config-entry payload shaping."""
+
+    def test_resource_id_normalization_preserves_exact_positive_identity(self) -> None:
+        for value in (1, 1.0, "001", " 1 "):
+            with self.subTest(value=value):
+                self.assertEqual(config_rows.positive_resource_id(value), 1)
+        for value in (
+            True,
+            False,
+            0,
+            -1,
+            1.5,
+            float("inf"),
+            float("nan"),
+            None,
+            "1.5",
+            [],
+            {},
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(config_rows.positive_resource_id(value))
+
+    def test_malformed_resource_ids_cannot_shadow_valid_override(self) -> None:
+        valid = {"id": 1, "filter_notice_days": 7}
+        rows = [valid] + [
+            {"id": value, "future": {"preserve": True}}
+            for value in (True, 1.5, 0, -1, float("inf"), None)
+        ]
+        options = {"thermostats": rows}
+        updated = config_payload.update_thermostat_override_options(
+            {}, options, 1, {"filter_notice_days": 14}
+        )
+        self.assertEqual(updated["thermostats"][1:], rows[1:])
+        self.assertEqual(
+            config_payload.effective_thermostat_override({}, updated, 1),
+            {"id": 1, "filter_notice_days": 14},
+        )
+        self.assertEqual(valid["filter_notice_days"], 7)
+
+    def test_override_identity_cannot_fall_back_to_sensor_parent(self) -> None:
+        for row in (
+            {"id": True, "sensor_id": 2, "thermostat_id": 1},
+            {"id": 1.5, "thermostat_id": 1},
+            {"sensor_id": None, "thermostat_id": 1},
+        ):
+            with self.subTest(row=row):
+                self.assertIsNone(config_rows.override_id(row))
+        self.assertEqual(
+            config_rows.override_id({"sensor_id": 2, "thermostat_id": 1}), 2
+        )
+        self.assertEqual(config_rows.override_id({"thermostat_id": 1}), 1)
 
     def test_split_entry_payload_preserves_mapping_overrides(self) -> None:
         data, options = config_payload.split_entry_payload(
@@ -140,6 +191,45 @@ class ConfigPayloadTest(unittest.TestCase):
             data["thermostats"],
             [{"id": 1, "filter_changed_date": "2026-07-05"}],
         )
+
+    def test_targeted_edits_preserve_unowned_rows_and_effective_defaults(self) -> None:
+        rows = [
+            {"id": 1, "enabled": False},
+            {"id": 1},
+            {"id": 99},
+            {"id": "invalid"},
+            None,
+            "future row",
+            ["future", "shape"],
+        ]
+        options = {"thermostats": rows, "sensors": rows}
+        for update, key in (
+            (config_payload.update_thermostat_override_options, "thermostats"),
+            (config_payload.update_sensor_override_options, "sensors"),
+        ):
+            with self.subTest(key=key):
+                updated = update(
+                    {}, options, 1, {"temperature_entity_id": "sensor.room"}
+                )
+                self.assertEqual(updated[key][0], rows[0])
+                self.assertEqual(updated[key][2:], rows[2:])
+                self.assertEqual(
+                    updated[key][1]["temperature_entity_id"], "sensor.room"
+                )
+
+        scoped = config_payload.update_source_scope_options(
+            {},
+            options,
+            known_thermostat_ids=(1,),
+            enabled_thermostat_ids=(1,),
+            known_sensor_ids=(1,),
+            enabled_sensor_ids=(1,),
+        )
+        self.assertEqual(scoped, options)
+        self.assertEqual(
+            config_payload.effective_thermostat_override({}, scoped, 1), {"id": 1}
+        )
+        self.assertEqual(rows[1], {"id": 1})
 
     def test_connection_data_keeps_existing_key_when_blank(self) -> None:
         self.assertEqual(

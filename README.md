@@ -1,17 +1,5 @@
 # Beestat Statistics
 
-## Local release validation
-
-Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1`
-before publishing a release candidate. It uses the `Ubuntu-24.04` WSL2
-distribution and rootless Podman to run the same local-tree unit,
-minimum/current Home Assistant, and Hassfest validation classes as the hosted
-workflow. Images are pinned by digest. HACS validation reads a pushed repository
-through GitHub's API, so the hosted HACS job remains the independent public
-metadata and release gate rather than receiving a local GitHub credential. The
-hosted unit and Home Assistant jobs call this same script in `native` mode, so
-future validation changes have one product-owned command surface.
-
 Home Assistant custom integration for importing Beestat HVAC history and enriching local Ecobee/HomeKit thermostat and room-sensor entities with Beestat-only context.
 
 ## Source Model
@@ -439,38 +427,49 @@ Upstream Beestat API drift check:
 .\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
 ```
 
-The checked-in snapshot is `docs/beestat-api-surface.json`. Review upstream changes before refreshing it with `--update`; do not treat a changed snapshot as approval to broaden the Home Assistant integration scope.
+The checked-in snapshot is `docs/beestat-api-surface.json`. The checker reads one
+immutable upstream commit, verifies downloaded Git blobs, and rejects incomplete
+inventories. Review upstream changes before refreshing it with `--update`; a
+changed snapshot does not expand the integration scope. Updates replace the
+snapshot atomically only after every read and validation succeeds.
 
 The checked-in `custom_components/beestat_statistics/quality_scale.yaml` tracks Home Assistant integration-quality rules with current repo evidence, including strict typing. Omitted rules are intentionally unclaimed until matching coverage or runtime evidence exists.
 
-Home Assistant harness checks require Linux with Python `3.14`. The supported-minimum lane is dependency-closed at Core `2026.8.0`, matching published harness `0.13.354`, and a second dependency-closed lane targets exact current same-month patch Core `2026.8.1` with harness `0.13.355`. Each lane installs its exact harness and Core requirements separately, runs a literal `python -m pip check` after the final dependency installation, and then runs the complete Home Assistant tests. Home Assistant imports Linux-only modules and its test harness assumes Unix-domain sockets, so a native Windows Python environment is not a valid substitute even when its Python version matches.
+Home Assistant harness checks require Linux with Python `3.14.2` or newer.
+`requirements-ha-test.txt` owns the supported minimum, Core `2026.8.0`;
+`requirements-ha-current.txt` owns the current compatibility target, Core
+`2026.9.1`. Both lanes use an exactly matching published Home Assistant harness,
+install Core separately, run `python -m pip check` after the final installation,
+and execute the complete test tree. Strict mypy runs in the minimum lane.
+Native Windows Python cannot substitute for the Linux Home Assistant harness.
 
-Strict mypy requires Home Assistant dependencies and runs in the `minimum` lane
-of `scripts/verify-release-local.ps1`.
-
-Supported-minimum lane:
-
-```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.354
-python -m pip install --upgrade -r requirements-ha-test.txt
-python -m pip check
-pytest tests -q
-```
-
-Current same-month patch lane:
+Run the complete local validation through the pinned containers on Windows
+using Ubuntu 24.04 WSL2 and rootless Podman:
 
 ```powershell
-python -m pip install pytest-homeassistant-custom-component==0.13.355
-python -m pip install --upgrade -r requirements-ha-current.txt
-python -m pip check
-pytest tests -q
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1
 ```
 
-On Windows, run the same harness through Docker Desktop or WSL from the repository root:
+Use `-Mode unit`, `minimum`, `current`, or `release` for a focused lane. The
+`release` lane validates integration metadata with Hassfest; it does not publish.
+The container backend snapshots tracked and nonignored new files, including
+uncommitted changes. Images are pinned by digest, and each Python lane uses an
+isolated environment. `all` runs every lane and fails if any lane fails.
+On Linux, the same command surface is:
 
-```powershell
-docker run --rm -v "${PWD}:/work" -w /work python:3.14-slim bash -lc "python -m pip install --upgrade pip && python -m pip install pytest-homeassistant-custom-component==0.13.354 && python -m pip install --upgrade -r requirements-ha-test.txt && python -m pip check && pytest tests -q"
+```bash
+bash scripts/verify-release-local.sh all
 ```
+
+The default container backend requires Podman. Hosted CI uses `native` as the
+second argument, creates disposable Python environments, and requires Go for
+actionlint and Docker for Hassfest. Commands resolve the repository from the
+script location. HACS remains a hosted check of the pushed repository.
+
+The public-safety guard scans the current contents of tracked and nonignored
+new files, including filenames. It rejects links, unreadable or oversized files,
+and unreviewed binary content. This is a working-tree check, not a Git-history
+audit.
 
 The workflow pins every third-party action to a full commit SHA and runs
 exact-pinned Ruff, mypy, actionlint, ShellCheck, and `zizmor` in auditor mode.
@@ -486,7 +485,7 @@ Every release follows this order:
 1. Create a release-candidate branch from current `main`.
 2. Open a pull request and require terminal success for **Unit tests**, **Home
    Assistant minimum integration tests (Core 2026.8.0)**, **Home Assistant
-   current-patch integration tests (Core 2026.8.1)**, **Hassfest**, **HACS**,
+   current integration tests (Core 2026.9.1)**, **Hassfest**, **HACS**,
    the aggregate **Release gate**, and CodeQL's **Analyze (actions)**, **Analyze
    (python)**, and **CodeQL** checks.
 3. Merge through default-branch protection without bypass, using squash or

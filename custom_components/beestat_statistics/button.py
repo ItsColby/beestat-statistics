@@ -10,6 +10,7 @@ from homeassistant.components.button import ButtonEntity, ButtonEntityDescriptio
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
@@ -169,7 +170,9 @@ class BeestatButton(ButtonEntity):
         return service_device_info()
 
 
-class BeestatFilterChangedButton(ButtonEntity):
+class BeestatFilterChangedButton(
+    CoordinatorEntity[BeestatRuntimeDataCoordinator], ButtonEntity
+):
     """Mark an HVAC filter as changed today."""
 
     _attr_has_entity_name = True
@@ -182,7 +185,7 @@ class BeestatFilterChangedButton(ButtonEntity):
         coordinator: BeestatRuntimeDataCoordinator,
         thermostat: ConfiguredThermostat,
     ) -> None:
-        self._coordinator = coordinator
+        super().__init__(coordinator)
         self._thermostat_id = thermostat.thermostat_id
         link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._device_info = thermostat_device_info(thermostat)
@@ -200,13 +203,13 @@ class BeestatFilterChangedButton(ButtonEntity):
 
         try:
             await async_mark_filter_changed(
-                self._coordinator,
+                self.coordinator,
                 self._thermostat_id,
                 dt_util.now(),
             )
         except BeestatAuthError:
-            self._coordinator.beestat_config_entry.async_start_reauth_if_available(
-                self._coordinator.hass
+            self.coordinator.beestat_config_entry.async_start_reauth_if_available(
+                self.coordinator.hass
             )
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -231,7 +234,7 @@ class BeestatFilterChangedButton(ButtonEntity):
     def available(self) -> bool:
         """Return whether the thermostat is currently configured."""
 
-        data = self._coordinator.data
+        data = self.coordinator.data
         return data is not None and any(
             thermostat.thermostat_id == self._thermostat_id
             for thermostat in data.config.thermostats

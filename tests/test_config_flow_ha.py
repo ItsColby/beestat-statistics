@@ -1008,6 +1008,37 @@ async def test_import_flow_updates_existing_entry(hass: HomeAssistant) -> None:
     )
 
 
+async def test_import_flow_preserves_unowned_data_and_removes_omitted_yaml_rows(
+    hass: HomeAssistant,
+) -> None:
+    """A validated import replaces YAML mappings while preserving future data."""
+
+    entry = _add_mock_entry(
+        hass,
+        data={
+            **_add_mock_entry_data(),
+            "future": {"preserved": [1, 2]},
+            CONF_THERMOSTATS: [{CONF_ID: 1001, "enabled": False}],
+            CONF_SENSORS: [{CONF_ID: 2001, "enabled": False}],
+        },
+    )
+    with _mock_validate_input():
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={CONF_API_KEY: "yaml-key", CONF_API_BASE: API_BASE},
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert dict(entry.data) == {
+        CONF_API_KEY: "yaml-key",
+        CONF_API_BASE: API_BASE,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
+        "future": {"preserved": [1, 2]},
+    }
+
+
 async def test_import_flow_preserves_external_data_update_during_validation(
     hass: HomeAssistant,
 ) -> None:
@@ -2655,7 +2686,9 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
 
 async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     hass: HomeAssistant,
+    freezer: Any,
 ) -> None:
+    freezer.move_to(datetime(2026, 7, 6, 18, tzinfo=UTC))
     entry = _add_mock_entry(hass)
     local_tz = ZoneInfo("America/New_York")
     repair_at = (datetime.now(UTC) - timedelta(days=1)).astimezone(local_tz)

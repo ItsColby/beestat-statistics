@@ -14,8 +14,8 @@
 - `hacs.json` and `requirements-ha-test.txt` jointly own the supported Home
   Assistant floor, currently Core `2026.8.0`, and its dependency-closed harness
   lane. `requirements-ha-current.txt` owns a second dependency-closed lane for
-  the exact installed same-month patch, currently Core `2026.8.1` with harness
-  `0.13.355`. Both hosted lanes run `pip check` after the final dependency
+  the current compatibility target, Core `2026.9.1` with harness `0.13.364`.
+  Both hosted lanes run `pip check` after the final dependency
   installation and then run the complete HA tests. Conflicts, skipped
   collection, or failing tests remain unsupported. Advance
   each requirements owner, CI label, documentation, and assertion with the
@@ -27,7 +27,10 @@
   update and cannot miss the HA lane. The HA modules import the real harness
   unconditionally so either hosted lane fails collection instead of passing
   through module-level skips when its dependencies are unavailable; discovering
-  no HA modules also fails the dependency-light selector closed.
+  no HA modules also fails the dependency-light selector closed. The selector
+  rejects empty modules, unsupported free-function tests, and nested layouts
+  that unittest discovery would otherwise omit. It reports failure when all
+  collected tests are skipped.
 - Treat `.venv/`, `.local/`, `.pytest_cache/`, and `.ruff_cache/` as local
   working state. Do not commit Home Assistant config backups, API
   keys, raw diagnostics, copied Recorder databases, Beestat cache dumps, or live
@@ -57,7 +60,8 @@
   scheduling a reload; same-account connection updates leave concurrent options
   untouched. Awaited YAML connection validation applies the same data-owner
   guard, then reconciles its declared option fields with current saved options
-  immediately before saving.
+  immediately before saving. Unknown entry-data fields are retained while
+  omitted YAML-owned mapping collections are removed.
 - The API base URL must use HTTPS and must not contain user information, a
   query, or a fragment. Validate this boundary before constructing the client
   or exposing the API key to transport. Credential-bearing requests never
@@ -91,10 +95,19 @@
   initial form and destructive confirmation retain the complete displayed
   source signature, including labels and inactive state, and return to the
   source form if that evidence changes before save.
+- Resource identities use one positive-integer parser across configuration,
+  acquisition, projections, and Recorder. Booleans, fractional numbers, and
+  nonpositive values cannot collide with valid IDs. Raw rows prefer their
+  resource-specific ID, then a valid generic alias. A saved override
+  `id` is authoritative when present; a malformed value leaves that row ignored
+  and retained rather than reinterpreting its parent thermostat as a sensor.
 - Legacy repeated override IDs follow one contract everywhere: the last row is
   effective. Runtime construction, forms, Repairs, device-conflict checks, and
   targeted option mutations all inspect or update that same row while retaining
-  unknown fields and untouched legacy rows.
+  unknown fields and untouched legacy rows. Clearing an inclusion override
+  retains a winning empty row when removing it would reactivate an older
+  duplicate. Room-sensor identity always uses its own ID, never its parent
+  thermostat ID; raw Ecobee setting tombstones also win over earlier rows.
 - The integration remains one config entry and one account-wide coordinator.
   Config subentries or multiple account entries are not justified by the
   current API/runtime ownership model and must not be introduced without a
@@ -133,7 +146,8 @@
   the selection-time entity ID for safe downgrade and local diagnostics. Resolve
   the UUID first and the source tuple second so renames and registry recreation
   do not require a Beestat config-entry recreation. An unresolved stable
-  reference is authoritative and must not fall back to mutable name matching.
+  reference is authoritative and must not fall back to mutable name matching,
+  another same-device entity, or thermostat-integrated sensor inheritance.
   Options forms resolve the reference to the current entity ID for suggested
   values without rewriting storage; a temporarily unresolved source appears
   unselected while its stored reference remains recoverable.
@@ -163,7 +177,9 @@
   mapping and rebind existing Beestat enrichment entities when a foreign source
   moves, detaches, is removed, or is restored. Reconciliation must not recreate
   the config entry or contact Beestat, may update only entities owned by the
-  current Beestat config entry, and removes both listeners on unload.
+  current Beestat config entry, and removes both listeners on unload. Relinking
+  uses stable resource identity for all owned entities, including advanced and
+  disabled entities, rather than a separate list of entity suffixes.
 - Automated stale-fallback removal is limited to devices owned only by the
   current Beestat config entry, carrying only Beestat identifiers and no foreign
   connections. A mixed or shared registry record must fail closed.
@@ -196,6 +212,11 @@
   is owned by `coordinator.py` and `tests/test_coordinator_helpers.py`;
   `tests/test_runtime_ha.py` owns the exact-Core scheduler/lifecycle cases, but
   their presence is not executed dependency-closure evidence.
+- Cloud acquisitions serialize per config entry. Manual refreshes, alert
+  dismissals, and all Recorder imports run in entry-owned tasks; unload cancels
+  active and queued work before stale results can publish or write.
+  Each sensor/window is acquired once regardless of its enabled statistic count.
+  The legacy filter-helper listener follows current normalized mappings.
 - Cloud-stale state derives from the configured acquisition cadence: the larger
   of the two-hour minimum or one poll interval plus 60 minutes of source grace.
   The same computed threshold owns both entity state and the I/O-free projection
@@ -216,7 +237,7 @@
   earlier same-day runtime to the new filter, while still counting unambiguous
   later-date runtime. The coordinator then reconciles the timestamp against a bounded
   raw-runtime read, rounds to the nearest 5-minute source boundary, stores that
-  day's fan-runtime baseline, and retries every 15 minutes for six hours while
+  day’s fan-runtime baseline, and retries every 15 minutes for six hours while
   source data is not ready. Normal coordinator refreshes continue attempts after
   that fast-retry window. Same-day forecasts subtract the finalized baseline. A
   historical repair accepts an offsetless local timestamp only when it resolves
@@ -265,8 +286,9 @@
   cumulative Recorder math are implementation invariants, not preferences.
 - Recorder normalization admits only finite numeric values. Derived means,
   cumulative totals, and Recorder seed offsets must also remain representable;
-  an invalid cumulative contribution ends that series before any invalid row is
-  written. Normalization produces at most one summary row per thermostat and
+  an overflowing or negative runtime/degree-day contribution ends that series
+  before any invalid row is written. Point timestamps whose timezone conversion
+  exceeds the representable datetime range are omitted. Normalization produces at most one summary row per thermostat and
   local date. If a response repeats that
   identity, its last row is effective; a winning deletion omits it. Runtime
   points use their source row ID, or resource ID plus timestamp fallback, under

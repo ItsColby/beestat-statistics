@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from math import isfinite
 from typing import Any
 
-from .config_rows import effective_override_items
+from .config_rows import effective_override_items, override_id, positive_resource_id
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
@@ -22,7 +22,6 @@ from .const import (
     CONF_FILTER_LIFETIME_RUNTIME_HOURS,
     CONF_FILTER_MAX_AGE_DAYS,
     CONF_FILTER_NOTICE_DAYS,
-    CONF_ID,
     CONF_INCLUDE_AIR_QUALITY,
     CONF_INCLUDE_CO2,
     CONF_INCLUDE_TEMPERATURE,
@@ -398,17 +397,9 @@ def configured_mapping_device_conflicts(
         (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS, "sensor"),
     ):
         claims_by_device: dict[str, list[int]] = {}
-        items = sorted(
-            _override_map(config_data.get(key)).values(),
-            key=lambda item: (
-                _row_int(item, CONF_ID, "sensor_id", "thermostat_id") or -1
-            ),
-        )
-        for item in items:
+        items = _override_map(config_data.get(key))
+        for resource_id, item in sorted(items.items()):
             if _is_disabled(item):
-                continue
-            resource_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
-            if resource_id is None:
                 continue
             device_ids = _explicit_registry_device_ids(
                 entity_registry,
@@ -475,7 +466,7 @@ def _override_entity_domain_errors(
     for item in effective_override_items(overrides):
         if _is_disabled(item):
             continue
-        item_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
+        item_id = override_id(item)
         item_label = f"{item_type} {item_id}" if item_id is not None else item_type
         for field, expected_domain in domains:
             entity_id = _string_or_none(item.get(field))
@@ -611,14 +602,22 @@ def _thermostat_from_row(
             minimum=0,
             maximum=MAX_FILTER_NOTICE_DAYS,
         ),
-        climate_entity_id=_string_or_none(override.get(CONF_CLIMATE_ENTITY_ID))
-        or (local.climate_entity_id if local else None),
-        temperature_entity_id=_string_or_none(override.get(CONF_TEMPERATURE_ENTITY_ID))
-        or (local.temperature_entity_id if local else None),
-        occupancy_entity_id=_string_or_none(override.get(CONF_OCCUPANCY_ENTITY_ID))
-        or (local.occupancy_entity_id if local else None),
-        motion_entity_id=_string_or_none(override.get(CONF_MOTION_ENTITY_ID))
-        or (local.motion_entity_id if local else None),
+        climate_entity_id=_mapped_entity_id(
+            override, CONF_CLIMATE_ENTITY_ID, local.climate_entity_id if local else None
+        ),
+        temperature_entity_id=_mapped_entity_id(
+            override,
+            CONF_TEMPERATURE_ENTITY_ID,
+            local.temperature_entity_id if local else None,
+        ),
+        occupancy_entity_id=_mapped_entity_id(
+            override,
+            CONF_OCCUPANCY_ENTITY_ID,
+            local.occupancy_entity_id if local else None,
+        ),
+        motion_entity_id=_mapped_entity_id(
+            override, CONF_MOTION_ENTITY_ID, local.motion_entity_id if local else None
+        ),
         device_id=local.device_id if local else None,
     )
 
@@ -785,12 +784,15 @@ def _sensor_from_row(
                 row, _VOC_CAPABILITIES, fallback_field="voc_concentration"
             ),
         ),
-        temperature_entity_id=_string_or_none(override.get(CONF_TEMPERATURE_ENTITY_ID))
-        or temperature_entity_id,
-        occupancy_entity_id=_string_or_none(override.get(CONF_OCCUPANCY_ENTITY_ID))
-        or occupancy_entity_id,
-        motion_entity_id=_string_or_none(override.get(CONF_MOTION_ENTITY_ID))
-        or motion_entity_id,
+        temperature_entity_id=_mapped_entity_id(
+            override, CONF_TEMPERATURE_ENTITY_ID, temperature_entity_id
+        ),
+        occupancy_entity_id=_mapped_entity_id(
+            override, CONF_OCCUPANCY_ENTITY_ID, occupancy_entity_id
+        ),
+        motion_entity_id=_mapped_entity_id(
+            override, CONF_MOTION_ENTITY_ID, motion_entity_id
+        ),
         device_id=device_id,
     )
 
@@ -1171,11 +1173,22 @@ def _filter_changed_entity_id(
 def _override_map(value: Any) -> dict[int, dict[str, Any]]:
     overrides: dict[int, dict[str, Any]] = {}
     for item in effective_override_items(value):
-        item_id = _row_int(item, CONF_ID, "sensor_id", "thermostat_id")
+        item_id = override_id(item)
         if item_id is None:
             continue
         overrides[item_id] = dict(item)
     return overrides
+
+
+def _mapped_entity_id(
+    override: Mapping[str, Any], field: str, fallback: str | None
+) -> str | None:
+    """Keep an unresolved stable reference authoritative over device fallbacks."""
+
+    explicit = _string_or_none(override.get(field))
+    if entity_reference_field(field) in override:
+        return explicit
+    return explicit or fallback
 
 
 def _mapping_device_conflicts_for_hass(
@@ -1330,13 +1343,8 @@ def _title_from_slug(value: str) -> str:
 
 def _row_int(row: dict[str, Any], *fields: str) -> int | None:
     for field in fields:
-        value = row.get(field)
-        if value in (None, ""):
-            continue
-        try:
-            return int(value)
-        except OverflowError, TypeError, ValueError:
-            continue
+        if (value := positive_resource_id(row.get(field))) is not None:
+            return value
     return None
 
 

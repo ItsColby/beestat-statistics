@@ -66,6 +66,16 @@ class StatisticsBuilderTest(unittest.TestCase):
     def test_runtime_statistics_are_cumulative_by_local_day(self) -> None:
         rows = [
             {
+                "thermostat_id": True,
+                "date": "2026-07-03",
+                "sum_compressor_cool_1": 9999,
+            },
+            {
+                "thermostat_id": 1.5,
+                "date": "2026-07-04",
+                "sum_compressor_cool_1": 9999,
+            },
+            {
                 "thermostat_id": float("inf"),
                 "date": "2026-07-01",
                 "sum_compressor_cool_1": 9999,
@@ -126,14 +136,14 @@ class StatisticsBuilderTest(unittest.TestCase):
                 "thermostat_id": 1,
                 "date": "2026-07-01",
                 "sum_compressor_cool_1": 3600,
-                "heating_degree_days": 1,
+                "sum_heating_degree_days": 1,
                 "avg_indoor_humidity": 45,
             },
             {
                 "thermostat_id": 1,
                 "date": "2026-07-01",
                 "sum_compressor_cool_1": 7200,
-                "heating_degree_days": "Infinity",
+                "sum_heating_degree_days": "Infinity",
                 "avg_indoor_humidity": "NaN",
             },
             {
@@ -203,6 +213,11 @@ class StatisticsBuilderTest(unittest.TestCase):
                 {"sensor_id": 10, "timestamp": "not-a-timestamp", "temperature": 120},
                 {
                     "sensor_id": 10,
+                    "timestamp": "2026-07-01T06:30:00Z",
+                    "temperature": True,
+                },
+                {
+                    "sensor_id": 10,
                     "timestamp": "2026-07-02T05:30:00Z",
                     "temperature": "NaN",
                 },
@@ -266,6 +281,82 @@ class StatisticsBuilderTest(unittest.TestCase):
                 },
             ],
         )
+
+    def test_unrepresentable_local_timestamps_do_not_abort_valid_points(self) -> None:
+        """UTC-to-local underflow must reject only the malformed source point."""
+
+        rows = [
+            {
+                "timestamp": "0001-01-01T00:00:00Z",
+                "temperature": 999,
+                "setpoint_heat": 999,
+            },
+            {
+                "timestamp": "2026-07-01T12:00:00Z",
+                "temperature": 72,
+                "setpoint_heat": 68,
+            },
+        ]
+        room = statistics_builder.build_sensor_statistics(
+            {10: rows}, self.local_tz, self.config
+        )
+        thermostat = statistics_builder.build_thermostat_point_statistics(
+            {1: rows}, self.local_tz, self.config
+        )
+        self.assertEqual(
+            _series(room, "beestat:room_sensor_a_temperature").statistics[0]["mean"], 72
+        )
+        self.assertEqual(
+            _series(thermostat, "beestat:zone_a_heat_setpoint").statistics[0]["mean"],
+            68,
+        )
+        self.assertTrue(all(item.source_rows == 1 for item in [*room, *thermostat]))
+
+    def test_negative_cumulative_contribution_stops_only_affected_series(self) -> None:
+        """Invalid negative durations or degree days cannot reverse Recorder sums."""
+
+        rows = [
+            {
+                "thermostat_id": 1,
+                "date": f"2026-07-0{day}",
+                "sum_compressor_cool_1": -3600 if day == 2 else 3600,
+                "sum_compressor_cool_2": -1,
+                "sum_fan": 3600,
+                "sum_heating_degree_days": -1 if day == 2 else 1,
+            }
+            for day in (1, 2, 3)
+        ]
+        runtime = statistics_builder.build_runtime_statistics(
+            rows, self.local_tz, self.config
+        )
+        sums = statistics_builder.build_summary_sum_statistics(
+            rows, self.local_tz, self.config
+        )
+        self.assertEqual(
+            _series(runtime, "beestat:zone_a_cool_runtime_hours").statistics, []
+        )
+        for statistic_id in (
+            "beestat:zone_a_cool_stage_1_runtime_hours",
+            "beestat:zone_a_heating_degree_days",
+        ):
+            self.assertEqual(
+                [
+                    row["sum"]
+                    for row in _series([*runtime, *sums], statistic_id).statistics
+                ],
+                [1],
+            )
+        self.assertEqual(
+            [
+                row["sum"]
+                for row in _series(
+                    runtime, "beestat:zone_a_fan_runtime_hours"
+                ).statistics
+            ],
+            [1, 2, 3],
+        )
+        ids = statistics_builder.cumulative_statistic_ids(self.config, rows)
+        self.assertNotIn("beestat:zone_a_cool_stage_2_runtime_hours", ids)
 
     def test_runtime_breakdowns_are_emitted_only_for_observed_hardware(self) -> None:
         series = statistics_builder.build_runtime_statistics(

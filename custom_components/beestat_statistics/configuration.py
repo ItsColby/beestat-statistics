@@ -13,6 +13,7 @@ from .config_model import (
     ConfiguredThermostat,
     filter_boundary_status,
 )
+from .config_rows import positive_resource_id
 from .const import CONF_SENSORS, CONF_THERMOSTATS
 from .profile import schedule_profile_payload, schedule_profiles_by_ref
 from .thermostat_settings import ThermostatSettingsSnapshot
@@ -75,7 +76,11 @@ def _thermostat_source_details(
     rows_by_id = {
         row_id: row
         for row in thermostat_rows
-        if (row_id := _int_or_none(row.get("thermostat_id", row.get("id")))) is not None
+        if (
+            row_id := positive_resource_id(row.get("thermostat_id"))
+            or positive_resource_id(row.get("id"))
+        )
+        is not None
     }
     details: list[dict[str, Any]] = []
     for thermostat in config.thermostats:
@@ -171,13 +176,6 @@ def _text_or_none(value: Any) -> str | None:
         return None
     value = value.strip()
     return value if value else None
-
-
-def _int_or_none(value: Any) -> int | None:
-    try:
-        return int(value)
-    except OverflowError, TypeError, ValueError:
-        return None
 
 
 def _saved_overrides(

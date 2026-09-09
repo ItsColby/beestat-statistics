@@ -77,6 +77,7 @@ class BeestatSensorEntityDescription(SensorEntityDescription):
         Callable[[BeestatRuntimeDataCoordinator], dict[str, Any] | None] | None
     ) = None
     suggested_object_id: str | None = None
+    native_unit_fn: Callable[[BeestatRuntimeDataCoordinator], str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,7 +319,6 @@ def _build_entities(
     data = coordinator.data
     thermostats = data.config.thermostats if data else ()
     for thermostat in thermostats:
-        spread = data.room_temperature_spreads.get(thermostat.thermostat_id)
         entities.extend(
             BeestatSensor(
                 coordinator,
@@ -328,7 +328,6 @@ def _build_entities(
             )
             for description in _thermostat_sensor_descriptions(
                 thermostat=thermostat,
-                temperature_unit=spread.unit if spread is not None else None,
             )
         )
     return entities
@@ -444,6 +443,14 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
         return self.entity_description.value_fn(self.coordinator)
 
     @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return the unit from the same current projection as the value."""
+
+        if self.entity_description.native_unit_fn is not None:
+            return self.entity_description.native_unit_fn(self.coordinator)
+        return self.entity_description.native_unit_of_measurement
+
+    @property
     def device_info(self) -> DeviceInfo | None:
         """Return the Home Assistant device this entity belongs to."""
 
@@ -508,7 +515,6 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
 def _thermostat_sensor_descriptions(
     *,
     thermostat: ConfiguredThermostat,
-    temperature_unit: str | None = None,
 ) -> tuple[BeestatSensorEntityDescription, ...]:
     thermostat_id = thermostat.thermostat_id
     descriptions = (
@@ -663,7 +669,10 @@ def _thermostat_sensor_descriptions(
             name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
             device_class=SensorDeviceClass.TEMPERATURE_DELTA,
-            native_unit_of_measurement=temperature_unit,
+            native_unit_fn=partial(
+                _room_temperature_spread_unit,
+                thermostat_id=thermostat_id,
+            ),
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
@@ -1192,6 +1201,19 @@ def _room_temperature_spread_available(
     thermostat_id: int,
 ) -> bool:
     return _room_temperature_spread_value(coordinator, thermostat_id) is not None
+
+
+def _room_temperature_spread_unit(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> str | None:
+    data = coordinator.data
+    if (
+        data is None
+        or (projection := data.room_temperature_spreads.get(thermostat_id)) is None
+    ):
+        return None
+    return projection.unit
 
 
 def _room_temperature_spread_attributes(

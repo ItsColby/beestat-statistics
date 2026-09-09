@@ -56,6 +56,15 @@ class UrlValidationTest(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 url_validation.normalize_api_base(value)
 
+    def test_rejects_control_characters_before_url_parser_normalization(self) -> None:
+        for character in ("\x00", "\x01", "\x1b", "\x7f"):
+            for value in (
+                f"{character}https://api.example.test/",
+                f"https://api.example.test/{character}",
+            ):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    url_validation.normalize_api_base(value)
+
 
 if __name__ == "__main__":
     unittest.main()

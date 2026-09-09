@@ -73,6 +73,30 @@ class DiagnosticsTest(unittest.TestCase):
             else:
                 sys.modules[key] = module
 
+    def test_unloaded_entry_keeps_diagnostics_available_for_malformed_options(self):
+        entry = FakeEntry(
+            data={"api_key": "secret-key", "future_private": "secret-value"},
+            options={
+                "point_lookback_days": float("inf"),
+                "scan_interval_seconds": True,
+                "thermostats": [None, {"id": 1, "name": "Private Zone"}],
+                "sensors": {"private_id": "Private Room"},
+            },
+            runtime_data=None,
+        )
+        result = asyncio.run(
+            self.diagnostics.async_get_config_entry_diagnostics(object(), entry)
+        )
+        self.assertEqual(result["coordinator"]["status"], "not_loaded")
+        self.assertEqual(
+            result["entry"]["timing"],
+            {"point_lookback_days": None, "scan_interval_seconds": None},
+        )
+        self.assertEqual(result["entry"]["saved_overrides"]["thermostats"]["count"], 1)
+        self.assertEqual(result["entry"]["saved_overrides"]["sensors"]["count"], 0)
+        for private in ("secret-key", "secret-value", "Private Zone", "Private Room"):
+            self.assertNotIn(private, repr(result))
+
     def test_diagnostics_redact_local_mapping_identifiers(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1001,

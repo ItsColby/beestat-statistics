@@ -7,14 +7,17 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $wslInput = $repoRoot -replace "\\", "/"
-$linuxRoot = (& wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslInput).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $linuxRoot) { throw "Could not map the repository into Ubuntu-24.04." }
+$linuxRootOutput = & wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslInput
+if ($LASTEXITCODE -ne 0 -or -not $linuxRootOutput) { throw "Could not map the repository into Ubuntu-24.04." }
+$linuxRoot = ($linuxRootOutput -join "`n").Trim()
 
-$gitDir = (& git -C $repoRoot rev-parse --path-format=absolute --git-dir).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $gitDir) { throw "Could not resolve the repository Git directory." }
+$gitDirOutput = & git -C $repoRoot rev-parse --path-format=absolute --git-dir
+if ($LASTEXITCODE -ne 0 -or -not $gitDirOutput) { throw "Could not resolve the repository Git directory." }
+$gitDir = ($gitDirOutput -join "`n").Trim()
 $wslGitInput = $gitDir -replace "\\", "/"
-$linuxGitDir = (& wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslGitInput).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $linuxGitDir) { throw "Could not map the repository Git directory into Ubuntu-24.04." }
+$linuxGitDirOutput = & wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslGitInput
+if ($LASTEXITCODE -ne 0 -or -not $linuxGitDirOutput) { throw "Could not map the repository Git directory into Ubuntu-24.04." }
+$linuxGitDir = ($linuxGitDirOutput -join "`n").Trim()
 
 & wsl.exe -d Ubuntu-24.04 -- bash "$linuxRoot/scripts/verify-release-local.sh" $Mode container $linuxGitDir
 if ($LASTEXITCODE -ne 0) { throw "Local release validation failed with exit code $LASTEXITCODE." }

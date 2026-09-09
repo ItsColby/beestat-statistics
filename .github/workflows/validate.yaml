@@ -44,7 +44,7 @@ jobs:
         run: bash scripts/verify-release-local.sh minimum native
 
   home_assistant_current:
-    name: Home Assistant current-patch integration tests (Core 2026.8.1)
+    name: Home Assistant current integration tests (Core 2026.9.1)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -65,7 +65,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # zizmor: ignore[stale-action-refs] upstream publishes only from master
+      - name: Run product-owned Hassfest validation
+        run: bash scripts/verify-release-local.sh release native
 
   hacs:
     name: HACS

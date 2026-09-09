@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import os
 import re
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_FILE_BYTES = 8 * 1024 * 1024
 ALLOWED_EMAILS = {"noreply@github.com"}
 ALLOWED_EMAIL_DOMAINS = {
     "example.com",
@@ -163,11 +167,15 @@ def _candidate_files(root: Path = ROOT) -> list[Path]:
         ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
         check=False,
         capture_output=True,
+        timeout=30,
     )
     is_repository_root = (
         top_level.returncode == 0
-        and Path(top_level.stdout.decode("utf-8").strip()).resolve() == root.resolve()
+        and Path(os.fsdecode(top_level.stdout).rstrip("\r\n")).resolve()
+        == root.resolve()
     )
+    if top_level.returncode != 0 and (root / ".git").exists():
+        raise RuntimeError("Unable to inspect the repository")
     tracked = (
         subprocess.run(
             [
@@ -182,23 +190,38 @@ def _candidate_files(root: Path = ROOT) -> list[Path]:
             ],
             check=False,
             capture_output=True,
+            timeout=30,
         )
         if is_repository_root
         else None
     )
-    if tracked is not None and tracked.returncode == 0:
-        paths = [
-            root / raw.decode("utf-8") for raw in tracked.stdout.split(b"\0") if raw
-        ]
+    if tracked is not None:
+        if tracked.returncode != 0:
+            raise RuntimeError("Unable to enumerate repository files")
+        paths = [root / os.fsdecode(raw) for raw in tracked.stdout.split(b"\0") if raw]
     else:
-        paths = [
-            path
-            for path in root.rglob("*")
-            if not IGNORED_DIRECTORY_NAMES.intersection(path.parts)
-            and not any(part.endswith(".egg-info") for part in path.parts)
-        ]
+        paths = list(_export_files(root))
 
-    return sorted(path for path in paths if path.is_file() and not path.is_symlink())
+    return sorted({path for path in paths if path.exists() or path.is_symlink()})
+
+
+def _export_files(root: Path) -> Iterator[Path]:
+    """Walk an export without following links or descending into generated trees."""
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for directory, directories, filenames in os.walk(root, onerror=raise_walk_error):
+        parent = Path(directory)
+        for name in directories[:]:
+            path = parent / name
+            if name in IGNORED_DIRECTORY_NAMES or name.endswith(".egg-info"):
+                directories.remove(name)
+            elif path.is_symlink() or path.is_junction():
+                directories.remove(name)
+                yield path
+        for name in filenames:
+            yield parent / name
 
 
 def _text_failures(text: str) -> set[str]:
@@ -215,34 +238,75 @@ def _text_failures(text: str) -> set[str]:
     return failures
 
 
+def _content_failures(relative_posix: str, raw: bytes) -> set[str]:
+    """Inspect UTF-8 text or require an exact reviewed binary hash."""
+
+    is_binary = b"\0" in raw
+    try:
+        text = "" if is_binary else raw.decode("utf-8")
+    except UnicodeDecodeError:
+        is_binary = True
+    if is_binary:
+        if (
+            REVIEWED_BINARY_SHA256.get(relative_posix)
+            != hashlib.sha256(raw).hexdigest()
+        ):
+            return {"unreviewed binary content"}
+        return set()
+    return _text_failures(text)
+
+
 def run_guard(root: Path = ROOT) -> tuple[int, list[str]]:
     files = _candidate_files(root)
     failures: set[str] = set()
     for path in files:
         relative = path.relative_to(root)
         relative_posix = relative.as_posix()
-        raw = path.read_bytes()
-        is_binary = b"\0" in raw
-        try:
-            text = "" if is_binary else raw.decode("utf-8")
-        except UnicodeDecodeError:
-            is_binary = True
-
-        if is_binary:
-            expected_hash = REVIEWED_BINARY_SHA256.get(relative_posix)
-            if expected_hash != hashlib.sha256(raw).hexdigest():
-                failures.add(f"{relative}: unreviewed binary content")
+        path_failures = _text_failures(relative_posix)
+        label_path = (
+            "<sensitive path>" if path_failures else ascii(relative_posix)[1:-1]
+        )
+        for label in path_failures:
+            failures.add(f"{label_path}: {label} in filename")
+        relative_parts = relative.parts
+        if any(
+            (candidate := root.joinpath(*relative_parts[:index])).is_symlink()
+            or candidate.is_junction()
+            for index in range(1, len(relative_parts) + 1)
+        ):
+            failures.add(f"{label_path}: symbolic link requires review")
             continue
-
-        for label in _text_failures(text):
-            failures.add(f"{relative}: {label}")
+        if not path.is_file():
+            failures.add(f"{label_path}: non-regular file requires review")
+            continue
+        try:
+            with path.open("rb") as handle:
+                raw = handle.read(MAX_FILE_BYTES + 1)
+        except OSError:
+            failures.add(f"{label_path}: unreadable file")
+            continue
+        if len(raw) > MAX_FILE_BYTES:
+            failures.add(f"{label_path}: file exceeds review size limit")
+            continue
+        for label in _content_failures(relative_posix, raw):
+            failures.add(f"{label_path}: {label}")
+    if not files:
+        failures.add("No repository files were discovered")
     return len(files), sorted(failures)
 
 
-def main() -> int:
-    file_count, failures = run_guard()
+def main(argv: list[str] | None = None) -> int:
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    try:
+        file_count, failures = run_guard()
+    except OSError, RuntimeError, subprocess.TimeoutExpired:
+        print(
+            "Public safety guard could not enumerate repository files.", file=sys.stderr
+        )
+        return 2
     if failures:
-        raise SystemExit("Public safety guard failed:\n" + "\n".join(failures))
+        print("Public safety guard failed:\n" + "\n".join(failures), file=sys.stderr)
+        return 1
     print(f"Public safety guard passed for {file_count} repository files.")
     return 0
 

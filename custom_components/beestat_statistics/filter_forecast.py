@@ -68,7 +68,7 @@ def build_filter_forecast(
         ),
     )
     max_age_due_date = (
-        changed_date + timedelta(days=thermostat.filter_max_age_days)
+        _date_after_days(changed_date, thermostat.filter_max_age_days)
         if changed_date is not None
         else None
     )
@@ -134,14 +134,26 @@ def _runtime_due_date(
     *,
     threshold_date: date | None,
 ) -> date | None:
-    if remaining_runtime_hours == 0 and threshold_date is not None:
-        return threshold_date
+    if remaining_runtime_hours == 0:
+        return threshold_date or today
     if remaining_runtime_hours is None or recent_runtime_hours_per_day is None:
         return None
     if recent_runtime_hours_per_day <= 0:
         return None
-    days_until_due = int(remaining_runtime_hours / recent_runtime_hours_per_day)
-    return today + timedelta(days=max(days_until_due, 0))
+    try:
+        days_until_due = int(remaining_runtime_hours / recent_runtime_hours_per_day)
+    except OverflowError, ValueError:
+        return None
+    return _date_after_days(today, max(days_until_due, 0))
+
+
+def _date_after_days(start: date, days: int) -> date | None:
+    """Leave an unrepresentable forecast unknown while retaining other limits."""
+
+    try:
+        return start + timedelta(days=days)
+    except OverflowError:
+        return None
 
 
 def _earliest_date(*values: date | None) -> date | None:

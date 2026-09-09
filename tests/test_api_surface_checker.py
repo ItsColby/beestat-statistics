@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
+import json
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import URLError
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_beestat_api_surface.py"
@@ -136,6 +143,168 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
                 "https://example.com/credential-target",
             )
         )
+
+    def _upstream_fixture(self):
+        content = "<?php\n"
+        raw = content.encode()
+        blob_sha = hashlib.sha1(
+            f"blob {len(raw)}\0".encode() + raw, usedforsecurity=False
+        ).hexdigest()
+        commit = {
+            "sha": "a" * 40,
+            "commit": {
+                "tree": {"sha": "b" * 40},
+                "committer": {"date": "2026-01-01T00:00:00Z"},
+                "message": "Example change",
+            },
+        }
+        tree = {
+            "truncated": False,
+            "tree": [
+                {"type": "blob", "path": path, "sha": blob_sha}
+                for path in self.checker.WATCH_PATHS
+            ],
+        }
+        return commit, tree, content
+
+    def test_fetch_pins_tree_and_content_to_one_commit(self) -> None:
+        commit, tree, content = self._upstream_fixture()
+        with (
+            patch.object(
+                self.checker, "_request_json", side_effect=[commit, tree]
+            ) as req,
+            patch.object(self.checker, "_request_text", return_value=content) as raw,
+        ):
+            surface = self.checker.fetch_surface()
+        self.checker.validate_surface(surface)
+        self.assertEqual(
+            req.call_args.args[0],
+            f"{self.checker.GITHUB_API_ROOT}/git/trees/{'b' * 40}?recursive=1",
+        )
+        self.assertEqual(len(raw.call_args_list), len(self.checker.WATCH_PATHS))
+        for call in raw.call_args_list:
+            self.assertIn(f"/{'a' * 40}/api/", call.args[0])
+
+    def test_fetch_rejects_truncated_missing_or_mismatched_blobs(self) -> None:
+        for scenario in ("truncated", "missing", "mismatch"):
+            with self.subTest(scenario=scenario):
+                commit, tree, content = self._upstream_fixture()
+                if scenario == "truncated":
+                    tree["truncated"] = True
+                elif scenario == "missing":
+                    tree["tree"] = []
+                else:
+                    content = "unexpected"
+                with (
+                    patch.object(
+                        self.checker, "_request_json", side_effect=[commit, tree]
+                    ),
+                    patch.object(self.checker, "_request_text", return_value=content),
+                    self.assertRaises((ValueError, KeyError)),
+                ):
+                    self.checker.fetch_surface()
+
+    def test_snapshot_inventory_and_schema_fail_closed(self) -> None:
+        baseline = json.loads(self.checker.DEFAULT_SNAPSHOT.read_text(encoding="utf-8"))
+        self.checker.validate_surface(baseline)
+        invalid = [
+            [],
+            {},
+            {**baseline, "watched_files": {}},
+            {**baseline, "watch_paths": []},
+        ]
+        for snapshot in invalid:
+            with self.subTest(snapshot=snapshot), self.assertRaises(ValueError):
+                self.checker.validate_surface(snapshot)
+
+    def test_invalid_local_snapshot_does_not_make_network_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot.json"
+            snapshot.write_text("not json", encoding="utf-8")
+            with (
+                patch.object(self.checker, "fetch_surface") as fetch,
+                redirect_stderr(io.StringIO()) as output,
+            ):
+                self.assertEqual(2, self.checker.main(["--snapshot", str(snapshot)]))
+            fetch.assert_not_called()
+            self.assertIn("invalid", output.getvalue())
+
+    def test_network_failure_does_not_echo_exception_payload(self) -> None:
+        with (
+            patch.object(
+                self.checker, "fetch_surface", side_effect=URLError("private")
+            ),
+            redirect_stderr(io.StringIO()) as output,
+        ):
+            self.assertEqual(2, self.checker.main([]))
+        self.assertNotIn("private", output.getvalue())
+        self.assertIn("URLError", output.getvalue())
+
+    def test_atomic_write_preserves_original_if_replace_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot.json"
+            snapshot.write_text("original", encoding="utf-8")
+            with (
+                patch.object(Path, "replace", side_effect=OSError),
+                self.assertRaises(OSError),
+            ):
+                self.checker._write_snapshot(snapshot, {})
+            self.assertEqual("original", snapshot.read_text(encoding="utf-8"))
+            self.assertEqual([snapshot], list(Path(directory).iterdir()))
+
+    def test_request_limits_size_and_token_destination(self) -> None:
+        for host in ("api.github.com", "raw.githubusercontent.com"):
+            with (
+                self.subTest(host=host),
+                patch.dict(self.checker.os.environ, {"GITHUB_TOKEN": "example-token"}),
+                patch.object(
+                    self.checker._URL_OPENER, "open", return_value=io.BytesIO(b"ok")
+                ) as opener,
+            ):
+                self.assertEqual(
+                    "ok", self.checker._request_text(f"https://{host}/example")
+                )
+                request = opener.call_args.args[0]
+                self.assertEqual(
+                    host == "api.github.com", request.has_header("Authorization")
+                )
+                self.assertEqual(30, opener.call_args.kwargs["timeout"])
+        with (
+            patch.object(self.checker, "MAX_RESPONSE_BYTES", 2),
+            patch.object(
+                self.checker._URL_OPENER, "open", return_value=io.BytesIO(b"long")
+            ),
+            self.assertRaisesRegex(ValueError, "size limit"),
+        ):
+            self.checker._request_text("https://api.github.com/example")
+
+    def test_diff_reports_policy_changes_without_upstream_values(self) -> None:
+        expected = {"integration_decisions": [{"reason": "before"}]}
+        current = {"integration_decisions": [{"reason": "private"}]}
+        self.assertEqual(
+            ["integration_decisions changed"],
+            self.checker.diff_surface(expected, current),
+        )
+
+    def test_cli_reports_match_drift_and_update(self) -> None:
+        baseline = json.loads(self.checker.DEFAULT_SNAPSHOT.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "snapshot.json"
+            self.checker._write_snapshot(snapshot, baseline)
+            with (
+                patch.object(self.checker, "fetch_surface", return_value=baseline),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(0, self.checker.main(["--snapshot", str(snapshot)]))
+                baseline["watched_files"]["api/index.php"]["blob_sha"] = "c" * 40
+                self.assertEqual(1, self.checker.main(["--snapshot", str(snapshot)]))
+                self.assertEqual(
+                    0, self.checker.main(["--snapshot", str(snapshot), "--update"])
+                )
+                self.assertEqual(
+                    baseline, json.loads(snapshot.read_text(encoding="utf-8"))
+                )
 
 
 if __name__ == "__main__":

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import io
+import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.check_public_safety import (
     ROOT,
+    _candidate_files,
     _text_failures,
+    main,
     run_guard,
 )
 
@@ -130,6 +136,105 @@ class PublicSafetyGuardTests(unittest.TestCase):
             file_count, failures = run_guard(root)
         self.assertEqual(1, file_count)
         self.assertEqual([], failures)
+
+    def test_export_inside_generated_parent_is_still_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".local" / "export"
+            root.mkdir(parents=True)
+            (root / "README.md").write_text("Safe text", encoding="utf-8")
+            self.assertEqual((1, []), run_guard(root))
+
+    def test_sensitive_filename_is_rejected_without_echoing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            filename = "ghp_" + ("a" * 36)
+            (root / filename).write_text("Safe text", encoding="utf-8")
+            count, failures = run_guard(root)
+            self.assertEqual(1, count)
+            self.assertEqual(["<sensitive path>: GitHub token in filename"], failures)
+            self.assertNotIn(filename, str(failures))
+
+    def test_git_enumeration_failure_cannot_fall_back_to_filtered_export(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch(
+                    "scripts.check_public_safety.subprocess.run",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, stdout=str(root).encode()),
+                        subprocess.CompletedProcess([], 1),
+                    ],
+                ),
+                self.assertRaisesRegex(RuntimeError, "enumerate"),
+            ):
+                _candidate_files(root)
+
+    def test_git_scans_tracked_ignored_files_and_untracked_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for command in (["init", "-q"],):
+                subprocess.run(
+                    ["git", "-C", str(root), *command], check=True, capture_output=True
+                )
+            (root / ".gitignore").write_text("private.txt\n", encoding="utf-8")
+            private = root / "private.txt"
+            private.write_text("ghp_" + "a" * 36, encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "-f", "private.txt"],
+                check=True,
+                capture_output=True,
+            )
+            (root / "new.txt").write_text("Safe text", encoding="utf-8")
+            count, failures = run_guard(root)
+            self.assertEqual(3, count)
+            self.assertEqual(["private.txt: GitHub token"], failures)
+
+    def test_guard_reports_symlinks_instead_of_reading_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.txt"
+            target.write_text("ghp_" + "a" * 36, encoding="utf-8")
+            link = root / "link.txt"
+            try:
+                link.symlink_to(target)
+            except OSError as err:
+                self.skipTest(f"Symlink creation unavailable: {type(err).__name__}")
+            with patch(
+                "scripts.check_public_safety._candidate_files", return_value=[link]
+            ):
+                count, failures = run_guard(root)
+            self.assertEqual(1, count)
+            self.assertEqual(["link.txt: symbolic link requires review"], failures)
+
+    def test_empty_export_and_unreadable_file_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(
+                (0, ["No repository files were discovered"]), run_guard(root)
+            )
+            path = root / "README.md"
+            path.write_text("Safe text", encoding="utf-8")
+            with patch.object(Path, "open", side_effect=PermissionError):
+                self.assertEqual((1, ["README.md: unreadable file"]), run_guard(root))
+
+    def test_guard_rejects_oversized_files_without_loading_them_fully(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "large.txt").write_text("long", encoding="utf-8")
+            with patch("scripts.check_public_safety.MAX_FILE_BYTES", 2):
+                self.assertEqual(
+                    (1, ["large.txt: file exceeds review size limit"]), run_guard(root)
+                )
+
+    def test_cli_enumeration_errors_have_nonzero_sanitized_output(self) -> None:
+        with (
+            patch(
+                "scripts.check_public_safety.run_guard", side_effect=OSError("private")
+            ),
+            redirect_stderr(io.StringIO()) as output,
+        ):
+            self.assertEqual(2, main([]))
+        self.assertNotIn("private", output.getvalue())
 
 
 if __name__ == "__main__":
