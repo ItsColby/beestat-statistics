@@ -370,6 +370,25 @@ class SummaryImportPlan:
     overlap_days: int | None
     fallback_reason: str | None
 
+    @classmethod
+    def full(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        fallback_reason: str,
+    ) -> SummaryImportPlan:
+        """Build an unseeded complete baseline with its existing fallback reason."""
+
+        return cls(
+            rows=rows,
+            seeds={},
+            mode="full",
+            window_start=None,
+            window_end=None,
+            overlap_days=None,
+            fallback_reason=fallback_reason,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedImport:
@@ -643,38 +662,23 @@ class BeestatStatisticsImporter:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="forced_full_baseline",
             )
 
         statistic_ids = cumulative_statistic_ids(runtime_data.config, cached_rows)
         if not statistic_ids:
-            return SummaryImportPlan(
-                rows=cached_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                cached_rows,
                 fallback_reason="no_cumulative_statistics",
             )
 
         latest_by_id = await self._async_latest_cumulative_starts(statistic_ids)
         if len(latest_by_id) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="missing_latest_recorder_statistics",
             )
 
@@ -691,13 +695,8 @@ class BeestatStatisticsImporter:
         )
         if window_start > window_end:
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="empty_summary_window",
             )
 
@@ -709,13 +708,8 @@ class BeestatStatisticsImporter:
         )
         if len(seeds) != len(statistic_ids):
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="missing_prior_recorder_seed",
             )
 
@@ -731,13 +725,8 @@ class BeestatStatisticsImporter:
                 "Falling back to full Beestat summary baseline after windowed read failed"
             )
             full_rows = await self._async_full_summary_rows(runtime_data)
-            return SummaryImportPlan(
-                rows=full_rows,
-                seeds={},
-                mode="full",
-                window_start=None,
-                window_end=None,
-                overlap_days=None,
+            return SummaryImportPlan.full(
+                full_rows,
                 fallback_reason="summary_window_read_failed",
             )
 
@@ -1724,23 +1713,19 @@ def _mapped_source_device_ids(data: BeestatRuntimeData | None) -> set[str]:
 
 
 @callback
-def _room_temperature_entity_ids(data: BeestatRuntimeData | None) -> tuple[str, ...]:
+def _room_temperature_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
     """Return mapped temperature sources used by profile-aware projections."""
 
     if data is None:
-        return ()
-    return tuple(
-        sorted(
-            {
-                entity_id
-                for entity_id in (
-                    *(item.temperature_entity_id for item in data.config.thermostats),
-                    *(item.temperature_entity_id for item in data.config.sensors),
-                )
-                if entity_id is not None
-            }
+        return set()
+    return {
+        entity_id
+        for entity_id in (
+            *(item.temperature_entity_id for item in data.config.thermostats),
+            *(item.temperature_entity_id for item in data.config.sensors),
         )
-    )
+        if entity_id is not None
+    }
 
 
 @callback
@@ -1912,16 +1897,14 @@ def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:
     return mappings
 
 
-def _filter_changed_entity_ids(data: BeestatRuntimeData | None) -> list[str]:
+def _filter_changed_entity_ids(data: BeestatRuntimeData | None) -> set[str]:
     if data is None:
-        return []
-    return sorted(
-        {
-            thermostat.filter_changed_entity_id
-            for thermostat in data.config.thermostats
-            if thermostat.filter_changed_entity_id is not None
-        }
-    )
+        return set()
+    return {
+        thermostat.filter_changed_entity_id
+        for thermostat in data.config.thermostats
+        if thermostat.filter_changed_entity_id is not None
+    }
 
 
 @callback

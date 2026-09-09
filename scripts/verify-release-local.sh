@@ -79,14 +79,14 @@ run_actionlint() (
 run_unit() {
   run_actionlint
   run_python '
-    python -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0" &&
-    zizmor --strict-collection --persona auditor . &&
-    shellcheck scripts/verify-release-local.sh &&
-    python -m ruff format --check custom_components tests scripts &&
-    python -m ruff check custom_components tests scripts &&
-    python scripts/run_dependency_light_tests.py &&
-    python -m compileall -q custom_components/beestat_statistics tests scripts &&
-    python scripts/check_public_safety.py &&
+    python -m pip install "ruff==0.16.2" "shellcheck-py==0.11.0.1" "zizmor==1.29.0"
+    zizmor --strict-collection --persona auditor .
+    shellcheck scripts/verify-release-local.sh
+    python -m ruff format --check custom_components tests scripts
+    python -m ruff check custom_components tests scripts
+    python scripts/run_dependency_light_tests.py
+    python -m compileall -q custom_components/beestat_statistics tests scripts
+    python scripts/check_public_safety.py
     python - <<"PY"
 import json
 from pathlib import Path
@@ -102,19 +102,19 @@ PY
 }
 run_minimum() {
   run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.354" &&
-    python -m pip install --upgrade -r requirements-ha-test.txt &&
-    python -m pip install "mypy==2.3.0" &&
-    python -m pip check &&
-    python -m mypy --strict custom_components/beestat_statistics &&
+    python -m pip install "pytest-homeassistant-custom-component==0.13.354"
+    python -m pip install --upgrade -r requirements-ha-test.txt
+    python -m pip install "mypy==2.3.0"
+    python -m pip check
+    python -m mypy --strict custom_components/beestat_statistics
     pytest tests -q
   '
 }
 run_current() {
   run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.364" &&
-    python -m pip install --upgrade -r requirements-ha-current.txt &&
-    python -m pip check &&
+    python -m pip install "pytest-homeassistant-custom-component==0.13.364"
+    python -m pip install --upgrade -r requirements-ha-current.txt
+    python -m pip check
     pytest tests -q
   '
 }

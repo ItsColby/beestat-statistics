@@ -67,17 +67,11 @@ def cumulative_statistic_ids(
         _summary_rows_by_thermostat(summary_rows) if summary_rows is not None else {}
     )
     for thermostat in config.thermostats:
-        statistic_ids.extend(
-            f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
-            for runtime_slug, _runtime_label, _fields in RUNTIME_FIELD_GROUPS
-        )
         thermostat_rows = rows_by_thermostat.get(thermostat.thermostat_id, [])
         statistic_ids.extend(
             f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
-            for runtime_slug, _runtime_label, field in DETAILED_RUNTIME_FIELDS
-            if any(
-                (_as_float(row.get(field)) or 0.0) > 0
-                for _local_day, row in thermostat_rows
+            for runtime_slug, _runtime_label, _fields in _runtime_fields(
+                thermostat_rows
             )
         )
         statistic_ids.extend(
@@ -154,7 +148,7 @@ def build_runtime_statistics(
         rows = rows_by_thermostat.get(thermostat.thermostat_id, [])
         if not rows:
             continue
-        for runtime_slug, runtime_label, fields in RUNTIME_FIELD_GROUPS:
+        for runtime_slug, runtime_label, fields in _runtime_fields(rows):
             series.append(
                 _build_cumulative_runtime_series(
                     thermostat_slug=thermostat.slug,
@@ -166,21 +160,22 @@ def build_runtime_statistics(
                     local_tz=local_tz,
                 )
             )
-        for runtime_slug, runtime_label, field in DETAILED_RUNTIME_FIELDS:
-            if not any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows):
-                continue
-            series.append(
-                _build_cumulative_runtime_series(
-                    thermostat_slug=thermostat.slug,
-                    thermostat_name=thermostat.name,
-                    runtime_slug=runtime_slug,
-                    runtime_label=runtime_label,
-                    fields=(field,),
-                    rows=rows,
-                    local_tz=local_tz,
-                )
-            )
     return series
+
+
+def _runtime_fields(
+    rows: list[tuple[date, dict[str, Any]]],
+) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Select the same ordered runtime groups for construction and Recorder seeding."""
+
+    return (
+        *RUNTIME_FIELD_GROUPS,
+        *(
+            (slug, label, (field,))
+            for slug, label, field in DETAILED_RUNTIME_FIELDS
+            if any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows)
+        ),
+    )
 
 
 def _build_cumulative_runtime_series(
@@ -357,20 +352,7 @@ def build_thermostat_point_statistics(
                 source_count += 1
                 grouped.setdefault(local_day, []).append(value)
 
-            stats: list[dict[str, Any]] = []
-            for local_day in sorted(grouped):
-                values = grouped[local_day]
-                mean = _finite_mean(values)
-                if mean is None:
-                    continue
-                stats.append(
-                    {
-                        "start": _local_midnight(local_day, local_tz),
-                        "mean": round(mean, 2),
-                        "min": round(min(values), 2),
-                        "max": round(max(values), 2),
-                    }
-                )
+            stats = _daily_point_statistics(grouped, local_tz)
             if not stats:
                 continue
             series.append(
@@ -412,20 +394,7 @@ def build_sensor_statistics(
             source_count += 1
             grouped.setdefault(local_day, []).append(value)
 
-        stats: list[dict[str, Any]] = []
-        for local_day in sorted(grouped):
-            values = grouped[local_day]
-            mean = _finite_mean(values)
-            if mean is None:
-                continue
-            stats.append(
-                {
-                    "start": _local_midnight(local_day, local_tz),
-                    "mean": round(mean, 2),
-                    "min": round(min(values), 2),
-                    "max": round(max(values), 2),
-                }
-            )
+        stats = _daily_point_statistics(grouped, local_tz)
         if not stats:
             continue
         series.append(
@@ -444,6 +413,28 @@ def build_sensor_statistics(
             )
         )
     return series
+
+
+def _daily_point_statistics(
+    grouped: dict[date, list[float]], local_tz: ZoneInfo
+) -> list[dict[str, Any]]:
+    """Aggregate normalized points using one daily mean/min/max contract."""
+
+    stats: list[dict[str, Any]] = []
+    for local_day in sorted(grouped):
+        values = grouped[local_day]
+        mean = _finite_mean(values)
+        if mean is None:
+            continue
+        stats.append(
+            {
+                "start": _local_midnight(local_day, local_tz),
+                "mean": round(mean, 2),
+                "min": round(min(values), 2),
+                "max": round(max(values), 2),
+            }
+        )
+    return stats
 
 
 def _sensor_statistic_value(value: Any, scale: float) -> float | None:

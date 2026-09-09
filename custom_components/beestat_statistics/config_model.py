@@ -319,44 +319,27 @@ def configured_override_entity_ids(
     """Return entity IDs explicitly referenced by advanced override config."""
 
     references: list[str] = []
-    for item in effective_override_items(config_data.get(CONF_THERMOSTATS)):
-        if _is_disabled(item):
-            continue
-        references.extend(
-            entity_id
-            for field in (
-                CONF_CLIMATE_ENTITY_ID,
-                CONF_TEMPERATURE_ENTITY_ID,
-                CONF_OCCUPANCY_ENTITY_ID,
-                CONF_MOTION_ENTITY_ID,
-                CONF_FILTER_CHANGED_ENTITY_ID,
-            )
-            if (
-                entity_id := _configured_entity_id(
-                    entity_registry,
-                    item,
-                    field,
+    for key, fields in (
+        (
+            CONF_THERMOSTATS,
+            (*THERMOSTAT_STABLE_ENTITY_FIELDS, CONF_FILTER_CHANGED_ENTITY_ID),
+        ),
+        (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS),
+    ):
+        for item in effective_override_items(config_data.get(key)):
+            if _is_disabled(item):
+                continue
+            references.extend(
+                entity_id
+                for field in fields
+                if (
+                    entity_id := _configured_entity_id(
+                        entity_registry,
+                        item,
+                        field,
+                    )
                 )
             )
-        )
-    for item in effective_override_items(config_data.get(CONF_SENSORS)):
-        if _is_disabled(item):
-            continue
-        references.extend(
-            entity_id
-            for field in (
-                CONF_TEMPERATURE_ENTITY_ID,
-                CONF_OCCUPANCY_ENTITY_ID,
-                CONF_MOTION_ENTITY_ID,
-            )
-            if (
-                entity_id := _configured_entity_id(
-                    entity_registry,
-                    item,
-                    field,
-                )
-            )
-        )
     return tuple(dict.fromkeys(references))
 
 
@@ -1238,8 +1221,6 @@ def _configured_entity_id(
         resolved = resolve_override_entity_id(registry, item, field)
         if resolved is not None:
             return resolved
-        if entity_reference_field(field) in item:
-            return _string_or_none(item.get(field))
     return _string_or_none(item.get(field))
 
 

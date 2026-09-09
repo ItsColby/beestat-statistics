@@ -9,6 +9,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
@@ -84,26 +85,10 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
                 }
             },
         }
-        current_same = {
-            "snapshot": {"commit_sha": "new"},
-            "watched_files": {
-                "api/runtime_sensor.php": {
-                    "blob_sha": "abc",
-                    "exposed": {"private": ["read"], "public": []},
-                    "checks": {"sensor_window_rejects_over_31_days": True},
-                }
-            },
-        }
-        current_changed = {
-            "snapshot": {"commit_sha": "new"},
-            "watched_files": {
-                "api/runtime_sensor.php": {
-                    "blob_sha": "def",
-                    "exposed": {"private": ["read"], "public": []},
-                    "checks": {"sensor_window_rejects_over_31_days": True},
-                }
-            },
-        }
+        current_same = deepcopy(expected)
+        current_same["snapshot"]["commit_sha"] = "new"
+        current_changed = deepcopy(current_same)
+        current_changed["watched_files"]["api/runtime_sensor.php"]["blob_sha"] = "def"
 
         self.assertEqual(self.checker.diff_surface(expected, current_same), [])
         self.assertEqual(len(self.checker.diff_surface(expected, current_changed)), 1)

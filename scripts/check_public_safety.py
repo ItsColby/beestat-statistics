@@ -176,8 +176,8 @@ def _candidate_files(root: Path = ROOT) -> list[Path]:
     )
     if top_level.returncode != 0 and (root / ".git").exists():
         raise RuntimeError("Unable to inspect the repository")
-    tracked = (
-        subprocess.run(
+    if is_repository_root:
+        tracked = subprocess.run(
             [
                 "git",
                 "-C",
@@ -192,10 +192,6 @@ def _candidate_files(root: Path = ROOT) -> list[Path]:
             capture_output=True,
             timeout=30,
         )
-        if is_repository_root
-        else None
-    )
-    if tracked is not None:
         if tracked.returncode != 0:
             raise RuntimeError("Unable to enumerate repository files")
         paths = [root / os.fsdecode(raw) for raw in tracked.stdout.split(b"\0") if raw]
@@ -241,19 +237,16 @@ def _text_failures(text: str) -> set[str]:
 def _content_failures(relative_posix: str, raw: bytes) -> set[str]:
     """Inspect UTF-8 text or require an exact reviewed binary hash."""
 
-    is_binary = b"\0" in raw
-    try:
-        text = "" if is_binary else raw.decode("utf-8")
-    except UnicodeDecodeError:
-        is_binary = True
-    if is_binary:
-        if (
-            REVIEWED_BINARY_SHA256.get(relative_posix)
-            != hashlib.sha256(raw).hexdigest()
-        ):
-            return {"unreviewed binary content"}
-        return set()
-    return _text_failures(text)
+    if b"\0" not in raw:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            return _text_failures(text)
+    if REVIEWED_BINARY_SHA256.get(relative_posix) != hashlib.sha256(raw).hexdigest():
+        return {"unreviewed binary content"}
+    return set()
 
 
 def run_guard(root: Path = ROOT) -> tuple[int, list[str]]:

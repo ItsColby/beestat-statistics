@@ -88,11 +88,14 @@
   account before it can update the entry. A different, unavailable, or
   unprovable account is left unchanged and raises a Repair that directs the user
   through Reconfigure, where account changes require explicit confirmation.
+  Clear that Repair after a validated same-account import or removal of the
+  YAML block.
 - Source selectors combine current raw API discovery, the effective runtime
   model, and saved overrides. This keeps excluded and temporarily missing
-  resources recoverable while preserving unknown saved rows across discovery
-  drift. Excluding a currently active source requires a confirmation. Both the
-  initial form and destructive confirmation retain the complete displayed
+  resources recoverable while preserving mapping, filter, statistic-capability
+  fields and unknown saved rows across discovery drift. Excluding a currently
+  active source requires a confirmation. Both the initial form and destructive
+  confirmation retain the complete displayed
   source signature, including labels and inactive state, and return to the
   source form if that evidence changes before save.
 - Resource identities use one positive-integer parser across configuration,
@@ -155,6 +158,9 @@
   only when their current registry entry can be proven. YAML remains the
   portable entity-ID owner and is never silently rewritten; an unresolved YAML
   or unmigratable legacy mapping raises the existing mapping Repair.
+  Refresh enabled override mapping Repairs when a referenced entity-registry
+  record is removed, renamed, or restored, and remove the listener on unload.
+  Do not silently rewrite the explicit YAML/options mapping owner.
 - The options flow can confirm every currently ambiguity-safe automatic
   thermostat and room-sensor match in one transaction. It derives the
   candidate solely from the coordinator's cached normalized configuration and
@@ -305,12 +311,6 @@
 - Source-scope changes may alter future entity exposure and import membership,
   but must not rewrite entity unique IDs, statistic IDs/slugs, state classes,
   units, statistic metadata, or previously imported Recorder history.
-- Capture the complete displayed source signature when the source-scope form is
-  shown. If an ID, label, or inactive state changes before the first submission,
-  show the refreshed form; if it changes after a destructive preview, show the
-  refreshed source set or removal count before accepting the change.
-- Updating source scope must preserve mapping, filter, and statistic-capability
-  fields on known resources and preserve unknown saved overrides unchanged.
 - Disabled source overrides are ignored by mapping-domain and missing-entity
   Repairs because those references are not runtime dependencies. The checks
   resume when the source is enabled again.
@@ -361,16 +361,6 @@
   names/timing. Saved config-entry data/options are represented by an allow-listed
   ownership/count summary so unknown future fields fail closed. Preserve aggregate
   counts and health evidence instead.
-- Refresh enabled override mapping Repairs when a referenced entity-registry
-  record is removed, renamed, or restored, and remove the listener on unload.
-  Do not silently rewrite the explicit YAML/options mapping owner.
-- Preserve the supported helper-device association across foreign source move,
-  detach, removal, and restoration without config-entry recreation. Registry
-  reconciliation must prove config-entry ownership before each helper update
-  and remove its listeners on unload.
-- Clear the YAML connection-change Repair after a validated same-account import
-  or after the YAML block is removed. Never apply a YAML credential replacement
-  when the saved and candidate account fingerprints cannot prove continuity.
 - Persist the physical filter-change event before fallible cloud work. A pending
   five-minute boundary must be visible in diagnostics, retry without blocking the
   normal coordinator, and never revert the saved click timestamp. Re-read the

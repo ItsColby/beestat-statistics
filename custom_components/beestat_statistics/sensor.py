@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -30,6 +30,7 @@ from .coordinator import (
 from .entity import (
     async_add_new_entities,
     link_entity_to_device,
+    mapping_summary,
     service_device_info,
     thermostat_device_info,
     thermostat_suggested_object_id,
@@ -517,21 +518,14 @@ def _thermostat_sensor_descriptions(
     thermostat: ConfiguredThermostat,
 ) -> tuple[BeestatSensorEntityDescription, ...]:
     thermostat_id = thermostat.thermostat_id
-    descriptions = (
+    descriptions: tuple[BeestatSensorEntityDescription, ...] = (
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "runtime_summary_latest_date",
-            ),
+            key="runtime_summary_latest_date",
             name="Runtime summary latest date",
             translation_key="runtime_summary_latest_date",
             device_class=SensorDeviceClass.DATE,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "runtime_summary_latest_date",
-            ),
             value_fn=partial(
                 _summary_value,
                 thermostat_id=thermostat_id,
@@ -539,10 +533,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "runtime_summary_lag_days",
-            ),
+            key="runtime_summary_lag_days",
             name="Runtime summary lag days",
             translation_key="runtime_summary_lag_days",
             device_class=SensorDeviceClass.DURATION,
@@ -550,10 +541,6 @@ def _thermostat_sensor_descriptions(
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "runtime_summary_lag_days",
-            ),
             value_fn=partial(
                 _summary_value,
                 thermostat_id=thermostat_id,
@@ -561,20 +548,13 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "current_comfort_profile",
-            ),
+            key="current_comfort_profile",
             name="Current comfort profile",
             translation_key="current_comfort_profile",
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "current_comfort_profile",
             ),
             value_fn=partial(
                 _thermostat_metadata_value,
@@ -587,19 +567,12 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "scheduled_comfort_profile",
-            ),
+            key="scheduled_comfort_profile",
             name="Scheduled comfort profile",
             translation_key="scheduled_comfort_profile",
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "scheduled_comfort_profile",
             ),
             value_fn=partial(
                 _thermostat_metadata_value,
@@ -612,20 +585,13 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "next_scheduled_comfort_profile_time",
-            ),
+            key="next_scheduled_comfort_profile_time",
             name="Next scheduled comfort profile time",
             translation_key="next_scheduled_comfort_profile_time",
             device_class=SensorDeviceClass.TIMESTAMP,
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "next_scheduled_comfort_profile_time",
             ),
             value_fn=partial(
                 _thermostat_metadata_value,
@@ -638,10 +604,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "active_sensor_count",
-            ),
+            key="active_sensor_count",
             name="Beestat-reported in-use sensor count",
             translation_key="active_sensor_count",
             native_unit_of_measurement="sensors",
@@ -651,10 +614,6 @@ def _thermostat_sensor_descriptions(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "active_sensor_count",
-            ),
             value_fn=partial(
                 _thermostat_metadata_value,
                 thermostat_id=thermostat_id,
@@ -662,10 +621,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "current_profile_room_temperature_spread",
-            ),
+            key="current_profile_room_temperature_spread",
             name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
             device_class=SensorDeviceClass.TEMPERATURE_DELTA,
@@ -679,10 +635,6 @@ def _thermostat_sensor_descriptions(
                 _room_temperature_spread_available,
                 thermostat_id=thermostat_id,
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "current_profile_room_temperature_spread",
-            ),
             value_fn=partial(
                 _room_temperature_spread_value,
                 thermostat_id=thermostat_id,
@@ -693,10 +645,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "compressor_minimum_off_time",
-            ),
+            key="compressor_minimum_off_time",
             name="Compressor minimum off time",
             translation_key="compressor_minimum_off_time",
             device_class=SensorDeviceClass.DURATION,
@@ -709,10 +658,6 @@ def _thermostat_sensor_descriptions(
                 key="compressorProtectionMinTime",
                 value_type="integer",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "compressor_minimum_off_time",
-            ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
@@ -721,10 +666,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "compressor_minimum_outdoor_temperature",
-            ),
+            key="compressor_minimum_outdoor_temperature",
             name="Compressor minimum outdoor temperature",
             translation_key="compressor_minimum_outdoor_temperature",
             device_class=SensorDeviceClass.TEMPERATURE,
@@ -737,10 +679,6 @@ def _thermostat_sensor_descriptions(
                 key="compressorProtectionMinTemp",
                 value_type="temperature",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "compressor_minimum_outdoor_temperature",
-            ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
@@ -749,10 +687,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "heat_cool_minimum_delta",
-            ),
+            key="heat_cool_minimum_delta",
             name="Heat cool minimum delta",
             translation_key="heat_cool_minimum_delta",
             device_class=SensorDeviceClass.TEMPERATURE_DELTA,
@@ -765,10 +700,6 @@ def _thermostat_sensor_descriptions(
                 key="heatCoolMinDelta",
                 value_type="temperature",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "heat_cool_minimum_delta",
-            ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
@@ -777,10 +708,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "hold_action",
-            ),
+            key="hold_action",
             name="Hold action",
             translation_key="hold_action",
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -791,10 +719,6 @@ def _thermostat_sensor_descriptions(
                 key="holdAction",
                 value_type="text",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "hold_action",
-            ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
@@ -803,10 +727,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "cloud_data_end",
-            ),
+            key="cloud_data_end",
             name="Cloud data end",
             translation_key="cloud_data_end",
             device_class=SensorDeviceClass.TIMESTAMP,
@@ -814,10 +735,6 @@ def _thermostat_sensor_descriptions(
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "cloud_data_end",
             ),
             value_fn=partial(
                 _thermostat_metadata_value,
@@ -830,10 +747,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "cloud_data_lag_minutes",
-            ),
+            key="cloud_data_lag_minutes",
             name="Cloud data lag minutes",
             translation_key="cloud_data_lag_minutes",
             device_class=SensorDeviceClass.DURATION,
@@ -844,10 +758,6 @@ def _thermostat_sensor_descriptions(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "cloud_data_lag_minutes",
-            ),
             value_fn=partial(
                 _thermostat_metadata_value,
                 thermostat_id=thermostat_id,
@@ -855,10 +765,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "active_alert_count",
-            ),
+            key="active_alert_count",
             name="Active alert count",
             translation_key="active_alert_count",
             native_unit_of_measurement="alerts",
@@ -866,10 +773,6 @@ def _thermostat_sensor_descriptions(
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "active_alert_count",
             ),
             value_fn=partial(
                 _thermostat_metadata_value,
@@ -882,17 +785,10 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "active_alert_category",
-            ),
+            key="active_alert_category",
             name="Active alert category",
             translation_key="active_alert_category",
             entity_category=EntityCategory.DIAGNOSTIC,
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "active_alert_category",
-            ),
             available_fn=partial(
                 _thermostat_metadata_available,
                 thermostat_id=thermostat_id,
@@ -907,10 +803,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_runtime_hours",
-            ),
+            key="filter_runtime_hours",
             name="Filter runtime hours",
             translation_key="filter_runtime_hours",
             device_class=SensorDeviceClass.DURATION,
@@ -918,10 +811,6 @@ def _thermostat_sensor_descriptions(
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_runtime_hours",
-            ),
             value_fn=partial(
                 _summary_value,
                 thermostat_id=thermostat_id,
@@ -929,20 +818,13 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_recent_runtime_hours_per_day",
-            ),
+            key="filter_recent_runtime_hours_per_day",
             name="Filter recent runtime hours per day",
             translation_key="filter_recent_runtime_hours_per_day",
             native_unit_of_measurement="h/d",
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(_summary_available, thermostat_id=thermostat_id),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_recent_runtime_hours_per_day",
-            ),
             value_fn=partial(
                 _summary_value,
                 thermostat_id=thermostat_id,
@@ -950,10 +832,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_remaining_runtime_hours",
-            ),
+            key="filter_remaining_runtime_hours",
             name="Filter remaining runtime hours",
             translation_key="filter_remaining_runtime_hours",
             device_class=SensorDeviceClass.DURATION,
@@ -965,10 +844,6 @@ def _thermostat_sensor_descriptions(
                 thermostat_id=thermostat_id,
                 field="remaining_runtime_hours",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_remaining_runtime_hours",
-            ),
             value_fn=partial(
                 _filter_forecast_value,
                 thermostat_id=thermostat_id,
@@ -980,10 +855,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_runtime_due_date",
-            ),
+            key="filter_runtime_due_date",
             name="Filter runtime due date",
             translation_key="filter_runtime_due_date",
             device_class=SensorDeviceClass.DATE,
@@ -993,10 +865,6 @@ def _thermostat_sensor_descriptions(
                 thermostat_id=thermostat_id,
                 field="runtime_due_date",
             ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_runtime_due_date",
-            ),
             value_fn=partial(
                 _filter_forecast_value,
                 thermostat_id=thermostat_id,
@@ -1008,10 +876,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_max_age_due_date",
-            ),
+            key="filter_max_age_due_date",
             name="Filter max age due date",
             translation_key="filter_max_age_due_date",
             device_class=SensorDeviceClass.DATE,
@@ -1020,10 +885,6 @@ def _thermostat_sensor_descriptions(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
                 field="max_age_due_date",
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_max_age_due_date",
             ),
             value_fn=partial(
                 _filter_forecast_value,
@@ -1036,10 +897,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_due_date",
-            ),
+            key="filter_due_date",
             name="Filter due date",
             translation_key="filter_due_date",
             device_class=SensorDeviceClass.DATE,
@@ -1047,10 +905,6 @@ def _thermostat_sensor_descriptions(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
                 field="due_date",
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_due_date",
             ),
             value_fn=partial(
                 _filter_forecast_value,
@@ -1063,10 +917,7 @@ def _thermostat_sensor_descriptions(
             ),
         ),
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(
-                thermostat_id,
-                "filter_days_remaining",
-            ),
+            key="filter_days_remaining",
             name="Filter days remaining",
             translation_key="filter_days_remaining",
             device_class=SensorDeviceClass.DURATION,
@@ -1076,10 +927,6 @@ def _thermostat_sensor_descriptions(
                 _filter_forecast_available,
                 thermostat_id=thermostat_id,
                 field="days_remaining",
-            ),
-            suggested_object_id=thermostat_suggested_object_id(
-                thermostat,
-                "filter_days_remaining",
             ),
             value_fn=partial(
                 _filter_forecast_value,
@@ -1092,9 +939,9 @@ def _thermostat_sensor_descriptions(
             ),
         ),
     )
-    return descriptions + tuple(
+    descriptions += tuple(
         BeestatSensorEntityDescription(
-            key=thermostat_entity_unique_id(thermostat_id, spec.key),
+            key=spec.key,
             name=spec.name,
             translation_key=spec.key,
             device_class=spec.device_class,
@@ -1107,7 +954,6 @@ def _thermostat_sensor_descriptions(
                 key=spec.setting_key,
                 value_type=spec.value_type,
             ),
-            suggested_object_id=thermostat_suggested_object_id(thermostat, spec.key),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
@@ -1116,6 +962,16 @@ def _thermostat_sensor_descriptions(
             ),
         )
         for spec in THERMOSTAT_SETTING_SENSOR_SPECS
+    )
+    return tuple(
+        replace(
+            description,
+            key=thermostat_entity_unique_id(thermostat_id, description.key),
+            suggested_object_id=thermostat_suggested_object_id(
+                thermostat, description.key
+            ),
+        )
+        for description in descriptions
     )
 
 
@@ -1472,7 +1328,7 @@ def _active_alert_category(
     metadata = _thermostat_metadata(coordinator, thermostat_id)
     if metadata is None:
         return None
-    return _classify_active_alerts(metadata.active_alerts)
+    return classify_active_alerts(metadata.active_alerts)
 
 
 def _active_alert_category_attributes(
@@ -1483,13 +1339,9 @@ def _active_alert_category_attributes(
     if metadata is None:
         return None
     return {
-        "alert_category": _classify_active_alerts(metadata.active_alerts),
+        "alert_category": classify_active_alerts(metadata.active_alerts),
         "active_alerts": active_alert_examples(metadata.active_alerts),
     }
-
-
-def _classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
-    return classify_active_alerts(alerts)
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -1513,21 +1365,4 @@ def _mapping_summary_attributes(
             "local_room_sensor_count": None,
         }
 
-    thermostat_count = len(data.config.thermostats)
-    mapped_thermostat_count = sum(
-        1 for thermostat in data.config.thermostats if thermostat.device_id is not None
-    )
-    room_sensor_count = len(data.config.sensors)
-    mapped_room_sensor_count = sum(
-        1 for sensor in data.config.sensors if sensor.device_id is not None
-    )
-    return {
-        "thermostat_count": thermostat_count,
-        "mapped_thermostat_count": mapped_thermostat_count,
-        "unmapped_thermostat_count": thermostat_count - mapped_thermostat_count,
-        "local_thermostat_count": data.config.local_thermostat_count,
-        "room_sensor_count": room_sensor_count,
-        "mapped_room_sensor_count": mapped_room_sensor_count,
-        "unmapped_room_sensor_count": room_sensor_count - mapped_room_sensor_count,
-        "local_room_sensor_count": data.config.local_room_sensor_count,
-    }
+    return {**mapping_summary(data)}

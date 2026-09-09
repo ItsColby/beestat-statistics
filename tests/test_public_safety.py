@@ -172,10 +172,9 @@ class PublicSafetyGuardTests(unittest.TestCase):
     def test_git_scans_tracked_ignored_files_and_untracked_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for command in (["init", "-q"],):
-                subprocess.run(
-                    ["git", "-C", str(root), *command], check=True, capture_output=True
-                )
+            subprocess.run(
+                ["git", "-C", str(root), "init", "-q"], check=True, capture_output=True
+            )
             (root / ".gitignore").write_text("private.txt\n", encoding="utf-8")
             private = root / "private.txt"
             private.write_text("ghp_" + "a" * 36, encoding="utf-8")

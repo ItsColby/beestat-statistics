@@ -276,10 +276,7 @@ def temperature_fahrenheit(
 def integer_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> int | None:
     """Return one exact integer setting."""
 
-    value = snapshot.setting(key)
-    if isinstance(value, bool):
-        return None
-    return _int_or_none(value)
+    return _int_or_none(snapshot.setting(key))
 
 
 def boolean_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> bool | None:
@@ -320,10 +317,7 @@ def audio_boolean_setting(
 def audio_integer_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> int | None:
     """Return one exact allow-listed audio integer."""
 
-    value = snapshot.audio.get(key)
-    if isinstance(value, bool):
-        return None
-    return _int_or_none(value)
+    return _int_or_none(snapshot.audio.get(key))
 
 
 def _all_setting_fields() -> tuple[str, ...]:

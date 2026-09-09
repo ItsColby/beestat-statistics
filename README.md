@@ -43,7 +43,7 @@ The preferred configuration path is the Home Assistant UI. The options flow expo
 - thermostat mapping overrides
 - room-sensor mapping overrides
 
-Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. Source scope, import timing, and mapping behavior live in the integration options. The integration is intentionally single-entry: one Beestat Statistics config entry owns one account connection and its selected thermostats and room sensors. Multiple config entries or config subentries would duplicate the same account-wide coordinator and fragment the external-statistics lifecycle, so they are not supported without a distinct future account/resource requirement. YAML imports can still update the existing entry for backward compatibility.
+Initial setup asks only for the required Beestat API key and the normally unchanged API URL. Beestat must return at least one identifiable thermostat before a new or replacement connection is saved; otherwise the integration cannot prove account continuity. One Beestat Statistics config entry owns the account connection and its selected thermostats and room sensors; multiple entries and config subentries are not supported.
 
 Credential-bearing API requests never follow redirects. If Beestat moves the
 endpoint, update the validated HTTPS API URL through **Reconfigure** instead of
@@ -59,7 +59,7 @@ beestat_statistics:
     hours: 6
 ```
 
-`api_key` is required. `point_lookback_days` defaults to 45 and is capped at 366. `scan_interval` defaults to 6 hours. On startup, YAML is imported into a Home Assistant config entry so entities can attach to devices and diagnostics.
+On startup, YAML creates or updates the Home Assistant config entry so entities can attach to devices and diagnostics.
 
 If YAML later supplies a different API key or API URL, the integration validates
 the candidate before changing the saved connection. It applies the replacement
@@ -106,34 +106,32 @@ beestat_statistics:
 
 Optional `slug` fields pin Recorder statistic IDs and the default filter-helper lookup. Optional `name` fields pin fallback labels and device names. Use both sparingly; the preferred naming source is the local HomeKit/Ecobee entity or device.
 
-For new mapping fixes, prefer the integration options UI. Choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all current unambiguous thermostat and room-sensor matches in one update, or choose **Map a thermostat** or **Map a room sensor** to correct an individual match. The confirmation recomputes against current cached mappings and options immediately before saving: a changed target is shown again for confirmation, and unrelated concurrent option changes are preserved. Individual mapping forms reject a newly introduced cross-device or duplicate-device claim. Confirmed UI mappings retain stable entity-registry source identity, so entity-ID renames and removal/restoration of the same source do not require recreating the Beestat entry. Missing, ambiguous, or conflicting matches remain unresolved, and automatic name matching remains an ambiguity-safe onboarding fallback only; the integration never persists those matches without confirmation. YAML remains a portable entity-ID owner and must be updated manually after a mapped entity-ID rename. Use **Choose Beestat sources** for inclusion instead of adding one-off `enabled` overrides. YAML remains available for recovery, import, and bulk setups.
+In the integration options, choose **Confirm automatic mappings** to review the exact cached HomeKit entity list and pin all unambiguous thermostat and room-sensor matches in one update. Choose **Map a thermostat** or **Map a room sensor** for an individual correction. Confirmation rechecks current cached mappings and options before saving: changed targets require confirmation again, and unrelated concurrent option changes are preserved. Individual forms reject new cross-device or duplicate-device claims. Missing, ambiguous, or conflicting matches remain unresolved; automatic name matching is only an onboarding fallback and is never persisted without confirmation.
 
-Advanced thermostat override fields:
+Confirmed UI mappings retain stable source identity across entity-ID renames and removal/restoration, without recreating the Beestat entry. YAML remains a portable entity-ID owner for recovery, import, and bulk setups; update it manually after mapped entity-ID renames. Use **Choose Beestat sources** for inclusion instead of one-off `enabled` overrides.
 
-- `id`: Beestat thermostat ID.
-- `slug`: optional stable statistic/helper slug.
+Advanced override fields shared by thermostats and room sensors:
+
+- `id`: the Beestat thermostat or sensor ID for that row.
+- `slug`: optional stable statistic slug; thermostat slugs also control the default filter-helper lookup.
 - `name`: optional fallback display name.
-- `climate_entity_id`: matching Home Assistant `climate` entity.
 - `temperature_entity_id`: matching Home Assistant temperature `sensor` entity.
 - `occupancy_entity_id`: matching Home Assistant occupancy `binary_sensor` entity.
 - `motion_entity_id`: matching Home Assistant motion `binary_sensor` entity.
+- `enabled`: set to `false` to ignore the thermostat or room sensor.
+
+Advanced thermostat override fields:
+
+- `climate_entity_id`: matching Home Assistant `climate` entity.
 - `filter_changed_entity_id`: optional Home Assistant `input_datetime` helper used as the filter-runtime start date.
 - `filter_lifetime_runtime_hours`: runtime-hours replacement threshold. Defaults to 250.
 - `filter_max_age_days`: calendar-age replacement threshold. Defaults to 90.
 - `filter_notice_days`: notice-window days before the calculated due date. Defaults to 7.
-- `enabled`: set to `false` to ignore a Beestat thermostat.
 
 Advanced room-sensor override fields:
 
-- `id`: Beestat sensor ID.
 - `thermostat_id`: optional Beestat thermostat ID when the sensor row does not carry one.
-- `slug`: optional stable statistic slug.
-- `name`: optional fallback display name.
-- `temperature_entity_id`: matching Home Assistant temperature `sensor` entity.
-- `occupancy_entity_id`: matching Home Assistant occupancy `binary_sensor` entity.
-- `motion_entity_id`: matching Home Assistant motion `binary_sensor` entity.
 - `include_temperature`, `include_air_quality`, `include_co2`, `include_voc`: override which Beestat point-history fields are imported as Recorder statistics.
-- `enabled`: set to `false` to ignore a Beestat room sensor.
 
 To change the Beestat API key or API URL after setup, open the integration entry in Home Assistant and choose **Reconfigure**. If Beestat rejects the stored API key during setup, Home Assistant starts a native reauthentication flow. Setup stores a non-reversible fingerprint of the discovered Beestat thermostats. Reconfigure and reauthentication require a separate confirmation when the validated thermostat fingerprint cannot prove the connection matches the saved Beestat account and it may belong to a different account; the candidate key is not saved unless that confirmation succeeds. A confirmed possible account change resets saved source selections and per-source overrides so old numeric source IDs cannot be applied to the replacement account. Existing Recorder statistics remain, and future sources with overlapping stable slugs can continue those series, so treat account replacement as an explicit history-boundary decision.
 

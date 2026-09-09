@@ -402,7 +402,7 @@ class SensorHelpersTest(unittest.TestCase):
 
     def test_active_alert_category_separates_maintenance_from_equipment(self) -> None:
         self.assertEqual(
-            self.sensor._classify_active_alerts(
+            self.sensor.classify_active_alerts(
                 (
                     {
                         "code": "3140",
@@ -414,12 +414,12 @@ class SensorHelpersTest(unittest.TestCase):
             "maintenance",
         )
         self.assertEqual(
-            self.sensor._classify_active_alerts(
+            self.sensor.classify_active_alerts(
                 ({"text": "System fault: not cooling"},)
             ),
             "equipment",
         )
-        self.assertEqual(self.sensor._classify_active_alerts(()), "none")
+        self.assertEqual(self.sensor.classify_active_alerts(()), "none")
 
     def test_maintenance_alert_does_not_hide_an_unknown_or_equipment_alert(
         self,
@@ -428,10 +428,10 @@ class SensorHelpersTest(unittest.TestCase):
         unknown = {"code": "unrecognized_code"}
         equipment = {"text": "System fault: not cooling"}
         self.assertEqual(
-            self.sensor._classify_active_alerts((maintenance, unknown)), "unknown"
+            self.sensor.classify_active_alerts((maintenance, unknown)), "unknown"
         )
         self.assertEqual(
-            self.sensor._classify_active_alerts((equipment, maintenance, unknown)),
+            self.sensor.classify_active_alerts((equipment, maintenance, unknown)),
             "equipment",
         )
 

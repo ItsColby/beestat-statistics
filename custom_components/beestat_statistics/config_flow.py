@@ -814,16 +814,15 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
             self._thermostat_id = int(user_input[CONF_ID])
             return await self.async_step_thermostat_mapping_detail()
 
+        options = _thermostat_options(self.config_entry)
         return self.async_show_form(
             step_id="thermostat_mapping",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ID): _select_selector(
-                        _thermostat_options(self.config_entry)
-                    ),
+                    vol.Required(CONF_ID): _select_selector(options),
                 }
             ),
-            errors=_selection_errors(_thermostat_options(self.config_entry)),
+            errors=_selection_errors(options),
         )
 
     async def async_step_confirm_automatic_mappings(
@@ -948,16 +947,15 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
             self._sensor_id = int(user_input[CONF_ID])
             return await self.async_step_sensor_mapping_detail()
 
+        options = _sensor_options(self.config_entry)
         return self.async_show_form(
             step_id="sensor_mapping",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ID): _select_selector(
-                        _sensor_options(self.config_entry)
-                    ),
+                    vol.Required(CONF_ID): _select_selector(options),
                 }
             ),
-            errors=_selection_errors(_sensor_options(self.config_entry)),
+            errors=_selection_errors(options),
         )
 
     async def async_step_sensor_mapping_detail(

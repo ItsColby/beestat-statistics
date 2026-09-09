@@ -28,6 +28,7 @@ from .coordinator import (
 from .entity import (
     async_add_new_entities,
     link_entity_to_device,
+    mapping_summary,
     room_sensor_device_info,
     service_device_info,
     thermostat_device_info,
@@ -423,7 +424,7 @@ class BeestatHomeKitMappingIncompleteProblemBinarySensor(
         data = self.coordinator.data
         if data is None:
             return None
-        summary = _mapping_summary(data)
+        summary = mapping_summary(data)
         return bool(
             summary["unmapped_thermostat_count"]
             or summary["unmapped_room_sensor_count"]
@@ -436,7 +437,7 @@ class BeestatHomeKitMappingIncompleteProblemBinarySensor(
         data = self.coordinator.data
         if data is None:
             return None
-        return _mapping_summary(data)
+        return mapping_summary(data)
 
 
 class BeestatSensorInUseBinarySensor(
@@ -905,26 +906,3 @@ def _cloud_stale_threshold(coordinator: Any) -> int:
     """Return the coordinator threshold with legacy test-double compatibility."""
 
     return int(getattr(coordinator, "cloud_data_stale_threshold_minutes", 120))
-
-
-def _mapping_summary(data: BeestatRuntimeData) -> dict[str, int]:
-    """Return compact HomeKit mapping counts for diagnostics."""
-
-    thermostat_count = len(data.config.thermostats)
-    mapped_thermostat_count = sum(
-        1 for thermostat in data.config.thermostats if thermostat.device_id is not None
-    )
-    room_sensor_count = len(data.config.sensors)
-    mapped_room_sensor_count = sum(
-        1 for sensor in data.config.sensors if sensor.device_id is not None
-    )
-    return {
-        "thermostat_count": thermostat_count,
-        "mapped_thermostat_count": mapped_thermostat_count,
-        "unmapped_thermostat_count": thermostat_count - mapped_thermostat_count,
-        "local_thermostat_count": data.config.local_thermostat_count,
-        "room_sensor_count": room_sensor_count,
-        "mapped_room_sensor_count": mapped_room_sensor_count,
-        "unmapped_room_sensor_count": room_sensor_count - mapped_room_sensor_count,
-        "local_room_sensor_count": data.config.local_room_sensor_count,
-    }

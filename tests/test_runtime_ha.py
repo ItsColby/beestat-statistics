@@ -6,7 +6,7 @@ import asyncio
 import sys
 import types
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -663,37 +663,26 @@ async def test_entry_unload_cancels_projection_timer(
     assert updates == []
 
 
+@pytest.mark.parametrize(
+    ("before", "later"),
+    [
+        (datetime(2026, 7, 1, 13, tzinfo=UTC), datetime(2026, 7, 1, 13, 5, tzinfo=UTC)),
+        (datetime(2026, 7, 6, 3, 59, tzinfo=UTC), datetime(2026, 7, 6, 4, tzinfo=UTC)),
+    ],
+    ids=["same_local_date", "empty_local_midnight"],
+)
 async def test_unchanged_projection_does_not_dispatch_entity_updates(
     hass: HomeAssistant,
     freezer: Any,
+    before: datetime,
+    later: datetime,
 ) -> None:
-    before = datetime(2026, 7, 1, 13, tzinfo=UTC)
-    later = before + timedelta(minutes=5)
     freezer.move_to(later)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
 
     coordinator._async_rebuild_projection_from_cached(later)
-
-    assert coordinator.data.projected_at == before
-    assert client.calls == []
-    assert updates == []
-    await entry._async_process_on_unload(hass)
-
-
-async def test_empty_local_midnight_projection_does_not_dispatch_entity_updates(
-    hass: HomeAssistant,
-    freezer: Any,
-) -> None:
-    before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
-    midnight = datetime(2026, 7, 6, 4, tzinfo=UTC)
-    freezer.move_to(midnight)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
-    updates: list[str] = []
-    coordinator.async_add_listener(lambda: updates.append("updated"))
-
-    coordinator._async_rebuild_projection_from_cached(midnight)
 
     assert coordinator.data.projected_at == before
     assert client.calls == []
@@ -792,47 +781,20 @@ async def test_core_time_zone_update_reprojects_without_io_and_unloads(
     assert len(scheduled) == 2
 
 
-async def test_cross_date_time_zone_update_without_sensitive_state_only_reschedules(
-    hass: HomeAssistant,
-    freezer: Any,
-) -> None:
-    now = datetime(2026, 7, 1, 1, tzinfo=UTC)
-    freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
-    scheduled: list[tuple[datetime, Mock]] = []
-
-    def track_projection(_hass, _action, deadline):
-        cancel = Mock()
-        scheduled.append((deadline, cancel))
-        return cancel
-
-    updates: list[str] = []
-    coordinator.async_add_listener(lambda: updates.append("updated"))
-
-    with patch(
-        "custom_components.beestat_statistics.coordinator."
-        "async_track_point_in_utc_time",
-        side_effect=track_projection,
-    ):
-        _async_track_time_zone_updates(hass, entry, coordinator)
-        coordinator._async_schedule_projection_boundary(coordinator.data)
-
-        await hass.config.async_update(time_zone="Europe/London")
-        await hass.async_block_till_done()
-
-    assert coordinator.local_tz == ZoneInfo("Europe/London")
-    assert client.calls == []
-    assert updates == []
-    assert len(scheduled) == 2
-    scheduled[0][1].assert_called_once_with()
-    await entry._async_process_on_unload(hass)
-
-
+@pytest.mark.parametrize(
+    ("now", "time_zone"),
+    [
+        (datetime(2026, 7, 1, 1, tzinfo=UTC), "Europe/London"),
+        (datetime(2026, 7, 1, 17, tzinfo=UTC), "America/Chicago"),
+    ],
+    ids=["cross_local_date", "same_local_date"],
+)
 async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
     hass: HomeAssistant,
     freezer: Any,
+    now: datetime,
+    time_zone: str,
 ) -> None:
-    now = datetime(2026, 7, 1, 17, tzinfo=UTC)
     freezer.move_to(now)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     scheduled: list[tuple[datetime, Mock]] = []
@@ -853,10 +815,10 @@ async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
         _async_track_time_zone_updates(hass, entry, coordinator)
         coordinator._async_schedule_projection_boundary(coordinator.data)
 
-        await hass.config.async_update(time_zone="America/Chicago")
+        await hass.config.async_update(time_zone=time_zone)
         await hass.async_block_till_done()
 
-    assert coordinator.local_tz == ZoneInfo("America/Chicago")
+    assert coordinator.local_tz == ZoneInfo(time_zone)
     assert client.calls == []
     assert updates == []
     assert len(scheduled) == 2
