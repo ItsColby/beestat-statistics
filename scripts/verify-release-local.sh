@@ -56,10 +56,13 @@ run_python() (
   else
     podman run --rm -e HOME=/tmp/home -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
       -e PIP_ROOT_USER_ACTION=ignore -e DEBIAN_FRONTEND=noninteractive \
+      -e PIP_CACHE_DIR=/pip-cache \
       -e PYTHONPYCACHEPREFIX=/tmp/pycache -e XDG_CACHE_HOME=/tmp/cache \
       -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/tmp/mypy-cache \
       -e 'PYTEST_ADDOPTS=-p no:cacheprovider' \
-      -v "$repo_root:/workspace" -w /workspace "$python_image" bash -euc \
+      -v "$repo_root:/workspace" -w /workspace \
+      --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \
+      "$python_image" bash -euc \
       'apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && bash -euc "$1"' \
       local-validation "$1"
   fi

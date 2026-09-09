@@ -181,6 +181,30 @@ class ValidationRunnerTests(unittest.TestCase):
         )
         self.assertEqual(len({event["mount"] for event in self.events()}), 1)
 
+    def test_container_lanes_reuse_only_download_cache(self) -> None:
+        for _ in range(2):
+            result = self.run_validation("all", "container")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        python_events = [
+            event
+            for event in self.events()
+            if event["kind"] in {"unit-python", "minimum", "current"}
+        ]
+        self.assertEqual(len(python_events), 6)
+        for event in python_events:
+            args = event["args"]
+            self.assertEqual(args[:2], ["run", "--rm"])
+            self.assertIn("PIP_CACHE_DIR=/pip-cache", args)
+            self.assertEqual(
+                args[args.index("--mount") + 1],
+                "type=volume,source=beestat-statistics-validation-pip,target=/pip-cache",
+            )
+            self.assertIn("python -m pip install", args[-1])
+            if event["kind"] in {"minimum", "current"}:
+                self.assertIn("python -m pip check", args[-1])
+                self.assertIn("pytest tests -q", args[-1])
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
     def test_failed_snapshot_does_not_run_validation(self) -> None:
         result = self.run_validation("release", "container", str(self.root / "missing"))
         self.assertNotEqual(result.returncode, 0)

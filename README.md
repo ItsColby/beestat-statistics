@@ -462,6 +462,12 @@ Use `-Mode unit`, `minimum`, `current`, or `release` for a focused lane. The
 The container backend snapshots tracked and nonignored new files, including
 uncommitted changes. Images are pinned by digest, and each Python lane uses an
 isolated environment. `all` runs every lane and fails if any lane fails.
+Local containers reuse pip downloads and wheels in the Podman volume
+`beestat-statistics-validation-pip`; each lane still installs its dependencies
+into a fresh container and reruns every check. The disposable cache contains
+neither installed environments nor validation results; remove it with
+`podman volume rm beestat-statistics-validation-pip` when no local validation is
+running to force fresh downloads.
 On Linux, the same command surface is:
 
 ```bash
