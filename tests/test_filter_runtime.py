@@ -142,6 +142,46 @@ class FilterRuntimeTest(unittest.TestCase):
         self.assertIsNone(observation.threshold_reached(1))
         self.assertFalse(observation.threshold_reached(2))
 
+    def test_source_uncertainty_excludes_elapsed_tail_but_retains_gap_corrections(
+        self,
+    ) -> None:
+        changed = datetime(2026, 7, 5, tzinfo=UTC)
+        end = changed + timedelta(days=1)
+        rows = points(changed.date(), fan=0)[1:]
+
+        def observe(at: datetime):
+            raw = runtime.assess_change_day(
+                rows,
+                changed,
+                local_tz=UTC_ZONE,
+                source_data_end=end - timedelta(minutes=5),
+                evaluated_at=at,
+            )
+            return runtime.build_filter_runtime_observation(
+                [],
+                changed_date=changed.date(),
+                changed_at=changed,
+                change_day=raw,
+                source_data_end=end - timedelta(minutes=5),
+                evaluated_at=at,
+                local_tz=UTC_ZONE,
+            )
+
+        first = observe(end + timedelta(seconds=1))
+        later = observe(end + timedelta(minutes=5, seconds=1))
+        self.assertEqual(first.source_unknown_interval_seconds, 300)
+        self.assertEqual(later.source_unknown_interval_seconds, 300)
+        self.assertEqual(first.unknown_interval_seconds, 301)
+        self.assertEqual(later.unknown_interval_seconds, 601)
+        self.assertEqual(later.observed_seconds, first.observed_seconds)
+        self.assertEqual(later.coverage, first.coverage)
+        rows.pop()
+        corrected = observe(end + timedelta(minutes=5, seconds=1))
+        self.assertEqual(corrected.source_unknown_interval_seconds, 600)
+        self.assertEqual(corrected.unknown_interval_seconds, 901)
+        self.assertEqual(corrected.coverage, later.coverage)
+        self.assertEqual(corrected.observed_seconds, later.observed_seconds)
+
     def test_recent_rate_excludes_current_missing_and_incomplete_days(self) -> None:
         rate = runtime.build_recent_runtime_rate(
             [

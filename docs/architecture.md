@@ -394,9 +394,14 @@
   carry the filter change boundary, runtime inputs, thresholds, intermediate
   dates, due state, and a deterministic content revision from one coordinator
   model so consumers never join sequential sibling-entity updates. Coverage,
-  uncertainty, source horizon, projection basis, and recent-rate provenance are
-  part of that same snapshot and revision: a quality-only change must publish
-  even when the due date and runtime counter are unchanged.
+  source-gap and boundary uncertainty, source horizon, projection basis, and
+  recent-rate provenance are part of that same snapshot and revision: a
+  quality-only change must publish even when the due date and runtime counter
+  are unchanged. The observation retains uncertainty through the source horizon
+  separately from the elapsed unreported tail. The revision uses that stable
+  source uncertainty; total unknown minutes remain current telemetry. Elapsed
+  time alone does not revise the forecast unless it changes lower-bound or
+  threshold decisions, dates, or other forecast semantics.
 - Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
   as the primary thermostat surface. Categorize freshness dates/lags, active
   sensor count, filter runtime details, intermediate forecast dates, and

@@ -1,3 +1,7 @@
+# Beestat Statistics v2026.9.10.2
+
+Keep filter forecast revisions stable when local temperature or schedule updates only advance elapsed uncertainty after the latest cloud observation. Actual source-gap corrections, coverage, thresholds, replacement boundaries and due-state changes still revise the forecast. The exact current uncertainty remains available as diagnostic metadata, without causing downstream task descriptions to be rewritten solely because time passed.
+
 # Beestat Statistics v2026.9.10.1
 
 Filter forecasts now distinguish observed blower runtime from unobserved exposure while retaining useful qualified estimates and the independent calendar limit. Five-minute source precision and incomplete days are explicit. Recent runtime estimates use complete prior days, and corrected source data refreshes the filter boundary without charging earlier runtime to a newer filter.

@@ -293,7 +293,10 @@ integration cannot reconstruct runtime absent from Beestat.
 
 The **Filter due date** entity publishes one coherent forecast snapshot, with a
 content revision that changes when its coverage or provenance changes even if
-the due date stays the same. Its unrecorded attributes include:
+the due date stays the same. Elapsed time in the unreported source tail updates
+uncertainty telemetry without changing that revision, unless it changes a
+lower-bound or threshold decision. Corrections to source gaps still revise the
+forecast. Its unrecorded attributes include:
 
 - `runtime_observed_hours`, `runtime_coverage` (`complete`, `partial`, or
   `unknown`), `runtime_source_data_end`, and `runtime_is_lower_bound`. Coverage

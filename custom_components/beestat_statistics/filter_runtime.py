@@ -34,6 +34,8 @@ class FilterRuntimeObservation:
     boundary_uncertainty_seconds: float
     boundary_status: str
     source_data_end: datetime | None
+    # Source gaps and boundary uncertainty, excluding elapsed unreported time.
+    source_unknown_interval_seconds: float | None = None
 
     @property
     def observed_hours(self) -> float | None:
@@ -331,6 +333,7 @@ def build_filter_runtime_observation(
         if source_gaps
         else "complete"
     )
+    source_unknown = unknown
     if unknown is not None and source_data_end is not None:
         # A completed cloud bucket is not observation of the still-unreported tail.
         earliest_tail = changed_at or local_day_bounds(changed_date, local_tz)[1]
@@ -348,6 +351,7 @@ def build_filter_runtime_observation(
         boundary.boundary_uncertainty_seconds,
         boundary.boundary_status,
         source_data_end,
+        source_unknown_interval_seconds=source_unknown,
     )
 
 
