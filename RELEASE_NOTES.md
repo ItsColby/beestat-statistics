@@ -1,3 +1,13 @@
+# Beestat Statistics v2026.9.10.1
+
+Filter forecasts now distinguish observed blower runtime from unobserved exposure while retaining useful qualified estimates and the independent calendar limit. Five-minute source precision and incomplete days are explicit. Recent runtime estimates use complete prior days, and corrected source data refreshes the filter boundary without charging earlier runtime to a newer filter.
+
+The new `record_filter_change` action accepts a replacement timestamp for delayed events. Persisted date, timestamp and request-identity guards reject stale updates; exact replays are idempotent. Native buttons, date corrections, configuration updates and historical repair share the same bounded event contract while preserving the distinction between replacement and correction.
+
+Date-bounded historical Recorder repairs now update the affected cumulative tail, preventing later totals from retaining an obsolete offset. Missing source observations remain unknown and are not reconstructed.
+
+The local validation runner also overlaps independent isolated lanes and avoids disposable bytecode and type caches. The supported Home Assistant floor remains Core 2026.8.0; the current tested target is Core 2026.9.1.
+
 # Beestat Statistics v2026.9.10
 
 ## Changed
