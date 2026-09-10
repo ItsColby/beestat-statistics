@@ -16,6 +16,7 @@ from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+    CONF_FILTER_CHANGE_EVENT,
     CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_CHANGED_ENTITY_ID,
@@ -52,6 +53,7 @@ from .entity_reference import (
     has_explicit_entity_mapping,
     resolve_override_entity_id,
 )
+from .filter_action import FilterChangeEvent, parse_filter_change_event
 from .source_identity import physical_thermostat_probe_devices
 
 _AIR_QUALITY_CAPABILITIES = {"airquality", "air_quality"}
@@ -136,6 +138,7 @@ class ConfiguredThermostat:
     filter_change_day_runtime_baseline_seconds: float | None = None
     filter_change_boundary_reconciled_at: datetime | None = None
     filter_change_boundary_source_data_end: datetime | None = None
+    filter_change_event: FilterChangeEvent | None = None
     filter_lifetime_runtime_hours: float = DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS
     filter_max_age_days: int = DEFAULT_FILTER_MAX_AGE_DAYS
     filter_notice_days: int = DEFAULT_FILTER_NOTICE_DAYS
@@ -579,6 +582,9 @@ def _thermostat_from_row(
         ),
         filter_change_boundary_source_data_end=_aware_datetime_or_none(
             override.get(CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END)
+        ),
+        filter_change_event=parse_filter_change_event(
+            override.get(CONF_FILTER_CHANGE_EVENT)
         ),
         filter_lifetime_runtime_hours=_bounded_float_or_default(
             override.get(CONF_FILTER_LIFETIME_RUNTIME_HOURS),

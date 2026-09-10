@@ -323,12 +323,23 @@ def _thermostat_summary_diagnostics(
         for item in data.config.thermostats
         if item.thermostat_id == summary.thermostat_id
     )
+    observation = summary.filter_runtime_observation
+    rate = summary.recent_runtime_rate
     return {
         "thermostat_id": summary.thermostat_id,
         "latest_date": str(summary.latest_date) if summary.latest_date else None,
         "lag_days": summary.lag_days,
         "filter_runtime_hours": summary.filter_runtime_hours,
-        "filter_boundary_status": filter_boundary_status(thermostat),
+        "filter_boundary_status": observation.boundary_status
+        if observation
+        else filter_boundary_status(thermostat),
+        "runtime_coverage": observation.coverage if observation else "unknown",
+        "runtime_is_lower_bound": observation.is_lower_bound if observation else True,
+        "runtime_unknown_interval_minutes": observation.unknown_interval_seconds / 60
+        if observation and observation.unknown_interval_seconds is not None
+        else None,
+        "recent_runtime_complete_days": rate.complete_days if rate else 0,
+        "recent_runtime_excluded_days": rate.excluded_days if rate else 0,
         "recent_runtime_hours_per_day": summary.recent_runtime_hours_per_day,
         "current_profile": metadata.current_climate_name if metadata else None,
         "scheduled_profile": metadata.scheduled_climate_name if metadata else None,

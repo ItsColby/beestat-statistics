@@ -84,8 +84,11 @@
   rebuild the effective option rows from YAML while preserving a native filter
   date and click-time runtime boundary by Beestat source ID. An explicit YAML
   `filter_changed_date` is date-only input, takes precedence, and clears the
-  click boundary. A YAML connection replacement must validate as the same saved
-  account before it can update the entry. A different, unavailable, or
+  click boundary. A changed explicit YAML date/timestamp, including clearing
+  an exact timestamp while retaining its date, creates a `configuration`
+  correction receipt with the prior event identity. An unchanged import
+  preserves the receipt. A YAML connection replacement must validate as the
+  same saved account before it can update the entry. A different, unavailable, or
   unprovable account is left unchanged and raises a Repair that directs the user
   through Reconfigure, where account changes require explicit confirmation.
   Clear that Repair after a validated same-account import or removal of the
@@ -253,26 +256,69 @@
   runtime while avoiding empty hardware series. Finite IAQ source values remain
   unchanged; unsupported, missing, non-finite, or unrepresentable values are
   rejected instead of clamped.
-- Filter changes are owned by the Home Assistant `date` entity, its colocated
-  mark-changed button, and the optional legacy `input_datetime` helper bridge.
-  The button first persists the local date and exact UTC click timestamp, because
-  the physical replacement must not be lost when Beestat is stale or unavailable.
-  Pending derived runtime excludes the ambiguous change day rather than charging
-  earlier same-day runtime to the new filter, while still counting unambiguous
-  later-date runtime. The coordinator then reconciles the timestamp against a bounded
-  raw-runtime read, rounds to the nearest 5-minute source boundary, stores that
-  day’s fan-runtime baseline, and retries every 15 minutes for six hours while
-  source data is not ready. Normal coordinator refreshes continue attempts after
-  that fast-retry window. Same-day forecasts subtract the finalized baseline. A
-  historical repair accepts an offsetless local timestamp only when it resolves
-  to one real instant in the configured timezone. Repeated daylight-saving times
-  require an explicit offset, and nonexistent local times fail validation rather
-  than being normalized to a different wall time. A manual date edit clears the
-  click timestamp and boundary because date-only
-  input does not prove when the replacement occurred, then performs a skip-sync
-  refresh so the selected historical date is covered. Keep the timestamp and
-  boundary internal attributes of the date entity; do not add a second datetime
-  entity without a separate UI/data-model requirement.
+- A full-baseline Recorder rebuild recalculates cumulative values before
+  filtering its writes. The selected start date applies to every series;
+  cumulative (`has_sum`) series rewrite the affected tail through the latest
+  source day, while the end date clips measurement series only. A correction
+  must not leave a later cumulative row or subsequent overlap seed at its old
+  offset. Source and thermostat scoping remain unchanged.
+- Filter boundary mutations have one owner in `entry_options.py`, shared by
+  the date entity, mark-changed button, timestamped `record_filter_change`
+  action, and historical repair. The optional legacy `input_datetime` helper
+  remains a date-only compatibility bridge. A replacement first persists its
+  local date, exact UTC timestamp, and bounded latest-event receipt before
+  fallible cloud work. The response-only service requires the saved prior date,
+  timestamp, and `expected_request_id`, rejects a stale prior boundary or
+  non-advancing timestamp, and uses a caller request ID for current-event replay.
+  Replaying the current
+  request with the same timestamp returns `already_recorded` without effects,
+  including after its timestamp ages beyond the 31-day new-recording limit.
+  Reusing that ID for different input rejects it. Comparing the prior event
+  identity prevents stale completion after a boundary changes and changes back.
+  The caller preserves all expected fields across retries. A later winning mutation
+  yields `superseded`, never a successful replacement response. The receipt
+  records prior/new boundaries and `prior_request_id`, and distinguishes
+  replacement (`button`, `service`) from correction (`date`, `repair`,
+  `configuration`); it is not an event history,
+  event-bus API, or independent proof that physical work occurred.
+- A timestamped change day uses valid raw intervals wholly after the exact
+  replacement. Omit the straddling five-minute interval without prorating;
+  count valid later intervals even when the boundary itself is a source gap.
+  Date-only input omits the ambiguous change day. Later days use normalized
+  summary fan totals and coverage counts, including absent entire days. Keep
+  `complete`, `partial`, or `unknown` source coverage separate from bounded
+  boundary uncertainty and source freshness. Unknown interval duration bounds
+  possible unobserved exposure; it is never synthesized fan runtime. Expected
+  counts use UTC elapsed local-day duration across daylight-saving transitions.
+  The observed counter rounds down to 0.1 hour and remaining runtime rounds up
+  to 0.1 hour, preserving the published bounds. Threshold decisions use the
+  underlying seconds: observed exposure can prove a threshold reached;
+  assessed exposure plus its uncertainty can prove it not reached; otherwise
+  the result is unknown. Runtime dates remain qualified projections and the
+  calendar-age limit remains independently enforceable.
+- Retain one bounded raw change-day cache per thermostat. Invalidate it when
+  the replacement, timezone, or normalized change-day summary fingerprint
+  changes, including after boundary finalization. A six-hour cache expiry on
+  ordinary refreshes also catches point corrections with unchanged daily
+  totals and counts. `finalized` requires a validated prefix baseline;
+  `source_gap` can therefore coexist with complete post-replacement coverage.
+  Recompute the baseline on
+  corrected source rows so pre-replacement backfill cannot become new-filter
+  runtime. Pending boundary work retries every 15 minutes for six hours, then
+  on ordinary coordinator refreshes. Recheck the persisted replacement and
+  timezone revision after awaits before accepting a result. Historical action
+  timestamps must resolve to one real instant: repeated daylight-saving times
+  require an explicit offset and nonexistent local times fail validation. A
+  manual date edit clears the exact timestamp and boundary, then performs a
+  skip-sync refresh. Keep exact timestamps, boundary and latest-event details
+  as unrecorded date attributes; do not introduce another datetime entity.
+- The recent filter runtime rate averages only complete past local days in its
+  30-day window, including qualifying days before the replacement. Exclude the
+  current day, missing days, incomplete counts and
+  invalid runtime rather than dividing by an implicit 30-day denominator.
+  Publish the window and complete/excluded day counts with the forecast;
+  absent qualifying days leave the runtime projection unavailable while the
+  calendar limit can remain available.
 - Beestat filter alert dismissal is best-effort after a Home Assistant filter
   change. Do not write Ecobee settings or directly mutate Beestat sync-owned
   filter metadata.
@@ -296,8 +342,10 @@
   external Recorder statistics. Preserve cumulative-series correctness when
   changing runtime or degree-day imports.
 - `api.py`, `thermostat_settings.py`, `alerts.py`, `filter_forecast.py`,
-  `diagnostics.py`: Beestat transport/parsing, the strict raw-Ecobee privacy
-  boundary, alert classification, filter forecasting, and redacted diagnostics.
+  `filter_runtime.py`, `filter_action.py`, `diagnostics.py`: Beestat
+  transport/parsing, the strict raw-Ecobee privacy boundary, alert classification,
+  coherent filter forecasts, source coverage/rate calculations, bounded filter
+  mutation provenance, and redacted diagnostics.
 - `translations/en.json`, `icons.json`, `services.yaml`, `quality_scale.yaml`,
   and `README.md` are part of the user-facing contract. Update them with code
   behavior changes. Custom integrations ship complete translations directly;
@@ -345,7 +393,10 @@
   publication for one coherent forecast snapshot. Its unrecorded attributes
   carry the filter change boundary, runtime inputs, thresholds, intermediate
   dates, due state, and a deterministic content revision from one coordinator
-  model so consumers never join sequential sibling-entity updates.
+  model so consumers never join sequential sibling-entity updates. Coverage,
+  uncertainty, source horizon, projection basis, and recent-rate provenance are
+  part of that same snapshot and revision: a quality-only change must publish
+  even when the due date and runtime counter are unchanged.
 - Keep schedule, filter due-date/days-remaining, alert, and maintenance controls
   as the primary thermostat surface. Categorize freshness dates/lags, active
   sensor count, filter runtime details, intermediate forecast dates, and
@@ -375,7 +426,8 @@
   private-identifier-free examples, and put broader aggregate evidence in
   redacted on-demand diagnostics.
 - Downloadable diagnostics redact user-assigned names/slugs, exact filter-change
-  dates and timestamps, local entity/device/source identifiers, and comfort-profile
+  dates and timestamps, filter event/request identifiers, local
+  entity/device/source identifiers, and comfort-profile
   names/timing. Saved config-entry data/options are represented by an allow-listed
   ownership/count summary so unknown future fields fail closed. Preserve aggregate
   counts and health evidence instead.
@@ -383,5 +435,5 @@
   five-minute boundary must be visible in diagnostics, retry without blocking the
   normal coordinator, and never revert the saved click timestamp. Re-read the
   effective timestamp and current options after each awaited raw-runtime request;
-  finalize only the same still-pending revision so an older request cannot
+  accept only the same saved boundary and current timezone revision so an older request cannot
   overwrite a repeated press or an unrelated concurrent options update.

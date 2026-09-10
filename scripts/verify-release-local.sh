@@ -56,11 +56,11 @@ run_python() (
   else
     podman run --rm -e HOME=/tmp/home -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
       -e PIP_ROOT_USER_ACTION=ignore -e DEBIAN_FRONTEND=noninteractive \
-      -e PIP_CACHE_DIR=/pip-cache \
+      -e PIP_COMPILE=0 -e PIP_CACHE_DIR=/pip-cache \
       -e PYTHONPYCACHEPREFIX=/tmp/pycache -e XDG_CACHE_HOME=/tmp/cache \
-      -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/tmp/mypy-cache \
+      -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/dev/null \
       -e 'PYTEST_ADDOPTS=-p no:cacheprovider' \
-      -v "$repo_root:/workspace" -w /workspace \
+      -v "$repo_root:/workspace:ro" -w /workspace \
       --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \
       "$python_image" bash -euc \
       'apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && bash -euc "$1"' \
@@ -128,12 +128,8 @@ run_release() {
     podman run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"
   fi
 }
-lanes=("$mode")
-if [[ "$mode" == all ]]; then
-  lanes=(unit minimum current release)
-fi
-status=0
-for lane in "${lanes[@]}"; do
+run_lane() {
+  local lane="$1" lane_status
   printf '\nRunning %s validation\n' "$lane"
   # A conditional function call disables errexit inside the entire function.
   # Run each lane in an unconditional subshell so failures cannot become passes.
@@ -153,7 +149,30 @@ for lane in "${lanes[@]}"; do
     printf '%s: PASS\n' "$lane"
   else
     printf '%s: FAIL (exit %s)\n' "$lane" "$lane_status" >&2
-    status=1
   fi
-done
+  return "$lane_status"
+}
+
+lanes=("$mode")
+if [[ "$mode" == all ]]; then
+  lanes=(unit minimum current release)
+fi
+status=0
+if [[ "$mode" == all && "$backend" == container ]]; then
+  # Independent containers read one immutable payload. Preserve every lane's
+  # result and reap all jobs before the snapshot's EXIT cleanup can run.
+  lane_pids=()
+  for lane in "${lanes[@]}"; do
+    run_lane "$lane" & lane_pids+=("$!")
+  done
+  for lane_pid in "${lane_pids[@]}"; do
+    wait "$lane_pid" || status=1
+  done
+else
+  for lane in "${lanes[@]}"; do
+    # Calling run_lane conditionally would suppress its errexit semantics.
+    run_lane "$lane" & lane_pid=$!
+    wait "$lane_pid" || status=1
+  done
+fi
 exit "$status"

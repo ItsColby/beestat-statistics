@@ -11,6 +11,9 @@
     },
     "rebuild_statistics": {
       "service": "mdi:database-refresh"
+    },
+    "record_filter_change": {
+      "service": "mdi:air-filter"
     }
   },
   "entity": {

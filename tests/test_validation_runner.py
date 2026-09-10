@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 name = Path(sys.argv[0]).name
@@ -59,7 +60,30 @@ elif name == "python" and args[:2] == ["-m", "pip"]:
 event["kind"] = kind
 with open(os.environ["VALIDATION_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(event) + "\n")
-if os.environ.get("VALIDATION_FAIL") == kind:
+if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "actionlint":
+    events = Path(os.environ["VALIDATION_LOG"]).parent
+    lane = "unit" if kind == "unit-python" else kind
+    lanes = {"unit", "minimum", "current", "release"}
+    assert args[:2] == ["run", "--rm"]
+    if lane != "release":
+        assert args[args.index("-v") + 1].endswith(":/workspace:ro")
+    (events / (lane + ".started")).touch()
+    deadline = time.monotonic() + 5
+    while not all((events / (peer + ".started")).exists() for peer in lanes):
+        if time.monotonic() > deadline:
+            raise SystemExit("The four validation lanes did not overlap")
+        time.sleep(0.01)
+    failure = os.environ.get("VALIDATION_FAIL")
+    failed_lane = "unit" if failure == "unit-python" else failure
+    if failed_lane in lanes and failed_lane != lane:
+        while not (events / (failed_lane + ".done")).exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("The failing lane did not finish")
+            time.sleep(0.01)
+        time.sleep(0.05)
+    assert Path(mount).is_dir(), "Payload removed before every lane finished"
+    (events / (lane + ".done")).touch()
+if os.environ.get("VALIDATION_FAIL") in {kind, "both" if kind in {"minimum", "current"} else kind}:
     sys.exit(23)
 """
 
@@ -163,10 +187,8 @@ class ValidationRunnerTests(unittest.TestCase):
         self.env["VALIDATION_FAIL"] = "actionlint"
         result = self.run_validation("all", "container")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(
-            [event["kind"] for event in self.events()],
-            ["actionlint", "minimum", "current", "release"],
-        )
+        kinds = [event["kind"] for event in self.events()]
+        self.assertCountEqual(kinds, ["actionlint", "minimum", "current", "release"])
         self.assertIn("unit: FAIL (exit 23)", result.stderr)
         self.assertIn("current: PASS", result.stdout)
         self.assertEqual(list(self.scratch.iterdir()), [])
@@ -175,11 +197,42 @@ class ValidationRunnerTests(unittest.TestCase):
         result = self.run_validation("all", "container")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(": PASS"), 4)
-        self.assertEqual(
-            [event["kind"] for event in self.events()],
-            ["actionlint", "unit-python", "minimum", "current", "release"],
+        kinds = [event["kind"] for event in self.events()]
+        self.assertCountEqual(
+            kinds, ["actionlint", "unit-python", "minimum", "current", "release"]
         )
+        self.assertLess(kinds.index("actionlint"), kinds.index("unit-python"))
         self.assertEqual(len({event["mount"] for event in self.events()}), 1)
+
+    def test_all_lanes_overlap_and_finish_before_cleanup(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        result = self.run_validation("all", "container")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count(": PASS"), 4)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+        for lane in ("unit", "minimum", "current", "release"):
+            self.assertTrue((self.root / (lane + ".done")).exists())
+
+    def test_failure_retains_every_lane_result_and_waits_for_all_workers(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        for failure in ("minimum", "current", "both", "unit-python", "release"):
+            with self.subTest(failure=failure):
+                for marker in self.root.glob("*.started"):
+                    marker.unlink()
+                for marker in self.root.glob("*.done"):
+                    marker.unlink()
+                self.env["VALIDATION_FAIL"] = failure
+                result = self.run_validation("all", "container")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                for lane in ("unit", "minimum", "current", "release"):
+                    failed = failure == ("unit-python" if lane == "unit" else lane) or (
+                        failure == "both" and lane in {"minimum", "current"}
+                    )
+                    stream = result.stderr if failed else result.stdout
+                    outcome = "FAIL (exit 23)" if failed else "PASS"
+                    self.assertIn(f"{lane}: {outcome}", stream)
+                    self.assertTrue((self.root / (lane + ".done")).exists())
+                self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_container_lanes_reuse_only_download_cache(self) -> None:
         for _ in range(2):
@@ -195,6 +248,8 @@ class ValidationRunnerTests(unittest.TestCase):
             args = event["args"]
             self.assertEqual(args[:2], ["run", "--rm"])
             self.assertIn("PIP_CACHE_DIR=/pip-cache", args)
+            self.assertIn("PIP_COMPILE=0", args)
+            self.assertIn("MYPY_CACHE_DIR=/dev/null", args)
             self.assertEqual(
                 args[args.index("--mount") + 1],
                 "type=volume,source=beestat-statistics-validation-pip,target=/pip-cache",

@@ -477,7 +477,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if _entry_owner_changed(entry, data_snapshot=entry_data_snapshot):
             return self.async_abort(reason="configuration_changed")
         async_set_yaml_connection_change_issue(self.hass, active=False)
-        options = merge_import_options(entry.options, data, options)
+        options = merge_import_options(
+            entry.options, data, options, existing_data=entry_data_snapshot
+        )
         preserved_data = {
             key: value
             for key, value in entry_data_snapshot.items()

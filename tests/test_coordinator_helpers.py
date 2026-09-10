@@ -7,6 +7,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -87,17 +88,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
         self.assertEqual(self.coordinator._latest_row_date(rows), date(2026, 7, 3))
         self.assertEqual(
-            self.coordinator._runtime_hours_since(rows, date(2026, 7, 2)),
-            0.5,
-        )
-        self.assertEqual(
-            self.coordinator._recent_runtime_hours_per_day(
-                rows,
-                date(2026, 7, 4),
-            ),
-            0.75,
-        )
-        self.assertEqual(
             self.coordinator._sum_fan_seconds(
                 [
                     {"sum_fan": 3600},
@@ -117,20 +107,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         ]
 
         self.assertIsNone(self.coordinator._sum_fan_seconds(rows))
-        self.assertIsNone(self.coordinator._runtime_hours_since(rows, date(2026, 7, 1)))
-        self.assertIsNone(
-            self.coordinator._recent_runtime_hours_per_day(rows, date(2026, 7, 2))
-        )
-        self.assertIsNone(
-            self.coordinator._raw_filter_boundary(
-                [
-                    {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 1e308},
-                    {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 1e308},
-                    {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
-                ],
-                datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
-            )
-        )
 
     def test_negative_or_boolean_runtime_cannot_reduce_filter_usage(self) -> None:
         self.assertEqual(
@@ -631,8 +607,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 coordinator._timezone_revision += 1
             return []
 
-        async def reconcile(_config):
-            return None
+        async def reconcile(_config, *_args):
+            coordinator._local_tz = ZoneInfo("Asia/Tokyo")
+            coordinator._timezone_revision += 1
 
         def build_runtime_data(
             _self,
@@ -701,87 +678,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(result.summary_window_end, date(2026, 7, 1))
         self.assertEqual(
             built,
-            [(date(2026, 7, 1), ZoneInfo("Europe/London"), evaluated_at)],
-        )
-
-    def test_runtime_hours_subtracts_click_baseline_only_from_change_day(self) -> None:
-        rows = [
-            {"date": "2026-07-05", "sum_fan": 36000},
-            {"date": "2026-07-06", "sum_fan": 7200},
-        ]
-
-        self.assertEqual(
-            self.coordinator._runtime_hours_since(
-                rows,
-                date(2026, 7, 5),
-                change_day_baseline_seconds=28800,
-            ),
-            4.0,
-        )
-
-    def test_filter_runtime_threshold_date_is_first_crossing_day(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1,
-            slug="zone_a",
-            name="Zone A",
-            filter_lifetime_runtime_hours=4,
-            filter_change_day_runtime_baseline_seconds=28800,
-        )
-        rows = [
-            {"date": "2026-07-05", "sum_fan": 36000},
-            {"date": "2026-07-06", "sum_fan": 3600},
-            {"date": "2026-07-07", "sum_fan": 7200},
-        ]
-
-        self.assertEqual(
-            self.coordinator._filter_runtime_threshold_date(
-                rows,
-                date(2026, 7, 5),
-                thermostat,
-                "home_assistant",
-            ),
-            date(2026, 7, 7),
-        )
-
-    def test_pending_filter_boundary_excludes_change_day_from_threshold(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1,
-            slug="zone_a",
-            name="Zone A",
-            filter_lifetime_runtime_hours=2,
-            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
-        )
-        rows = [
-            {"date": "2026-07-05", "sum_fan": 14400},
-            {"date": "2026-07-06", "sum_fan": 3600},
-            {"date": "2026-07-07", "sum_fan": 3600},
-        ]
-
-        self.assertEqual(
-            self.coordinator._filter_runtime_threshold_date(
-                rows,
-                date(2026, 7, 5),
-                thermostat,
-                "home_assistant",
-            ),
-            date(2026, 7, 7),
-        )
-
-    def test_runtime_hours_clamps_corrected_change_day_below_click_baseline(
-        self,
-    ) -> None:
-        rows = [
-            {"date": "2026-07-05", "sum_fan": 18000},
-            {"date": "2026-07-06", "sum_fan": 7200},
-        ]
-
-        self.assertEqual(
-            self.coordinator._runtime_hours_since(
-                rows,
-                date(2026, 7, 5),
-                change_day_baseline_seconds=28800,
-            ),
-            2.0,
+            [(date(2026, 7, 1), ZoneInfo("Asia/Tokyo"), evaluated_at)],
         )
 
     def test_runtime_seconds_on_date_filters_thermostat_and_date(self) -> None:
@@ -820,60 +717,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
             )
         )
 
-    def test_raw_filter_boundary_rounds_to_nearest_five_minute_interval(self) -> None:
-        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
-        rows = [
-            {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
-            {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
-            {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 120},
-        ]
-
-        boundary = self.coordinator._raw_filter_boundary(rows, changed_at)
-
-        self.assertIsNotNone(boundary)
-        self.assertEqual(boundary.baseline_seconds, 480)
-        self.assertEqual(
-            boundary.source_data_end,
-            datetime.fromisoformat("2026-07-05T21:50:00+00:00"),
-        )
-        self.assertEqual(
-            boundary.effective_at,
-            datetime.fromisoformat("2026-07-05T21:50:00+00:00"),
-        )
-
-    def test_raw_filter_boundary_remains_pending_until_click_bucket_exists(
-        self,
-    ) -> None:
-        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
-
-        self.assertIsNone(
-            self.coordinator._raw_filter_boundary(
-                [
-                    {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
-                ],
-                changed_at,
-            )
-        )
-
-    def test_raw_filter_boundary_uses_last_row_per_absolute_timestamp(self) -> None:
-        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
-        rows = [
-            {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
-            {"timestamp": "invalid", "fan": 300},
-            {"timestamp": "2026-07-05T17:40:00-04:00", "fan": 120},
-            {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
-            {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
-        ]
-
-        boundary = self.coordinator._raw_filter_boundary(rows, changed_at)
-
-        self.assertEqual(boundary.baseline_seconds, 300)
-        rows.append({"timestamp": "2026-07-05T21:40:00+00:00", "deleted": True})
-        self.assertEqual(
-            self.coordinator._raw_filter_boundary(rows, changed_at).baseline_seconds,
-            180,
-        )
-
     def test_unrepresentable_utc_timestamps_do_not_break_source_projection(
         self,
     ) -> None:
@@ -892,6 +735,25 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     self.coordinator._row_timezone({"timezone": value}, fallback),
                     fallback,
                 )
+
+    def test_exact_boundary_date_tracks_timezone_without_mutating_saved_date(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone",
+            name="Zone",
+            filter_changed_date=date(2026, 7, 4),
+            filter_changed_at=datetime(2026, 7, 5, 1, tzinfo=UTC),
+        )
+        coordinator = types.SimpleNamespace(_local_tz=ZoneInfo("Asia/Tokyo"))
+        self.assertEqual(
+            self.coordinator.BeestatRuntimeDataCoordinator._filter_changed_date(
+                coordinator, thermostat, {}
+            ),
+            (date(2026, 7, 5), "home_assistant"),
+        )
+        self.assertEqual(thermostat.filter_changed_date, date(2026, 7, 4))
 
     def test_filter_boundary_status_distinguishes_pending_and_legacy_records(
         self,
@@ -922,25 +784,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 )
             ),
             "legacy_date_only",
-        )
-
-    def test_pending_click_boundary_starts_new_filter_runtime_at_zero(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1,
-            slug="zone_a",
-            name="Zone A",
-            filter_changed_date=date(2026, 7, 5),
-            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
-        )
-
-        self.assertEqual(
-            self.coordinator._filter_runtime_hours(
-                [{"date": "2026-07-05", "sum_fan": 14400}],
-                date(2026, 7, 5),
-                thermostat,
-                "home_assistant",
-            ),
-            0.0,
         )
 
     def test_filter_boundary_fast_retry_window_is_bounded(self) -> None:
@@ -1017,28 +860,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         coordinator.async_schedule_filter_boundary_reconcile(recent_config)
 
         self.assertIsNotNone(coordinator._cancel_filter_boundary_retry)
-
-    def test_pending_click_boundary_counts_complete_later_days(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1,
-            slug="zone_a",
-            name="Zone A",
-            filter_changed_date=date(2026, 7, 5),
-            filter_changed_at=datetime.fromisoformat("2026-07-05T21:48:00+00:00"),
-        )
-
-        self.assertEqual(
-            self.coordinator._filter_runtime_hours(
-                [
-                    {"date": "2026-07-05", "sum_fan": 14400},
-                    {"date": "2026-07-06", "sum_fan": 7200},
-                ],
-                date(2026, 7, 5),
-                thermostat,
-                "home_assistant",
-            ),
-            2.0,
-        )
 
     def test_click_boundary_with_unverified_baseline_remains_pending(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
@@ -1671,6 +1492,10 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schedules, [True])
 
     def _attach_temporal_context(self, coordinator) -> None:
+        coordinator._async_reconcile_filter_boundary = types.MethodType(
+            self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_filter_boundary,
+            coordinator,
+        )
         coordinator.capture_temporal_context = lambda: self.coordinator.TemporalContext(
             datetime.now(UTC),
             coordinator._local_tz,
@@ -1755,7 +1580,14 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         now = datetime(2026, 7, 1, 16, tzinfo=UTC)
         coordinator = self._cached_coordinator(evaluated_at=now)
         data = coordinator._build_runtime_data(
-            [{"thermostat_id": 1.0, "date": "2026-07-01", "sum_fan": 3600}],
+            [
+                {
+                    "thermostat_id": 1.0,
+                    "date": "2026-06-30",
+                    "sum_fan": 3600,
+                    "count": 288,
+                }
+            ],
             [{"id": 1.0, "name": "Zone", "data_end": now.isoformat()}],
             [],
             now,
@@ -1765,7 +1597,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             None,
             evaluated_at=now,
         )
-        self.assertEqual(data.thermostats[1].latest_date, date(2026, 7, 1))
+        self.assertEqual(data.thermostats[1].latest_date, date(2026, 6, 30))
         self.assertEqual(data.thermostats[1].recent_runtime_hours_per_day, 1)
         self.assertEqual(data.thermostat_metadata[1].data_end, now)
 
@@ -1913,7 +1745,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator._client.calls, [])
         self.assertEqual(coordinator.listener_updates, 1)
 
-    async def test_local_date_boundary_without_sensitive_state_does_not_dispatch(
+    async def test_local_date_boundary_updates_recent_rate_window_provenance(
         self,
     ) -> None:
         before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
@@ -1925,9 +1757,9 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             midnight,
         )
 
-        self.assertEqual(coordinator.data.projected_at, before)
+        self.assertEqual(coordinator.data.projected_at, midnight)
         self.assertEqual(coordinator._client.calls, [])
-        self.assertEqual(coordinator.listener_updates, 0)
+        self.assertEqual(coordinator.listener_updates, 1)
 
     async def test_unchanged_cached_projection_does_not_dispatch(self) -> None:
         before = datetime(2026, 7, 1, 13, 0, tzinfo=UTC)
@@ -2105,7 +1937,9 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(raised.exception.__cause__)
         self.assertNotIn(secret, str(raised.exception))
 
-    async def test_pending_boundary_finalizes_from_raw_runtime_rows(self) -> None:
+    async def test_boundary_revalidates_source_corrections_with_bounded_cached_reads(
+        self,
+    ) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1001,
@@ -2126,17 +1960,27 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         )
+        updates = []
+        calls = []
 
         def update_entry(_entry, *, options):
             entry.options = options
+            updates.append(options)
 
-        async def read_runtime(*_args):
+        start = datetime(2026, 7, 5, 4, tzinfo=UTC)
+        raw_rows = [
+            {"timestamp": (start + timedelta(minutes=5 * i)).isoformat(), "fan": 0}
+            for i in range(212)
+        ] + [
+            {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
+            {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+            {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+        ]
+
+        async def read_runtime(*args):
+            calls.append(args)
             entry.options = {**entry.options, "concurrent_option": "preserved"}
-            return [
-                {"timestamp": "2026-07-05T21:40:00+00:00", "fan": 300},
-                {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
-                {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
-            ]
+            return [dict(row) for row in raw_rows]
 
         coordinator = types.SimpleNamespace(
             _client=types.SimpleNamespace(
@@ -2149,33 +1993,127 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             hass=types.SimpleNamespace(
                 config_entries=types.SimpleNamespace(async_update_entry=update_entry)
             ),
-            last_filter_boundary_pending_count=0,
-            last_filter_boundary_reconciled_count=0,
-            last_filter_boundary_reconcile_error=None,
-            last_filter_boundary_reconcile_attempt_at=None,
             async_schedule_filter_boundary_reconcile=lambda *_args: None,
             _async_cancel_filter_boundary_retry=lambda: None,
         )
-
         self._attach_temporal_context(coordinator)
-
-        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
-            coordinator,
-            self.config_model.BeestatConfig(
-                thermostats=(thermostat,),
-                sensors=(),
-            ),
+        context = self.coordinator.TemporalContext(
+            datetime(2026, 7, 7, 12, tzinfo=UTC), coordinator._local_tz, 0
         )
-
+        coordinator.capture_temporal_context = lambda: context
+        config = self.config_model.BeestatConfig(thermostats=(thermostat,), sensors=())
+        summaries = [
+            {"thermostat_id": 1001, "date": "2026-07-05", "count": 215, "sum_fan": 480}
+        ]
+        metadata = ({"id": 1001, "data_end": "2026-07-05T21:50:00+00:00"},)
+        reconcile = types.MethodType(
+            self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries,
+            coordinator,
+        )
+        await reconcile(config, summaries, metadata)
         saved = entry.options["thermostats"][0]
         self.assertEqual(saved["filter_change_day_runtime_baseline_seconds"], 480)
         self.assertEqual(
-            saved["filter_change_boundary_source_data_end"],
-            "2026-07-05T21:50:00+00:00",
+            saved["filter_change_boundary_source_data_end"], "2026-07-05T21:50:00+00:00"
         )
+        self.assertEqual(
+            calls, [(1001, "2026-07-05T04:00:00+00:00", "2026-07-06T04:00:00+00:00")]
+        )
+        config = replace(
+            config,
+            thermostats=(
+                replace(
+                    thermostat,
+                    filter_change_day_runtime_baseline_seconds=480,
+                    filter_change_boundary_reconciled_at=datetime.fromisoformat(
+                        saved["filter_change_boundary_reconciled_at"]
+                    ),
+                ),
+            ),
+        )
+        await reconcile(config, summaries, metadata)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(updates), 1)
+        raw_rows[0]["fan"] = 120
+        summaries[0]["sum_fan"] = 600
+        await reconcile(config, summaries, metadata)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            entry.options["thermostats"][0][
+                "filter_change_day_runtime_baseline_seconds"
+            ],
+            600,
+        )
+        # Same-count/sum point redistribution is caught by the bounded periodic reread.
+        raw_rows[0]["fan"] = 0
+        raw_rows[-1]["fan"] = 120
+        context = replace(
+            context, evaluated_at=context.evaluated_at + timedelta(hours=6)
+        )
+        await reconcile(config, summaries, metadata)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(
+            entry.options["thermostats"][0][
+                "filter_change_day_runtime_baseline_seconds"
+            ],
+            480,
+        )
+        self.assertEqual(
+            entry.options["thermostats"][0]["filter_changed_at"], changed_at.isoformat()
+        )
+        raw_rows[0]["deleted"] = True
+        summaries[0]["count"] = 214
+        await reconcile(config, summaries, metadata)
+        self.assertNotIn(
+            "filter_change_day_runtime_baseline_seconds",
+            entry.options["thermostats"][0],
+        )
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
         self.assertEqual(entry.options["concurrent_option"], "preserved")
-        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
+        self.assertEqual(len(coordinator._filter_day_cache), 1)
+
+    async def test_cleared_boundary_cannot_be_restored_by_slow_reconciliation(
+        self,
+    ) -> None:
+        changed_at = datetime(2026, 7, 5, tzinfo=UTC)
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone",
+            name="Zone",
+            filter_changed_date=changed_at.date(),
+            filter_changed_at=changed_at,
+        )
+        entry = types.SimpleNamespace(
+            data={},
+            options={
+                "thermostats": [{"id": 1, "filter_changed_at": changed_at.isoformat()}]
+            },
+        )
+
+        async def read_runtime(*_args):
+            entry.options = {"thermostats": [{"id": 1}]}
+            return [{"timestamp": changed_at.isoformat(), "fan": 60}]
+
+        updates = []
+        coordinator = types.SimpleNamespace(
+            _filter_day_cache={},
+            _client=types.SimpleNamespace(async_read_runtime_thermostat=read_runtime),
+            _local_tz=ZoneInfo("UTC"),
+            _timezone_revision=0,
+            config_entry=entry,
+            hass=types.SimpleNamespace(
+                config_entries=types.SimpleNamespace(
+                    async_update_entry=lambda *args, **kwargs: updates.append(kwargs)
+                )
+            ),
+        )
+        self._attach_temporal_context(coordinator)
+        pending = await coordinator._async_reconcile_filter_boundary(
+            thermostat, coordinator.capture_temporal_context(), [], ()
+        )
+        self.assertFalse(pending)
+        self.assertEqual(updates, [])
+        self.assertEqual(coordinator._filter_day_cache, {})
 
     async def test_timezone_change_prevents_stale_boundary_persistence(self) -> None:
         changed_at = datetime.fromisoformat("2026-07-05T01:48:00+00:00")

@@ -37,6 +37,39 @@ class ConfigurationResponseTest(unittest.TestCase):
         cls.thermostat_settings = _load_module("thermostat_settings")
         cls.configuration = _load_module("configuration")
 
+    def test_runtime_quality_is_effective_only_and_leaves_saved_overrides_literal(
+        self,
+    ) -> None:
+        saved = {"id": 1001, "filter_changed_date": "2026-07-01"}
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1001,
+            slug="zone",
+            name="Zone",
+            filter_changed_date=date(2026, 7, 1),
+        )
+        quality = {
+            "boundary_status": "source_gap",
+            "runtime_coverage": "partial",
+            "runtime_observed_hours": 12.3,
+        }
+        response = self.configuration.configuration_response(
+            entry_id="entry",
+            entry_data={},
+            entry_options={"thermostats": [saved]},
+            config=self.config_model.BeestatConfig(
+                thermostats=(thermostat,), sensors=()
+            ),
+            point_lookback_days=45,
+            scan_interval_seconds=21600,
+            runtime_quality={1001: quality},
+        )
+        effective = response["effective_configuration"]["thermostats"][0]
+        self.assertEqual(effective["filter_boundary_status"], "source_gap")
+        self.assertEqual(effective["runtime_observed_hours"], 12.3)
+        self.assertEqual(response["saved_overrides"]["thermostats"]["items"], [saved])
+        self.assertNotIn("runtime_coverage", saved)
+        self.assertEqual(quality["runtime_coverage"], "partial")
+
     def test_response_includes_saved_and_effective_configuration(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1001,

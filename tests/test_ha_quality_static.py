@@ -195,7 +195,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("TextSelectorType.URL", text)
         self.assertIn("data, options = split_entry_payload(user_input)", text)
         self.assertIn(
-            "options = merge_import_options(entry.options, data, options)", text
+            "entry.options, data, options, existing_data=entry_data_snapshot", text
         )
         self.assertIn("options_from_user_input(user_input)", text)
         self.assertIn("OPTIONS_MENU = {", text)
@@ -570,6 +570,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "test_coordinator_runtime_ha.py",
                 "test_runtime_ha.py",
                 "test_entity_runtime_ha.py",
+                "test_filter_actions_ha.py",
                 "test_source_identity_ha.py",
             },
         )

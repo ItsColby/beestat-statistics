@@ -29,6 +29,7 @@ def configuration_response(
     scan_interval_seconds: int,
     thermostat_rows: tuple[dict[str, Any], ...] = (),
     thermostat_settings: Mapping[int, ThermostatSettingsSnapshot] | None = None,
+    runtime_quality: Mapping[int, dict[str, object]] | None = None,
 ) -> dict[str, Any]:
     """Return the complete non-secret saved and effective configuration."""
 
@@ -52,7 +53,18 @@ def configuration_response(
         },
         "effective_configuration": {
             "thermostats": [
-                _configured_thermostat(thermostat) for thermostat in config.thermostats
+                {
+                    **_configured_thermostat(thermostat),
+                    **(
+                        quality := (runtime_quality or {}).get(
+                            thermostat.thermostat_id, {}
+                        )
+                    ),
+                    "filter_boundary_status": quality.get(
+                        "boundary_status", filter_boundary_status(thermostat)
+                    ),
+                }
+                for thermostat in config.thermostats
             ],
             "sensors": [_configured_sensor(sensor) for sensor in config.sensors],
         },
@@ -220,6 +232,9 @@ def _configured_thermostat(thermostat: ConfiguredThermostat) -> dict[str, Any]:
         "filter_change_boundary_source_data_end": _json_value(
             thermostat.filter_change_boundary_source_data_end
         ),
+        "filter_change_event": thermostat.filter_change_event.as_dict()
+        if thermostat.filter_change_event
+        else None,
         "filter_lifetime_runtime_hours": thermostat.filter_lifetime_runtime_hours,
         "filter_max_age_days": thermostat.filter_max_age_days,
         "filter_notice_days": thermostat.filter_notice_days,

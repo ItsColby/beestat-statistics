@@ -451,33 +451,80 @@ class ConfigPayloadTest(unittest.TestCase):
         )
 
     def test_merge_import_options_yaml_filter_date_clears_click_boundary(self) -> None:
+        previous = {
+            "thermostats": [
+                {
+                    "id": 1,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                    "filter_change_day_runtime_baseline_seconds": 28800,
+                    "filter_change_boundary_reconciled_at": "2026-07-05T22:05:00+00:00",
+                }
+            ]
+        }
+        imported = {"thermostats": [{"id": 1, "filter_changed_date": "2026-07-06"}]}
+        result = config_payload.merge_import_options(previous, imported, {})
+        saved = result["thermostats"][0]
         self.assertEqual(
-            config_payload.merge_import_options(
-                {
-                    "thermostats": [
-                        {
-                            "id": 1,
-                            "filter_changed_date": "2026-07-05",
-                            "filter_changed_at": "2026-07-05T21:48:00+00:00",
-                            "filter_change_day_runtime_baseline_seconds": 28800,
-                            "filter_change_boundary_reconciled_at": (
-                                "2026-07-05T22:05:00+00:00"
-                            ),
-                        }
-                    ],
-                },
-                {
-                    "thermostats": [
-                        {
-                            "id": 1,
-                            "filter_changed_date": "2026-07-06",
-                        }
-                    ],
-                },
-                {},
-            ),
+            {
+                key: value
+                for key, value in saved.items()
+                if key != "filter_change_event"
+            },
+            {"id": 1, "filter_changed_date": "2026-07-06"},
+        )
+        event = saved["filter_change_event"]
+        self.assertEqual(event["action"], "correction")
+        self.assertEqual(event["source"], "configuration")
+        self.assertEqual(event["prior_changed_at"], "2026-07-05T21:48:00+00:00")
+        self.assertIsNone(event["changed_at"])
+        repeated = config_payload.merge_import_options(result, imported, {})
+        self.assertEqual(repeated, result)
+
+    def test_yaml_same_date_precision_loss_changes_guard_and_preserves_prior_identity(
+        self,
+    ):
+        first = config_payload.merge_import_options(
+            {},
+            {
+                "thermostats": [
+                    {
+                        "id": 1,
+                        "filter_changed_date": "2026-07-05",
+                        "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                    }
+                ]
+            },
             {},
         )
+        event = first["thermostats"][0]["filter_change_event"]
+        corrected = config_payload.merge_import_options(
+            first, {"thermostats": [{"id": 1, "filter_changed_date": "2026-07-05"}]}, {}
+        )
+        next_event = corrected["thermostats"][0]["filter_change_event"]
+        self.assertNotEqual(next_event["request_id"], event["request_id"])
+        self.assertEqual(next_event["prior_request_id"], event["request_id"])
+        self.assertEqual(next_event["changed_date"], event["changed_date"])
+        self.assertIsNone(next_event["changed_at"])
+
+    def test_yaml_initial_data_boundary_change_keeps_correction_guard(self):
+        original = {"thermostats": [{"id": 1, "filter_changed_date": "2026-07-04"}]}
+        unchanged = config_payload.merge_import_options(
+            {}, original, {}, existing_data=original
+        )
+        self.assertEqual(unchanged, {})
+        changed = {"thermostats": [{"id": 1, "filter_changed_date": "2026-07-05"}]}
+        corrected = config_payload.merge_import_options(
+            {}, changed, {}, existing_data=original
+        )
+        event = corrected["thermostats"][0]["filter_change_event"]
+        restored = config_payload.merge_import_options(
+            corrected, original, {}, existing_data=changed
+        )
+        next_event = restored["thermostats"][0]["filter_change_event"]
+        self.assertEqual(event["prior_changed_date"], "2026-07-04")
+        self.assertNotEqual(event["request_id"], next_event["request_id"])
+        self.assertEqual(next_event["prior_request_id"], event["request_id"])
 
     def test_merge_import_options_clears_yaml_owned_mapping_options(self) -> None:
         self.assertEqual(

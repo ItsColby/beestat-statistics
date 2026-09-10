@@ -2693,6 +2693,14 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     local_tz = ZoneInfo("America/New_York")
     repair_at = (datetime.now(UTC) - timedelta(days=1)).astimezone(local_tz)
     repair_at = repair_at.replace(microsecond=0)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            "thermostats": [
+                {"id": 1001, "filter_changed_date": repair_at.date().isoformat()}
+            ]
+        },
+    )
     thermostat = ConfiguredThermostat(
         thermostat_id=1001,
         name="Zone A",
@@ -2700,6 +2708,7 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
         filter_changed_date=repair_at.date(),
     )
     coordinator = types.SimpleNamespace(
+        config_entry=entry,
         data=types.SimpleNamespace(
             config=types.SimpleNamespace(thermostats=(thermostat,))
         ),
@@ -2728,7 +2737,11 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     mark_changed.assert_awaited_once()
     assert mark_changed.await_args.args[1] == 1001
     assert mark_changed.await_args.args[2] == repair_at.astimezone(UTC)
-    assert mark_changed.await_args.kwargs == {"dismiss_alerts": False}
+    assert mark_changed.await_args.kwargs == {
+        "dismiss_alerts": False,
+        "source": "repair",
+        "expected_boundary": (None, repair_at.date(), None),
+    }
 
 
 @pytest.mark.parametrize(
@@ -2842,30 +2855,39 @@ async def test_native_filter_date_exposes_and_updates_click_boundary(
     summary = types.SimpleNamespace(
         filter_changed_date=changed_at.date(),
         filter_changed_source="home_assistant_override",
+        filter_runtime_hours=None,
+        recent_runtime_hours_per_day=None,
     )
     coordinator = types.SimpleNamespace(
         hass=hass,
         last_update_success=True,
+        local_tz=ZoneInfo("America/New_York"),
         data=types.SimpleNamespace(
             config=types.SimpleNamespace(thermostats=(thermostat,)),
             thermostats={1001: summary},
+            projected_at=datetime.now(UTC),
         ),
     )
     entity = BeestatFilterChangedDate(coordinator, thermostat)
 
     assert entity.available
     assert entity.native_value == changed_at.date()
-    assert entity.extra_state_attributes == {
+    expected_attributes = {
         "source": "home_assistant_override",
         "home_assistant_override_date": "2026-07-05",
         "filter_changed_at": "2026-07-05T21:48:00+00:00",
-        "boundary_status": "finalized",
+        "boundary_status": "pending_data",
         "change_day_runtime_baseline_seconds": 7200.0,
         "boundary_reconciled_at": "2026-07-06T06:05:00+00:00",
         "boundary_source_data_end": "2026-07-06T04:00:00+00:00",
         "boundary_precision_minutes": 5,
         "legacy_helper_entity_id": None,
+        "filter_change_event": None,
     }
+    attributes = entity.extra_state_attributes
+    assert {key: attributes[key] for key in expected_attributes} == expected_attributes
+    assert attributes["runtime_coverage"] == "unknown"
+    assert attributes["runtime_is_lower_bound"] is True
 
     new_date = date(2026, 7, 7)
     with patch(
@@ -3391,6 +3413,7 @@ def _runtime_data(
 ) -> Any:
     return types.SimpleNamespace(
         coordinator=types.SimpleNamespace(
+            local_tz=ZoneInfo("America/New_York"),
             data=types.SimpleNamespace(
                 config=types.SimpleNamespace(
                     thermostats=tuple(thermostats),
@@ -3398,7 +3421,9 @@ def _runtime_data(
                 ),
                 thermostat_rows=tuple(thermostat_rows or ()),
                 sensor_rows=tuple(sensor_rows or ()),
-            )
+                thermostats={},
+                projected_at=datetime.now(UTC),
+            ),
         )
     )
 

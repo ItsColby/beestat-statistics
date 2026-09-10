@@ -251,10 +251,10 @@
       "message": "The repair timestamp's local date does not match this thermostat's saved filter-change date."
     },
     "filter_change_boundary_local_time_invalid": {
-      "message": "The repair timestamp is ambiguous or does not exist in Home Assistant's local timezone. Include an explicit UTC offset."
+      "message": "The filter-change timestamp is ambiguous or does not exist in Home Assistant's local timezone. Include an explicit UTC offset."
     },
     "filter_change_boundary_out_of_range": {
-      "message": "The repair timestamp must be in the past 31 days so Beestat's raw runtime endpoint can reconcile it."
+      "message": "The filter-change timestamp must be in the past 31 days."
     },
     "no_loaded_entry": {
       "message": "No Beestat Statistics config entry is loaded."
@@ -267,6 +267,15 @@
     },
     "statistics_import_failed": {
       "message": "Beestat statistics import failed. Check the Beestat Statistics status sensor and Home Assistant log for details."
+    },
+    "filter_change_boundary_conflict": {
+      "message": "The saved filter boundary changed. Read the current boundary before recording a replacement."
+    },
+    "filter_change_not_after_prior": {
+      "message": "The replacement timestamp must be later than the saved exact filter boundary. Use the repair action for a correction."
+    },
+    "request_id_reused": {
+      "message": "This request ID already identifies a different filter change. Use a new ID for a new replacement."
     }
   },
   "issues": {
@@ -318,7 +327,7 @@
     },
     "rebuild_statistics": {
       "name": "Rebuild Beestat statistics",
-      "description": "Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally limited to one thermostat and local date range.",
+      "description": "Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally for one thermostat. Cumulative statistics rewrite the affected tail through the latest source day; measurement statistics use the selected date range.",
       "fields": {
         "thermostat_id": {
           "name": "Thermostat ID",
@@ -330,7 +339,7 @@
         },
         "end_date": {
           "name": "End date",
-          "description": "Optional last local date to write back to Recorder after rebuilding cumulative values from the full baseline."
+          "description": "Optional last local date for measurement statistics. Cumulative statistics continue through the latest source day to preserve corrected totals."
         },
         "skip_sync": {
           "name": "Skip Beestat sync",
@@ -353,6 +362,40 @@
         "changed_at": {
           "name": "Changed at",
           "description": "Verified filter-change timestamp from the last 31 days. An unambiguous value without an offset uses Home Assistant's local timezone; include an explicit offset during a repeated daylight-saving hour."
+        }
+      }
+    },
+    "record_filter_change": {
+      "name": "Record filter change",
+      "description": "Record a verified physical replacement at its actual timestamp using the saved prior boundary and a replay-safe request ID. Returns the persisted timestamp even when runtime coverage remains pending. Use the date entity or repair action for corrections.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics configuration entry that owns the thermostat."
+        },
+        "thermostat_id": {
+          "name": "Thermostat ID",
+          "description": "Configured Beestat thermostat ID whose filter was replaced."
+        },
+        "changed_at": {
+          "name": "Changed at",
+          "description": "Actual physical replacement timestamp in the last 31 days. Include an explicit offset during a repeated daylight-saving hour."
+        },
+        "expected_changed_at": {
+          "name": "Expected previous timestamp",
+          "description": "Previously saved filter_changed_at attribute, or null when no exact timestamp is saved."
+        },
+        "expected_changed_date": {
+          "name": "Expected previous date",
+          "description": "Previously saved home_assistant_override_date attribute, or null when no override date is saved."
+        },
+        "expected_request_id": {
+          "name": "Expected previous request ID",
+          "description": "The prior cycle's filter_change_event.request_id captured with the reminder, or null when no event exists. Preserve this value across retries; a newer correction does not authorize an old completion."
+        },
+        "request_id": {
+          "name": "Request ID",
+          "description": "Stable opaque ID for this replacement, up to 128 characters. Reuse it only when retrying the same replacement."
         }
       }
     }

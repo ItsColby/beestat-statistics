@@ -56,9 +56,59 @@ repair_filter_change_boundary:
       required: true
       selector:
         datetime: {}
+record_filter_change:
+  name: Record filter change
+  description: Record a verified physical replacement at its actual timestamp using the saved prior boundary and a replay-safe request ID. Returns the persisted timestamp even when runtime coverage remains pending. Use the date entity or repair action for corrections.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Loaded Beestat Statistics configuration entry that owns the thermostat.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    thermostat_id:
+      name: Thermostat ID
+      description: Configured Beestat thermostat ID whose filter was replaced.
+      required: true
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    changed_at:
+      name: Changed at
+      description: Actual physical replacement timestamp in the last 31 days. Include an explicit offset during a repeated daylight-saving hour.
+      required: true
+      selector:
+        datetime: {}
+    expected_changed_at:
+      name: Expected previous timestamp
+      description: Previously saved filter_changed_at attribute, or null when no exact timestamp is saved.
+      required: true
+      selector:
+        datetime: {}
+    expected_changed_date:
+      name: Expected previous date
+      description: Previously saved home_assistant_override_date attribute, or null when no override date is saved.
+      required: true
+      selector:
+        date: {}
+    expected_request_id:
+      name: Expected previous request ID
+      description: The prior cycle's filter_change_event.request_id captured with the reminder, or null when no event exists. Preserve this value across retries; a newer correction does not authorize an old completion.
+      required: true
+      selector:
+        text: {}
+    request_id:
+      name: Request ID
+      description: Stable opaque ID for this replacement, up to 128 characters. Reuse it only when retrying the same replacement.
+      required: true
+      selector:
+        text: {}
 rebuild_statistics:
   name: Rebuild Beestat statistics
-  description: Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally limited to one thermostat and local date range.
+  description: Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally for one thermostat. Cumulative statistics rewrite the affected tail through the latest source day; measurement statistics use the selected date range.
   fields:
     thermostat_id:
       name: Thermostat ID
@@ -77,7 +127,7 @@ rebuild_statistics:
         date: {}
     end_date:
       name: End date
-      description: Optional last local date to write back to Recorder after rebuilding cumulative values from the full baseline.
+      description: Optional last local date for measurement statistics. Cumulative statistics continue through the latest source day to preserve corrected totals.
       required: false
       selector:
         date: {}

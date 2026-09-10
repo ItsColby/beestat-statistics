@@ -23,6 +23,11 @@ from .entity import (
     thermostat_suggested_object_id,
 )
 from .entry_options import async_set_filter_changed_date
+from .filter_forecast import (
+    FILTER_FORECAST_QUALITY_FIELDS,
+    build_filter_forecast,
+    filter_forecast_quality_attributes,
+)
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
@@ -79,6 +84,7 @@ class BeestatFilterChangedDate(
     _attr_entity_category = EntityCategory.CONFIG
     _unrecorded_attributes = frozenset(
         {
+            *FILTER_FORECAST_QUALITY_FIELDS,
             "source",
             "home_assistant_override_date",
             "filter_changed_at",
@@ -88,6 +94,7 @@ class BeestatFilterChangedDate(
             "boundary_source_data_end",
             "boundary_precision_minutes",
             "legacy_helper_entity_id",
+            "filter_change_event",
         }
     )
 
@@ -137,7 +144,7 @@ class BeestatFilterChangedDate(
         return thermostat.filter_changed_date
 
     @property
-    def extra_state_attributes(self) -> dict[str, str | float | int | None] | None:
+    def extra_state_attributes(self) -> dict[str, object] | None:
         """Return where the effective date came from."""
 
         data = self.coordinator.data
@@ -147,6 +154,11 @@ class BeestatFilterChangedDate(
         thermostat = self._thermostat
         if summary is None or thermostat is None:
             return None
+        forecast = build_filter_forecast(
+            thermostat,
+            summary,
+            today=data.projected_at.astimezone(self.coordinator.local_tz).date(),
+        )
         return {
             "source": summary.filter_changed_source,
             "home_assistant_override_date": (
@@ -177,6 +189,10 @@ class BeestatFilterChangedDate(
                 5 if thermostat.filter_changed_at is not None else None
             ),
             "legacy_helper_entity_id": thermostat.filter_changed_entity_id,
+            "filter_change_event": thermostat.filter_change_event.as_dict()
+            if thermostat.filter_change_event
+            else None,
+            **filter_forecast_quality_attributes(forecast),
         }
 
     async def async_set_value(self, value: date) -> None:

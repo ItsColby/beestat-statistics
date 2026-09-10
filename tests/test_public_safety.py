@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.check_public_safety import (
-    ROOT,
     _candidate_files,
     _text_failures,
     main,
@@ -130,9 +129,26 @@ class PublicSafetyGuardTests(unittest.TestCase):
         self.assertEqual([], failures)
 
     def test_guard_scans_tree_nested_inside_parent_repository(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            subprocess.run(
+                ["git", "-C", str(parent), "init", "-q"],
+                check=True,
+                capture_output=True,
+            )
+            (parent / "outside.txt").write_text(
+                "Outside the export.\n", encoding="utf-8"
+            )
+            root = parent / "export"
+            root.mkdir()
             (root / "README.md").write_text("Safe public text.\n", encoding="utf-8")
+            top_level = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(Path(top_level.stdout.strip()).resolve(), parent.resolve())
             file_count, failures = run_guard(root)
         self.assertEqual(1, file_count)
         self.assertEqual([], failures)

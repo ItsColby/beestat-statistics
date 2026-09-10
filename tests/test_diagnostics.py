@@ -129,6 +129,14 @@ class DiagnosticsTest(unittest.TestCase):
             filter_changed_source=None,
             filter_runtime_hours=None,
             recent_runtime_hours_per_day=None,
+            filter_runtime_observation=self.coordinator.FilterRuntimeObservation(
+                3600,
+                "partial",
+                600,
+                180,
+                "source_gap",
+                datetime(2026, 7, 3, 21, 55, tzinfo=UTC),
+            ),
         )
         metadata = self.coordinator.ThermostatMetadata(
             thermostat_id=1001,
@@ -250,6 +258,11 @@ class DiagnosticsTest(unittest.TestCase):
         text = repr(result)
 
         self.assertIsInstance(result["beestat_data"]["thermostats"], list)
+        quality = result["beestat_data"]["thermostats"][0]
+        self.assertEqual(quality["runtime_coverage"], "partial")
+        self.assertEqual(quality["filter_boundary_status"], "source_gap")
+        self.assertEqual(quality["runtime_unknown_interval_minutes"], 10)
+        self.assertNotIn("2026-07-03T21:55:00+00:00", text)
         self.assertIsInstance(result["beestat_data"]["sensors"], list)
         self.assertEqual(
             result["entry"],
