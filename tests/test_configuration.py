@@ -267,6 +267,44 @@ class ConfigurationResponseTest(unittest.TestCase):
             [{"thermostat_id": 1, "model_number": "valid-model"}],
         )
 
+    def test_response_mutation_cannot_change_cached_settings(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="zone_a", name="Zone A"
+        )
+        rows = ({"id": 1, "ecobee_thermostat_id": 2},)
+        snapshots = self.thermostat_settings.build_thermostat_settings_snapshots(
+            rows,
+            [
+                {
+                    "id": 2,
+                    "settings": {"fanMinOnTime": 15, "autoAway": True},
+                }
+            ],
+        )
+        response = self.configuration.configuration_response(
+            entry_id="entry-1",
+            entry_data={},
+            entry_options={},
+            config=self.config_model.BeestatConfig(
+                thermostats=(thermostat,), sensors=()
+            ),
+            point_lookback_days=45,
+            scan_interval_seconds=21600,
+            thermostat_rows=rows,
+            thermostat_settings=snapshots,
+        )
+
+        returned = response["source_details"]["thermostats"][0]["ecobee_configuration"][
+            "comfort_and_schedule"
+        ]
+        returned["fanMinOnTime"]["value"] = 60
+        returned["autoAway"] = False
+        cached = snapshots[1].source_details["comfort_and_schedule"]
+        self.assertEqual(cached["fanMinOnTime"], {"value": 15, "unit": "min"})
+        self.assertTrue(cached["autoAway"])
+        cached["fanMinOnTime"]["value"] = 20
+        self.assertEqual(returned["fanMinOnTime"]["value"], 60)
+
 
 if __name__ == "__main__":
     unittest.main()

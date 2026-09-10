@@ -30,6 +30,7 @@ from custom_components.beestat_statistics.const import (
     SERVICE_RECORD_FILTER_CHANGE,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
+from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entry_options import async_mark_filter_changed
 from tests.test_runtime_ha import _coordinator_data
 
@@ -266,6 +267,111 @@ async def test_bounded_rebuild_updates_real_recorder_tail_and_next_window_seed(
     await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("recorder_mock")
+@pytest.mark.parametrize("window_change", ["stale_recorder", "source_correction"])
+async def test_summary_window_new_stage_rebuilds_the_complete_recorder_baseline(
+    hass: HomeAssistant, freezer: Any, window_change: str
+) -> None:
+    """A stage absent from status rows must not restart at an unseeded window."""
+
+    now = datetime(2026, 7, 31, 18, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    await hass.async_start()
+    start_day = date(2026, 6, 21)
+    rows = [
+        {
+            "thermostat_id": 1,
+            "date": (start_day + timedelta(days=index)).isoformat(),
+            "count": 288,
+            "sum_fan": 3600,
+            "sum_compressor_cool_2": (
+                3600 if window_change == "stale_recorder" or index < 10 else 0
+            ),
+        }
+        for index in range(40)
+    ]
+    use_recent_cache = False
+
+    async def refresh(**_kwargs):
+        cached_rows = rows[-30:] if use_recent_cache else rows
+        coordinator.data = coordinator._build_runtime_data(
+            [dict(row) for row in cached_rows],
+            [{"id": 1, "name": "Zone A"}],
+            [],
+            now,
+            now,
+            not use_recent_cache,
+            None,
+            None,
+            evaluated_at=now,
+            fetched_at=now,
+        )
+        return coordinator.data
+
+    async def summary_window(start, end):
+        if window_change == "source_correction":
+            # This correction arrives after the status snapshot and seed lookup.
+            rows[-2]["sum_compressor_cool_2"] = 7200
+        return [row for row in rows if start <= row["date"] <= end]
+
+    client.async_read_runtime_thermostat = AsyncMock(return_value=[])
+    client.async_read_runtime_sensor = AsyncMock(return_value=[])
+    client.async_read_runtime_thermostat_summary = AsyncMock(side_effect=summary_window)
+    client.async_read_id = AsyncMock(side_effect=lambda _resource: list(rows))
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    stage_id = "beestat:zone_a_cool_stage_2_runtime_hours"
+
+    async def read_stage():
+        await async_wait_recording_done(hass)
+        statistics = await get_instance(hass).async_add_executor_job(
+            partial(
+                statistics_during_period,
+                hass,
+                datetime(2026, 6, 20, tzinfo=UTC),
+                None,
+                {stage_id},
+                "hour",
+                None,
+                {"sum", "state"},
+            )
+        )
+        return statistics[stage_id]
+
+    with patch.object(coordinator, "async_refresh_runtime", new=refresh):
+        await importer.async_import_statistics(skip_sync=True, force_full_summary=True)
+        initial = await read_stage()
+        assert initial[-1]["sum"] == (40 if window_change == "stale_recorder" else 10)
+        if window_change == "stale_recorder":
+            # Recorder stops at July 30, but the latest 30 status days have no stage 2.
+            rows.extend(
+                {
+                    "thermostat_id": 1,
+                    "date": (start_day + timedelta(days=index)).isoformat(),
+                    "count": 288,
+                    "sum_fan": 3600,
+                }
+                for index in range(40, 80)
+            )
+            now += timedelta(days=40)
+            freezer.move_to(now)
+        use_recent_cache = True
+        result = await importer.async_import_statistics(skip_sync=True)
+        final = await read_stage()
+        assert result.summary_mode == "full"
+        assert result.summary_fallback_reason == "missing_prior_recorder_seed"
+        assert result.cumulative_seed_count == 0
+        assert final[-1]["sum"] == (40 if window_change == "stale_recorder" else 12)
+        assert len(final) == len(rows)
+        client.async_read_runtime_thermostat_summary.assert_awaited_once_with(
+            "2026-07-23", rows[-1]["date"]
+        )
+        client.async_read_id.assert_awaited_once_with("runtime_thermostat_summary")
+    await entry._async_process_on_unload(hass)
+
+
 async def test_repair_rejects_stale_projection_after_new_replacement_is_saved(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -320,4 +426,56 @@ async def test_repair_rejects_stale_projection_after_new_replacement_is_saved(
             )
         assert raised.value.translation_key == "filter_change_boundary_date_mismatch"
         assert entry.options is saved
+    await entry._async_process_on_unload(hass)
+
+
+async def test_native_date_correction_preserves_upstream_filter_alerts(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    now = datetime(2026, 7, 6, 18, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    prior_changed_at = "2026-07-05T18:00:00+00:00"
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            "thermostats": [
+                {
+                    "id": 1,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_changed_at": prior_changed_at,
+                    "filter_change_day_runtime_baseline_seconds": 3600,
+                }
+            ],
+        },
+    )
+    coordinator.async_rebuild_runtime_from_cached_rows()
+    entity = BeestatFilterChangedDate(
+        coordinator, coordinator.data.config.thermostats[0]
+    )
+    with (
+        patch.object(
+            coordinator,
+            "async_refresh_runtime",
+            new=AsyncMock(
+                side_effect=lambda **_kwargs: (
+                    coordinator.async_rebuild_runtime_from_cached_rows()
+                )
+            ),
+        ) as refresh,
+        patch.object(
+            coordinator, "async_dismiss_filter_alerts", new=AsyncMock(return_value=1)
+        ) as dismiss,
+    ):
+        await entity.async_set_value(date(2026, 7, 4))
+        saved = entry.options["thermostats"][0]
+        assert saved["filter_changed_date"] == "2026-07-04"
+        assert "filter_changed_at" not in saved
+        assert "filter_change_day_runtime_baseline_seconds" not in saved
+        assert saved["filter_change_event"]["action"] == "correction"
+        assert saved["filter_change_event"]["source"] == "date"
+        assert saved["filter_change_event"]["prior_changed_at"] == prior_changed_at
+        assert entity.native_value == date(2026, 7, 4)
+        refresh.assert_awaited_once_with(skip_sync=True)
+        dismiss.assert_not_awaited()
     await entry._async_process_on_unload(hass)

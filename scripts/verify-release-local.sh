@@ -37,7 +37,8 @@ if [[ "$backend" == container ]]; then
   # DrvFS exposes regular files as executable unless metadata is enabled.
   find "$repo_root" -type f -exec chmod a-x {} +
   git -C "$repo_root" -c init.templateDir= init -q
-  git -C "$repo_root" add -A
+  # The curated payload can contain tracked files matching source ignore rules.
+  git -C "$repo_root" add -A -f
 fi
 
 python_image="docker.io/library/python@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde11b7a9395f48e24360c0988bcc5c2bc"

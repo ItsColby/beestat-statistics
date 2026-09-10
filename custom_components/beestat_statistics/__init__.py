@@ -58,11 +58,13 @@ from .api import (
     BeestatApiError,
     BeestatAuthError,
     BeestatClient,
+    BeestatPermanentError,
     exception_fingerprint,
 )
 from .config_model import (
     ConfiguredSensor,
     ConfiguredThermostat,
+    build_beestat_config,
     configured_mapping_device_conflicts,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
@@ -763,6 +765,15 @@ class BeestatStatisticsImporter:
                 fallback_reason="summary_window_read_failed",
             )
 
+        # The Recorder window can include hardware absent from the recent cache,
+        # or a correction can introduce another stage between the two reads.
+        if not set(cumulative_statistic_ids(runtime_data.config, rows)) <= seeds.keys():
+            full_rows = await self._async_full_summary_rows(runtime_data)
+            return SummaryImportPlan.full(
+                full_rows,
+                fallback_reason="missing_prior_recorder_seed",
+            )
+
         return SummaryImportPlan(
             rows=rows,
             seeds=seeds,
@@ -869,7 +880,7 @@ class BeestatStatisticsImporter:
                 _format_beestat_time(start),
                 _format_beestat_time(end),
             )
-        except BeestatAuthError:
+        except BeestatAuthError, BeestatPermanentError:
             raise
         except BeestatApiError as err:
             if end - start > timedelta(days=1):
@@ -979,7 +990,7 @@ class BeestatStatisticsImporter:
                 _format_beestat_time(start),
                 _format_beestat_time(end),
             )
-        except BeestatAuthError:
+        except BeestatAuthError, BeestatPermanentError:
             raise
         except BeestatApiError as err:
             if end - start > timedelta(days=1):
@@ -2184,11 +2195,23 @@ def _async_update_mapping_device_conflicts_issue(
 ) -> None:
     """Create or clear the Repair for inconsistent explicit source devices."""
 
-    conflicts = configured_mapping_device_conflicts(
-        entry_runtime_config_data(entry),
-        er.async_get(hass),
-        dr.async_get(hass),
-    )
+    runtime = getattr(entry, "runtime_data", None)
+    data = getattr(getattr(runtime, "coordinator", None), "data", None)
+    config = entry_runtime_config_data(entry)
+    if (
+        data is not None
+        and hasattr(data, "thermostat_rows")
+        and hasattr(data, "sensor_rows")
+    ):
+        conflicts = build_beestat_config(
+            hass, data.thermostat_rows, data.sensor_rows, config
+        ).mapping_device_conflicts
+    else:
+        conflicts = configured_mapping_device_conflicts(
+            config,
+            er.async_get(hass),
+            dr.async_get(hass),
+        )
     if not conflicts:
         ir.async_delete_issue(hass, DOMAIN, _MAPPING_DEVICE_CONFLICTS_ISSUE_ID)
         return

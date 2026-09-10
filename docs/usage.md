@@ -174,7 +174,7 @@ spread without a cloud request. This does not make cached cloud values live.
 | --- | --- |
 | You replaced the filter now | Press **Mark filter changed**. Saves the press time as a replacement and attempts to acknowledge matching filter alerts. |
 | You are recording a replacement at its actual earlier time | Use `record_filter_change` with the prior boundary and a unique request ID. |
-| The saved replacement date is wrong | Edit **Filter changed date**. Saves a correction, clears the exact-time boundary, and can acknowledge matching filter alerts. |
+| The saved replacement date is wrong | Edit **Filter changed date**. Saves a correction and clears the exact-time boundary without acknowledging filter alerts. |
 | The date is right and you now know its exact time | Use `repair_filter_change_boundary`. Saves a correction and refreshes runtime; it does not acknowledge alerts or change Ecobee settings. |
 
 The effective replacement boundary prefers a saved exact timestamp, then a
@@ -200,8 +200,9 @@ are gaps, not zero runtime. The recent rate uses complete days in the preceding
 30-day window, excluding today and incomplete days. The runtime due date projects
 remaining hours at that rate; the maximum-age date applies the calendar limit.
 **Filter due date** is the earlier available date. **Filter due soon** follows
-that projected date and the configured notice window; it sends no notification
-by itself.
+that projected date and the configured notice window, independently of **Filter
+due**. It remains on at and after the projected date; a zero-day notice starts on
+that date. It sends no notification by itself.
 
 **Filter due** is true when the calendar limit has expired or observed runtime
 proves the runtime limit was reached. A projected due date alone is not that

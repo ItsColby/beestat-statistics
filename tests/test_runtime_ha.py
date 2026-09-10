@@ -42,7 +42,11 @@ from custom_components.beestat_statistics import (
     _sensor_thermostat_map,
     _thermostat_data_end_map,
 )
-from custom_components.beestat_statistics.api import BeestatApiError
+from custom_components.beestat_statistics.api import (
+    BeestatApiError,
+    BeestatClient,
+    BeestatPermanentError,
+)
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredSensor,
@@ -51,8 +55,10 @@ from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, 
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
 )
+from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
 from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
+from tests.test_api_response import _FakeResponse, _FakeSession
 
 pytestmark = pytest.mark.asyncio
 
@@ -230,6 +236,66 @@ async def test_sensor_runtime_is_read_once_for_all_enabled_statistics(
     )
     assert rows == {10: [] if read_fails else [row]}
     assert skipped_windows.runtime_sensor_count == int(read_fails)
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("resource", ["thermostat", "sensor"])
+@pytest.mark.parametrize("status", [302, 400, 404])
+async def test_point_window_permanent_http_failure_is_not_bisected(
+    hass: HomeAssistant, freezer: Any, resource: str, status: int
+) -> None:
+    """Permanent transport rejection aborts a long history read after one request."""
+
+    now = datetime(2026, 7, 31, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    session = _FakeSession([_FakeResponse({}, status=status)])
+    client = BeestatClient(session, "test-token", "https://api.test/", retries=3)
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    skipped_windows = SkippedWindowEvidence()
+    with pytest.raises(BeestatPermanentError):
+        await read_window(1, now - timedelta(days=30), now, skipped_windows)
+    assert session.call_count == 1
+    assert session.allow_redirects == [False]
+    assert skipped_windows.total_count == 0
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("resource", ["thermostat", "sensor"])
+@pytest.mark.parametrize("failure", ["oversize", "server_error"])
+async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
+    hass: HomeAssistant, freezer: Any, resource: str, failure: str
+) -> None:
+    """Response-size rejection and server failures can recover from smaller reads."""
+
+    now = datetime(2026, 7, 31, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    failed = (
+        _FakeResponse({"data": [{"value": "x" * 1024}]})
+        if failure == "oversize"
+        else _FakeResponse({}, status=500)
+    )
+    session = _FakeSession([failed, {"data": [{"id": 1}]}, {"data": [{"id": 2}]}])
+    client = BeestatClient(
+        session,
+        "test-token",
+        "https://api.test/",
+        retries=3 if failure == "oversize" else 1,
+        max_response_bytes=128,
+    )
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    skipped_windows = SkippedWindowEvidence()
+    rows = await read_window(1, now - timedelta(days=2), now, skipped_windows)
+    assert rows == [{"id": 1}, {"id": 2}]
+    assert session.call_count == 3
+    assert skipped_windows.total_count == 0
     await entry._async_process_on_unload(hass)
 
 
@@ -582,6 +648,195 @@ async def test_real_point_timer_projects_schedule_without_io(
     assert client.calls == []
     assert updates == ["updated"]
     await entry._async_process_on_unload(hass)
+
+
+def _filter_uncertainty_data(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    coordinator: BeestatRuntimeDataCoordinator,
+    *,
+    evaluated_at: datetime,
+    replacement_offset: timedelta = timedelta(),
+    corrected_runtime: bool = False,
+):
+    """Build the cached raw-day source for a 3,500-second filter observation."""
+    start = datetime(2026, 7, 1, 4, tzinfo=UTC)
+    changed_at = start + replacement_offset
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            "thermostats": [
+                {
+                    "id": 1,
+                    "filter_changed_date": "2026-07-01",
+                    "filter_changed_at": changed_at.isoformat(),
+                    "filter_lifetime_runtime_hours": 1,
+                }
+            ]
+        },
+    )
+    points = tuple(
+        {
+            "timestamp": (start + timedelta(minutes=5 * index)).isoformat(),
+            "fan": 300
+            if index < 11
+            else (100 if corrected_runtime else 200)
+            if index == 11
+            else 0,
+        }
+        for index in range(108)
+    )
+    coordinator._filter_day_cache = {
+        1: ((changed_at, coordinator.local_tz.key), points)
+    }
+    return coordinator._build_runtime_data(
+        [],
+        [{"id": 1, "name": "Zone A", "data_end": "2026-07-01T12:55:00Z"}],
+        [],
+        evaluated_at,
+        evaluated_at,
+        True,
+        None,
+        None,
+        evaluated_at=evaluated_at,
+        fetched_at=evaluated_at,
+    )
+
+
+async def test_filter_uncertainty_timer_crosses_exact_boundary_without_source_event(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+    boundary = before + timedelta(seconds=100)
+    freezer.move_to(before)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
+    coordinator.data = _filter_uncertainty_data(
+        hass, entry, coordinator, evaluated_at=before
+    )
+    original = coordinator.data
+    observation = original.thermostats[1].filter_runtime_observation
+    assert observation.observed_seconds == 3500
+    assert observation.threshold_reached(1) is False
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+    try:
+        coordinator._async_schedule_projection_boundary()
+        freezer.move_to(boundary - timedelta(microseconds=1))
+        async_fire_time_changed_exact(hass, boundary - timedelta(microseconds=1))
+        await hass.async_block_till_done()
+        assert updates == []
+        with patch.object(
+            coordinator,
+            "_async_rebuild_projection_from_cached",
+            wraps=coordinator._async_rebuild_projection_from_cached,
+        ) as rebuild:
+            freezer.move_to(boundary)
+            async_fire_time_changed_exact(hass, boundary)
+            await hass.async_block_till_done()
+            rebuild.assert_called_once_with(boundary)
+        summary = coordinator.data.thermostats[1]
+        forecast = build_filter_forecast(
+            coordinator.data.config.thermostats[0], summary, today=before.date()
+        )
+        assert forecast.runtime_threshold_reached is None
+        assert forecast.due is None
+        assert summary.filter_runtime_observation.observed_seconds == 3500
+        assert summary.filter_runtime_observation.unknown_interval_seconds == 100
+        assert summary.filter_runtime_observation.source_unknown_interval_seconds == 0
+        assert (
+            summary.filter_runtime_observation.source_data_end
+            == observation.source_data_end
+        )
+        assert coordinator.data.fetched_at == original.fetched_at
+        assert coordinator.data.sync_success_at == original.sync_success_at
+        assert (
+            coordinator.data.metadata_sync_success_at
+            == original.metadata_sync_success_at
+        )
+        assert coordinator.data.projected_at == boundary
+        assert client.calls == []
+        assert updates == ["updated"]
+        assert coordinator._cancel_projection_boundary is not None
+    finally:
+        await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("change", ["refresh", "replacement"])
+async def test_filter_source_or_replacement_replaces_uncertainty_timer(
+    hass: HomeAssistant,
+    freezer: Any,
+    change: str,
+) -> None:
+    before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+    old_deadline = before + timedelta(seconds=100)
+    new_deadline = before + timedelta(seconds=200 if change == "refresh" else 400)
+    freezer.move_to(before)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
+    coordinator.data = _filter_uncertainty_data(
+        hass, entry, coordinator, evaluated_at=before
+    )
+    coordinator._async_schedule_projection_boundary()
+    refreshed = _filter_uncertainty_data(
+        hass,
+        entry,
+        coordinator,
+        evaluated_at=before,
+        corrected_runtime=change == "refresh",
+        replacement_offset=timedelta(minutes=5 if change == "replacement" else 0),
+    )
+    coordinator.async_set_updated_data(refreshed)
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+    try:
+        freezer.move_to(old_deadline)
+        async_fire_time_changed_exact(hass, old_deadline)
+        await hass.async_block_till_done()
+        assert updates == []
+        assert (
+            coordinator.data.thermostats[
+                1
+            ].filter_runtime_observation.threshold_reached(1)
+            is False
+        )
+        freezer.move_to(new_deadline)
+        async_fire_time_changed_exact(hass, new_deadline)
+        await hass.async_block_till_done()
+        assert (
+            coordinator.data.thermostats[
+                1
+            ].filter_runtime_observation.threshold_reached(1)
+            is None
+        )
+        assert coordinator.data.projected_at == new_deadline
+        assert client.calls == []
+        assert updates == ["updated"]
+    finally:
+        await entry._async_process_on_unload(hass)
+
+
+async def test_unload_cancels_filter_uncertainty_timer(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+    boundary = before + timedelta(seconds=100)
+    freezer.move_to(before)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
+    coordinator.data = _filter_uncertainty_data(
+        hass, entry, coordinator, evaluated_at=before
+    )
+    updates: list[str] = []
+    coordinator.async_add_listener(lambda: updates.append("updated"))
+    coordinator._async_schedule_projection_boundary()
+    await entry._async_process_on_unload(hass)
+    freezer.move_to(boundary)
+    async_fire_time_changed_exact(hass, boundary)
+    await hass.async_block_till_done()
+    assert coordinator._cancel_projection_boundary is None
+    assert coordinator.data.projected_at == before
+    assert client.calls == []
+    assert updates == []
 
 
 async def test_source_refresh_replaces_real_stale_timer(

@@ -132,7 +132,7 @@ def _thermostat_source_details(
         if comfort_profiles:
             item["comfort_profiles"] = comfort_profiles
         if (snapshot := thermostat_settings.get(thermostat.thermostat_id)) is not None:
-            item["ecobee_configuration"] = snapshot.source_details
+            item["ecobee_configuration"] = _json_value(snapshot.source_details)
         details.append(item)
     return details
 

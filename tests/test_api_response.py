@@ -200,7 +200,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.api.asyncio, "sleep", new=sleep),
             self.assertRaisesRegex(
-                self.api.BeestatApiError,
+                self.api.BeestatPermanentError,
                 r"thermostat\.read_id returned HTTP 400",
             ),
         ):
@@ -222,7 +222,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.api.asyncio, "sleep", new=sleep),
             self.assertRaisesRegex(
-                self.api.BeestatApiError,
+                self.api.BeestatPermanentError,
                 r"thermostat\.read_id refused HTTP redirect 302",
             ),
         ):

@@ -3,6 +3,25 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.10.3
+
+- Stop affected cumulative statistics at explicitly invalid counters, and
+  reload the full summary baseline when a corrected window introduces a stage
+  without its prior Recorder total. Missing optional counters still mean zero.
+- Stop subdividing history requests after permanent client errors or redirects;
+  retain bounded recovery for oversized responses and server errors.
+- Validate built-in sensor overrides against their thermostat's physical
+  identity across configuration, runtime resolution, and Repairs.
+- Update filter uncertainty when time alone invalidates a not-due result.
+  Keep due-soon independent of uncertain exposure and on through the due date,
+  including zero-day notice windows.
+- Preserve upstream filter alerts when correcting a saved date, detach returned
+  configuration details from cached state, and reject filter writes after unload.
+- Replace the installation, usage, architecture, development, and native-help
+  documentation with current behavior and explicit ownership contracts.
+- Preserve tracked files that match ignore rules in local validation snapshots.
+  Existing mappings, statistic identities, and filter limits require no migration.
+
 ## Beestat Statistics v2026.9.10.2
 
 - Keep filter forecast revisions stable when local temperature or schedule

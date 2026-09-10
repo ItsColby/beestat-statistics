@@ -176,6 +176,7 @@ class BeestatConfig:
     sensors: tuple[ConfiguredSensor, ...]
     local_thermostat_count: int = 0
     local_room_sensor_count: int = 0
+    mapping_device_conflicts: tuple[MappingDeviceConflict, ...] = ()
 
 
 def filter_boundary_status(thermostat: ConfiguredThermostat) -> str:
@@ -209,12 +210,6 @@ def build_beestat_config(
         if conflict.resource_type == "thermostat"
         for resource_id in conflict.resource_ids
     )
-    conflicted_sensor_ids = frozenset(
-        resource_id
-        for conflict in mapping_conflicts
-        if conflict.resource_type == "sensor"
-        for resource_id in conflict.resource_ids
-    )
     thermostat_overrides = _resolved_override_map(
         hass,
         config_data.get(CONF_THERMOSTATS),
@@ -232,6 +227,32 @@ def build_beestat_config(
         local_devices,
         conflicted_thermostat_ids,
     )
+    thermostat_by_id = {item.thermostat_id: item for item in thermostats}
+    inherited_sensor_parents: dict[int, ConfiguredThermostat] = {}
+    for row in sensor_rows:
+        sensor_id = _row_int(row, "sensor_id", "id")
+        if sensor_id is None or not _is_thermostat_sensor(row):
+            continue
+        override = sensor_overrides.get(sensor_id, {})
+        if _is_disabled(override) or (
+            _bool(row.get("inactive")) and sensor_id not in sensor_overrides
+        ):
+            continue
+        parent_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
+            row, "thermostat_id"
+        )
+        if parent_id is not None and (parent := thermostat_by_id.get(parent_id)):
+            inherited_sensor_parents[sensor_id] = parent
+    if inherited_sensor_parents:
+        mapping_conflicts = _mapping_device_conflicts_for_hass(
+            hass, config_data, inherited_sensor_parents=inherited_sensor_parents
+        )
+    conflicted_sensor_ids = frozenset(
+        resource_id
+        for conflict in mapping_conflicts
+        if conflict.resource_type == "sensor"
+        for resource_id in conflict.resource_ids
+    )
     sensors = _build_sensors(
         sensor_rows,
         sensor_overrides,
@@ -248,6 +269,7 @@ def build_beestat_config(
         local_room_sensor_count=sum(
             1 for device in local_devices if not device.is_thermostat
         ),
+        mapping_device_conflicts=mapping_conflicts,
     )
 
 
@@ -376,6 +398,8 @@ def configured_mapping_device_conflicts(
     config_data: Mapping[str, Any],
     entity_registry: Any,
     device_registry: Any = None,
+    *,
+    inherited_sensor_parents: Mapping[int, ConfiguredThermostat] | None = None,
 ) -> tuple[MappingDeviceConflict, ...]:
     """Return cross-device and duplicate explicit source-device claims."""
 
@@ -387,17 +411,52 @@ def configured_mapping_device_conflicts(
     ):
         claims_by_device: dict[str, list[int]] = {}
         items = _override_map(config_data.get(key))
+        if resource_type == "sensor" and inherited_sensor_parents:
+            for sensor_id in inherited_sensor_parents:
+                items.setdefault(sensor_id, {})
         for resource_id, item in sorted(items.items()):
             if _is_disabled(item):
                 continue
+            mapping_fields = fields
+            effective = item
+            parent_devices: set[str] = set()
+            if (
+                resource_type == "sensor"
+                and inherited_sensor_parents
+                and (parent := inherited_sensor_parents.get(resource_id)) is not None
+            ):
+                # Built-in sensors inherit their parent before applying overrides.
+                # Validate that effective claim, including the parent anchor, with
+                # the same native proof used for explicit thermostat mappings.
+                parent_mapping = {
+                    field: getattr(parent, field)
+                    for field in THERMOSTAT_STABLE_ENTITY_FIELDS
+                }
+                parent_devices.update(
+                    _explicit_registry_device_ids(
+                        entity_registry,
+                        parent_mapping,
+                        THERMOSTAT_STABLE_ENTITY_FIELDS,
+                        probe_devices,
+                    )
+                )
+                effective = dict(parent_mapping)
+                for field in SENSOR_STABLE_ENTITY_FIELDS:
+                    if has_explicit_entity_mapping(item, (field,)):
+                        effective[field] = resolve_override_entity_id(
+                            entity_registry, item, field
+                        )
+                mapping_fields = THERMOSTAT_STABLE_ENTITY_FIELDS
             device_ids = _explicit_registry_device_ids(
                 entity_registry,
-                item,
-                fields,
+                effective,
+                mapping_fields,
                 probe_devices,
             )
-            if len(device_ids) > 1 or _mixed_probe_mapping_unproven(
-                entity_registry, item, fields, probe_devices
+            if len(
+                set(device_ids) | parent_devices
+            ) > 1 or _mixed_probe_mapping_unproven(
+                entity_registry, effective, mapping_fields, probe_devices
             ):
                 conflicts.append(
                     MappingDeviceConflict(
@@ -407,8 +466,14 @@ def configured_mapping_device_conflicts(
                     )
                 )
             # Reserve both native registrations as well as the physical owner.
-            claimed_devices = set(device_ids) | set(
-                _explicit_registry_device_ids(entity_registry, item, fields)
+            claimed_devices = (
+                set(device_ids)
+                | parent_devices
+                | set(
+                    _explicit_registry_device_ids(
+                        entity_registry, effective, mapping_fields
+                    )
+                )
             )
             for device_id in claimed_devices:
                 claims_by_device.setdefault(device_id, []).append(resource_id)
@@ -1237,6 +1302,8 @@ def _mapped_entity_id(
 def _mapping_device_conflicts_for_hass(
     hass: Any,
     config_data: Mapping[str, Any],
+    *,
+    inherited_sensor_parents: Mapping[int, ConfiguredThermostat] | None = None,
 ) -> tuple[MappingDeviceConflict, ...]:
     """Return mapping conflicts when the Home Assistant registry is available."""
 
@@ -1246,7 +1313,10 @@ def _mapping_device_conflicts_for_hass(
     except ImportError:
         return ()
     return configured_mapping_device_conflicts(
-        config_data, er.async_get(hass), dr.async_get(hass)
+        config_data,
+        er.async_get(hass),
+        dr.async_get(hass),
+        inherited_sensor_parents=inherited_sensor_parents,
     )
 
 

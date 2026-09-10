@@ -20,6 +20,7 @@ FAKE_TOOL = r"""
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -35,6 +36,9 @@ if name == "podman":
         str(path.relative_to(mount)) for path in Path(mount).rglob("*")
         if ".git" not in path.relative_to(mount).parts and path.is_file()
     )
+    event["tracked_files"] = subprocess.check_output(
+        ["git", "-C", mount, "ls-files", "-z"], text=True
+    ).split("\0")[:-1]
     if any("actionlint@" in arg for arg in args):
         kind = "actionlint"
     elif any("hassfest@" in arg for arg in args):
@@ -182,6 +186,24 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual(list(self.scratch.iterdir()), [])
         self.assertFalse(Path(str(event["mount"])).exists())
         self.assertTrue((self.repo / "new file.txt").exists())
+
+    def test_snapshot_keeps_source_tracked_ignored_paths_in_its_index(self) -> None:
+        (self.repo / "ignored.txt").write_text("tracked candidate", encoding="utf-8")
+        self.git("add", "-f", "ignored.txt")
+        (self.repo / ".gitignore").write_text("ignored*.txt\n", encoding="utf-8")
+        (self.repo / "ignored-untracked.txt").write_text(
+            "private scratch", encoding="utf-8"
+        )
+
+        result = self.run_validation("release", "container")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        event = self.events()[0]
+        self.assertIn("ignored.txt", event["files"])
+        self.assertIn("ignored.txt", event["tracked_files"])
+        self.assertNotIn("ignored-untracked.txt", event["files"])
+        self.assertNotIn("ignored-untracked.txt", event["tracked_files"])
+        self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_all_retains_early_failure_and_runs_remaining_lanes(self) -> None:
         self.env["VALIDATION_FAIL"] = "actionlint"

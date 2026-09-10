@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -91,7 +92,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
                 ZoneInfo("America/New_York"),
             )
 
-    async def test_set_filter_changed_date_saves_local_option_and_dismisses_alerts(
+    async def test_set_filter_changed_date_saves_correction_without_dismissing_alerts(
         self,
     ) -> None:
         coordinator = _FakeCoordinator(dismissed=1)
@@ -106,46 +107,58 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             _boundary_options(coordinator),
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
-        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
         self.assertEqual(coordinator.refresh_skip_sync_values, [True])
         self.assertEqual(coordinator.rebuild_count, 0)
 
-    async def test_set_filter_changed_date_refreshes_when_dismiss_fails(self) -> None:
+    async def test_replacement_refreshes_when_dismiss_fails(self) -> None:
         api = sys.modules[f"{PACKAGE}.api"]
         coordinator = _FakeCoordinator(dismiss_error=api.BeestatApiError("failed"))
 
-        await self.entry_options.async_set_filter_changed_date(
+        await self.entry_options.async_mark_filter_changed(
             coordinator,
             1001,
-            date(2026, 7, 5),
+            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
         )
 
         self.assertEqual(
             _boundary_options(coordinator),
-            [{"id": 1001, "filter_changed_date": "2026-07-05"}],
+            [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                }
+            ],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
-        self.assertEqual(coordinator.rebuild_count, 0)
+        self.assertEqual(coordinator.refresh_skip_sync_values, [False])
+        self.assertEqual(coordinator.rebuild_count, 1)
 
-    async def test_set_filter_changed_date_survives_unexpected_dismiss_error(
+    async def test_replacement_survives_unexpected_dismiss_error(
         self,
     ) -> None:
         coordinator = _FakeCoordinator(dismiss_error=RuntimeError("unexpected"))
 
-        await self.entry_options.async_set_filter_changed_date(
+        await self.entry_options.async_mark_filter_changed(
             coordinator,
             1001,
-            date(2026, 7, 5),
+            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
         )
 
         self.assertEqual(
             _boundary_options(coordinator),
-            [{"id": 1001, "filter_changed_date": "2026-07-05"}],
+            [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                }
+            ],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [True])
-        self.assertEqual(coordinator.rebuild_count, 0)
+        self.assertEqual(coordinator.refresh_skip_sync_values, [False])
+        self.assertEqual(coordinator.rebuild_count, 1)
 
     async def test_mark_filter_changed_persists_exact_time_before_cloud_refresh(
         self,
@@ -535,7 +548,94 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
                 expected_boundary=original_guard,
             )
         self.assertIs(coordinator.config_entry.options, current)
-        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001, 1001])
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+
+    async def test_closed_runtime_rejects_date_replacement_repair_and_replay(self):
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        for action in ("date", "button", "service", "repair", "replay"):
+            with self.subTest(action=action):
+                coordinator = _FakeCoordinator()
+                if action == "replay":
+                    await self.entry_options.async_mark_filter_changed(
+                        coordinator,
+                        1001,
+                        changed_at,
+                        source="service",
+                        request_id="saved",
+                    )
+                saved = coordinator.config_entry.options
+                calls = (
+                    list(coordinator.refresh_skip_sync_values),
+                    list(coordinator.dismissed_thermostat_ids),
+                    coordinator.rebuild_count,
+                )
+                coordinator.is_closed = True
+                with self.assertRaises(asyncio.CancelledError):
+                    if action == "date":
+                        await self.entry_options.async_set_filter_changed_date(
+                            coordinator, 1001, changed_at.date()
+                        )
+                    else:
+                        await self.entry_options.async_mark_filter_changed(
+                            coordinator,
+                            1001,
+                            changed_at,
+                            source="service" if action == "replay" else action,
+                            request_id="saved" if action == "replay" else "new",
+                            dismiss_alerts=action != "repair",
+                        )
+                self.assertIs(coordinator.config_entry.options, saved)
+                self.assertEqual(
+                    calls,
+                    (
+                        coordinator.refresh_skip_sync_values,
+                        coordinator.dismissed_thermostat_ids,
+                        coordinator.rebuild_count,
+                    ),
+                )
+
+    async def test_accepted_boundary_survives_unload_during_followup(self):
+        def close(coordinator):
+            coordinator.is_closed = True
+            raise asyncio.CancelledError
+
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        for action in ("date", "replacement"):
+            with self.subTest(action=action):
+                coordinator = _FakeCoordinator(during_refresh=close)
+                with self.assertRaises(asyncio.CancelledError):
+                    if action == "date":
+                        await self.entry_options.async_set_filter_changed_date(
+                            coordinator, 1001, changed_at.date()
+                        )
+                    else:
+                        await self.entry_options.async_mark_filter_changed(
+                            coordinator, 1001, changed_at
+                        )
+                saved = coordinator.config_entry.options["thermostats"][0]
+                self.assertEqual(saved["filter_changed_date"], "2026-07-05")
+                self.assertEqual(
+                    saved["filter_change_event"]["action"],
+                    "correction" if action == "date" else "replacement",
+                )
+
+    async def test_closed_runtime_cannot_roll_back_accepted_date_after_refresh_error(
+        self,
+    ):
+        def close(coordinator):
+            coordinator.is_closed = True
+
+        coordinator = _FakeCoordinator(
+            during_refresh=close, refresh_error=RuntimeError("refresh failed")
+        )
+        with self.assertRaisesRegex(RuntimeError, "refresh failed"):
+            await self.entry_options.async_set_filter_changed_date(
+                coordinator, 1001, date(2026, 7, 5)
+            )
+        saved = coordinator.config_entry.options["thermostats"][0]
+        self.assertEqual(saved["filter_changed_date"], "2026-07-05")
+        self.assertEqual(saved["filter_change_event"]["action"], "correction")
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [])
 
 
 def _boundary_options(coordinator):
@@ -572,6 +672,7 @@ class _FakeCoordinator:
         self.rebuild_count = 0
         self.scheduled_reconcile_count = 0
         self.local_tz = ZoneInfo("America/New_York")
+        self.is_closed = False
 
     def _update_entry(self, entry, *, options):
         entry.options = options

@@ -77,6 +77,34 @@ class RecentRuntimeRate:
     excluded_days: int
 
 
+def next_filter_uncertainty_deadline(
+    observation: FilterRuntimeObservation,
+    *,
+    lifetime_hours: float,
+    evaluated_at: datetime,
+) -> datetime | None:
+    """Reevaluate when unreported exposure can invalidate a not-due proof."""
+    if (
+        observation.source_data_end is None
+        or observation.observed_seconds is None
+        or observation.unknown_interval_seconds is None
+        or observation.threshold_reached(lifetime_hours) is not False
+    ):
+        return None
+    # The normalized unknown amount already includes the rounded source horizon
+    # and replacement boundary. Additional unreported time grows at most 1 s/s.
+    remaining = lifetime_hours * 3600 - (
+        observation.observed_seconds + observation.unknown_interval_seconds
+    )
+    if not isfinite(remaining):
+        return None
+    try:
+        # Never round a still-positive proof margin down to an immediate callback.
+        return evaluated_at + timedelta(microseconds=ceil(remaining * 1_000_000))
+    except OverflowError:
+        return None
+
+
 def parse_source_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None

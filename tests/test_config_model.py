@@ -1455,6 +1455,47 @@ class ConfigModelTest(unittest.TestCase):
             ),
         )
 
+    def test_builtin_sensor_override_checks_automatic_parent_mapping(self) -> None:
+        self._install_fake_homeassistant_modules(
+            devices={
+                "zone": FakeDeviceEntry(name="Zone"),
+                "other": FakeDeviceEntry(name="Other"),
+            },
+            entries=[
+                FakeEntityEntry("climate.zone", "zone"),
+                FakeEntityEntry(
+                    "sensor.zone_temperature",
+                    "zone",
+                    original_device_class="temperature",
+                ),
+                FakeEntityEntry(
+                    "sensor.other_temperature",
+                    "other",
+                    original_device_class="temperature",
+                ),
+            ],
+        )
+        for entity_id, conflicted in (
+            ("sensor.other_temperature", True),
+            ("sensor.zone_temperature", False),
+        ):
+            with self.subTest(entity_id=entity_id):
+                config = config_model.build_beestat_config(
+                    FakeHass({}),
+                    ({"id": 1, "name": "Zone"},),
+                    ({"id": 11, "thermostat_id": 1, "type": "thermostat"},),
+                    {"sensors": [{"id": 11, "temperature_entity_id": entity_id}]},
+                )
+                self.assertEqual(config.thermostats[0].device_id, "zone")
+                self.assertEqual(bool(config.mapping_device_conflicts), conflicted)
+                self.assertEqual(
+                    config.sensors[0].device_id, None if conflicted else "zone"
+                )
+                self.assertEqual(
+                    config.sensors[0].temperature_entity_id,
+                    None if conflicted else entity_id,
+                )
+
     def _install_fake_homeassistant_modules(
         self,
         *,

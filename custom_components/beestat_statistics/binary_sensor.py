@@ -680,11 +680,11 @@ class BeestatFilterDueProblemBinarySensor(
         """Return if the filter forecast is currently available."""
 
         forecast = self._forecast
-        return super().available and forecast is not None and forecast.due is not None
+        return super().available and forecast is not None
 
     @property
     def is_on(self) -> bool | None:
-        """Return true when the filter due date is today or earlier."""
+        """Return the observed due state, retaining uncertain exposure as unknown."""
 
         forecast = self._forecast
         return forecast.due if forecast is not None else None
@@ -755,12 +755,12 @@ class BeestatFilterDueSoonProblemBinarySensor(BeestatFilterDueProblemBinarySenso
 
     @property
     def is_on(self) -> bool | None:
-        """Return true when the filter is within the notice window but not due."""
+        """Return the independent projected notice state, including overdue dates."""
 
         forecast = self._forecast
         if forecast is None:
             return None
-        return forecast.due_soon and not forecast.due
+        return forecast.due_soon
 
 
 class BeestatRuntimeStaleProblemBinarySensor(
