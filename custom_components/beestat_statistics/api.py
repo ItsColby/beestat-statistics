@@ -31,11 +31,15 @@ class _BeestatNonRetryableError(BeestatApiError):
     """Raised when another identical request cannot plausibly correct the error."""
 
 
+class BeestatPermanentError(_BeestatNonRetryableError):
+    """Raised when retries or narrower history windows cannot correct the error."""
+
+
 def _reject_http_redirect(status: int, resource: str, method: str) -> None:
     """Fail closed instead of forwarding API-key query parameters."""
 
     if 300 <= status < 400:
-        raise _BeestatNonRetryableError(
+        raise BeestatPermanentError(
             f"{resource}.{method} refused HTTP redirect {status}"
         )
 
@@ -256,7 +260,7 @@ class BeestatClient:
                             400 <= response.status < 500
                             and response.status not in _RETRYABLE_HTTP_STATUSES
                         ):
-                            raise _BeestatNonRetryableError(
+                            raise BeestatPermanentError(
                                 f"{resource}.{method} returned HTTP {response.status}"
                             )
                         _reject_http_redirect(response.status, resource, method)
@@ -274,7 +278,7 @@ class BeestatClient:
             except BeestatAuthError:
                 raise
             except _BeestatNonRetryableError as err:
-                raise BeestatApiError(
+                raise type(err)(
                     f"Failed Beestat call {resource}.{method}: {self.redact_error(err)}"
                 ) from None
             except (

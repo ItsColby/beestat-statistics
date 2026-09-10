@@ -181,7 +181,7 @@ class StatisticsBuilderTest(unittest.TestCase):
         )
         self.assertEqual(len(cool.statistics), 1)
         self.assertEqual(cool.statistics[0]["state"], 2.0)
-        self.assertEqual(heating_degree_days.statistics[0]["state"], 0.0)
+        self.assertEqual(heating_degree_days.statistics, [])
         self.assertFalse(
             any(
                 item.statistic_id == "beestat:zone_a_indoor_humidity"
@@ -357,6 +357,99 @@ class StatisticsBuilderTest(unittest.TestCase):
         )
         ids = statistics_builder.cumulative_statistic_ids(self.config, rows)
         self.assertNotIn("beestat:zone_a_cool_stage_2_runtime_hours", ids)
+
+    def test_invalid_cumulative_contribution_stops_only_affected_series(self) -> None:
+        """Explicit bad increments cannot be silently imported as zero activity."""
+
+        for invalid in (
+            None,
+            "",
+            "unknown",
+            "unavailable",
+            "malformed",
+            "NaN",
+            "Infinity",
+            float("-inf"),
+            True,
+            False,
+            10**1000,
+        ):
+            with self.subTest(invalid=invalid):
+                rows = [
+                    {
+                        "thermostat_id": 1,
+                        "date": f"2026-07-0{day}",
+                        "sum_compressor_cool_1": invalid if day == 2 else 3600,
+                        "sum_fan": 3600,
+                        "sum_heating_degree_days": invalid if day == 2 else 1,
+                        "sum_cooling_degree_days": 2,
+                    }
+                    for day in (1, 2, 3)
+                ]
+                series = statistics_builder.build_statistics(
+                    rows, {}, {}, self.local_tz, self.config
+                )
+                for suffix in (
+                    "cool_runtime_hours",
+                    "cool_stage_1_runtime_hours",
+                    "heating_degree_days",
+                ):
+                    self.assertEqual(
+                        [
+                            row["sum"]
+                            for row in _series(
+                                series, f"beestat:zone_a_{suffix}"
+                            ).statistics
+                        ],
+                        [1],
+                    )
+                for suffix, expected in (
+                    ("fan_runtime_hours", [1, 2, 3]),
+                    ("cooling_degree_days", [2, 4, 6]),
+                ):
+                    self.assertEqual(
+                        [
+                            row["sum"]
+                            for row in _series(
+                                series, f"beestat:zone_a_{suffix}"
+                            ).statistics
+                        ],
+                        expected,
+                    )
+
+    def test_omitted_optional_cumulative_fields_preserve_zero_activity(self) -> None:
+        """Omitted counters and explicit zero retain the supported sparse shape."""
+
+        rows = [
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_1": 3600,
+                "sum_heating_degree_days": 1,
+            },
+            {"thermostat_id": 1, "date": "2026-07-02"},
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-03",
+                "sum_compressor_cool_1": 0,
+                "sum_heating_degree_days": 0,
+            },
+        ]
+        series = statistics_builder.build_statistics(
+            rows, {}, {}, self.local_tz, self.config
+        )
+        for suffix in (
+            "cool_runtime_hours",
+            "cool_stage_1_runtime_hours",
+            "heating_degree_days",
+        ):
+            self.assertEqual(
+                [
+                    row["sum"]
+                    for row in _series(series, f"beestat:zone_a_{suffix}").statistics
+                ],
+                [1, 1, 1],
+            )
 
     def test_runtime_breakdowns_are_emitted_only_for_observed_hardware(self) -> None:
         series = statistics_builder.build_runtime_statistics(

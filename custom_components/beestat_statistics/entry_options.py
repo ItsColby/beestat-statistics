@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -68,6 +69,7 @@ async def async_set_filter_changed_date(
         boundary_reconciled_at=None,
         boundary_source_data_end=None,
         rebuild_from_cached_rows=False,
+        dismiss_alerts=False,
         event=_filter_change_event(
             coordinator, thermostat_id, changed_date, None, "date"
         ),
@@ -87,6 +89,8 @@ async def async_mark_filter_changed(
 ) -> dict[str, Any]:
     """Record a replacement or correction, with an optional optimistic guard."""
 
+    if coordinator.is_closed:
+        raise asyncio.CancelledError
     if changed_at.tzinfo is None:
         raise ValueError("changed_at must be timezone-aware")
     changed_at = changed_at.astimezone(UTC)
@@ -272,6 +276,8 @@ async def _async_apply_filter_change(
 ) -> None:
     """Persist one filter change and refresh its derived runtime state."""
 
+    if coordinator.is_closed:
+        raise asyncio.CancelledError
     entry = cast("BeestatStatisticsConfigEntry", coordinator.config_entry)
     new_options = update_thermostat_override_options(
         entry.data,
@@ -306,7 +312,11 @@ async def _async_apply_filter_change(
         try:
             await coordinator.async_refresh_runtime(skip_sync=True)
         except Exception:
-            if rollback_on_refresh_error and entry.options == new_options:
+            if (
+                not coordinator.is_closed
+                and rollback_on_refresh_error
+                and entry.options == new_options
+            ):
                 coordinator.hass.config_entries.async_update_entry(
                     entry,
                     options=old_options,

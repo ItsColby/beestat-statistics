@@ -1675,6 +1675,55 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(deadline, datetime(2026, 7, 1, 13, 30, 30, tzinfo=UTC))
 
+    async def test_scheduler_selects_filter_uncertainty_before_cloud_staleness(
+        self,
+    ) -> None:
+        before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+        coordinator = self._cached_coordinator(
+            evaluated_at=before, data_end=before - timedelta(seconds=300)
+        )
+        data = coordinator.data
+        thermostat = replace(
+            data.config.thermostats[0], filter_lifetime_runtime_hours=1
+        )
+        observation = self.coordinator.FilterRuntimeObservation(
+            3500, "complete", 0, 0, "finalized", before - timedelta(seconds=300)
+        )
+        data = replace(
+            data,
+            config=replace(data.config, thermostats=(thermostat,)),
+            thermostats={
+                1: replace(data.thermostats[1], filter_runtime_observation=observation)
+            },
+        )
+
+        self.assertEqual(
+            self.coordinator._next_projection_deadline(data, coordinator._local_tz),
+            before + timedelta(seconds=100),
+        )
+        for observed, unknown in ((3500, 100), (3600, 0)):
+            with self.subTest(observed=observed, unknown=unknown):
+                projected = replace(
+                    data,
+                    projected_at=before + timedelta(seconds=100),
+                    thermostats={
+                        1: replace(
+                            data.thermostats[1],
+                            filter_runtime_observation=replace(
+                                observation,
+                                observed_seconds=observed,
+                                unknown_interval_seconds=unknown,
+                            ),
+                        )
+                    },
+                )
+                self.assertEqual(
+                    self.coordinator._next_projection_deadline(
+                        projected, coordinator._local_tz
+                    ),
+                    before + timedelta(minutes=115, seconds=30, microseconds=1),
+                )
+
     async def test_scheduler_retains_boundary_crossed_during_registration(
         self,
     ) -> None:

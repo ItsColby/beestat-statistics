@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,6 +32,89 @@ def points(day: date, *, zone: ZoneInfo = UTC_ZONE, fan: float = 60) -> list[dic
 
 
 class FilterRuntimeTest(unittest.TestCase):
+    def test_uncertainty_deadline_preserves_normalized_horizon_and_tail(self) -> None:
+        before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+        for source_end, changed, evaluated, expected in (
+            (
+                before - timedelta(seconds=300),
+                before - timedelta(hours=1),
+                before,
+                before + timedelta(seconds=100),
+            ),
+            (
+                before - timedelta(seconds=283),
+                before - timedelta(hours=1),
+                before,
+                before + timedelta(seconds=100),
+            ),
+            (
+                before - timedelta(seconds=300),
+                before - timedelta(hours=1),
+                before + timedelta(seconds=30),
+                before + timedelta(seconds=100),
+            ),
+            (
+                before - timedelta(seconds=600),
+                before - timedelta(seconds=50),
+                before,
+                before + timedelta(seconds=50),
+            ),
+        ):
+            with self.subTest(
+                source_end=source_end, changed=changed, evaluated=evaluated
+            ):
+                observation = runtime.build_filter_runtime_observation(
+                    [],
+                    changed_date=changed.date(),
+                    changed_at=changed,
+                    change_day=runtime.ChangeDayObservation(
+                        3500, 0, 0, "finalized", 0, source_end
+                    ),
+                    source_data_end=source_end,
+                    evaluated_at=evaluated,
+                    local_tz=UTC_ZONE,
+                )
+                self.assertFalse(observation.threshold_reached(1))
+                self.assertEqual(
+                    runtime.next_filter_uncertainty_deadline(
+                        observation, lifetime_hours=1, evaluated_at=evaluated
+                    ),
+                    expected,
+                )
+
+    def test_uncertainty_deadline_omits_unknown_due_and_missing_source(self) -> None:
+        before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+        observation = runtime.FilterRuntimeObservation(
+            3500, "complete", 0, 0, "finalized", before - timedelta(seconds=300)
+        )
+        for candidate in (
+            replace(observation, observed_seconds=None),
+            replace(observation, unknown_interval_seconds=None),
+            replace(observation, unknown_interval_seconds=100),
+            replace(observation, observed_seconds=3600),
+            replace(observation, source_data_end=None),
+        ):
+            with self.subTest(observation=candidate):
+                self.assertIsNone(
+                    runtime.next_filter_uncertainty_deadline(
+                        candidate, lifetime_hours=1, evaluated_at=before
+                    )
+                )
+
+    def test_uncertainty_deadline_rounds_positive_submicrosecond_margin_up(
+        self,
+    ) -> None:
+        before = datetime(2026, 7, 1, 13, tzinfo=UTC)
+        observation = runtime.FilterRuntimeObservation(
+            3599.9999999, "complete", 0, 0, "finalized", before
+        )
+        self.assertEqual(
+            runtime.next_filter_uncertainty_deadline(
+                observation, lifetime_hours=1, evaluated_at=before
+            ),
+            before + timedelta(microseconds=1),
+        )
+
     def test_fractional_boundary_keeps_complete_source_and_bounded_uncertainty(
         self,
     ) -> None:

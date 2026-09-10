@@ -55,6 +55,7 @@ from .filter_runtime import (
     build_filter_runtime_observation,
     build_recent_runtime_rate,
     local_day_bounds,
+    next_filter_uncertainty_deadline,
     observed_threshold_date,
 )
 from .profile import ScheduleProfile, schedule_profiles_by_ref
@@ -264,6 +265,12 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Reject work retained by callers after the config entry unloads."""
 
         self._closed = True
+
+    @property
+    def is_closed(self) -> bool:
+        """Return whether this runtime has relinquished its config-entry ownership."""
+
+        return self._closed
 
     @property
     def status(self) -> str:
@@ -1271,10 +1278,21 @@ def _next_projection_deadline(
     local_tz: ZoneInfo,
     stale_threshold_minutes: int = CLOUD_DATA_STALE_MINIMUM_MINUTES,
 ) -> datetime:
-    """Return the earliest cached schedule, freshness, or local-date boundary."""
+    """Return the earliest cached schedule, quality, or local-date boundary."""
 
     projection_at = data.projected_at
     deadlines = [_next_local_midnight(projection_at, local_tz)]
+    for thermostat in data.config.thermostats:
+        summary = data.thermostats.get(thermostat.thermostat_id)
+        if summary is None or summary.filter_runtime_observation is None:
+            continue
+        uncertainty_at = next_filter_uncertainty_deadline(
+            summary.filter_runtime_observation,
+            lifetime_hours=thermostat.filter_lifetime_runtime_hours,
+            evaluated_at=projection_at,
+        )
+        if uncertainty_at is not None:
+            deadlines.append(uncertainty_at)
     for metadata in data.thermostat_metadata.values():
         if (
             metadata.next_scheduled_at is not None

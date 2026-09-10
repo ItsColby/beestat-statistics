@@ -8,7 +8,9 @@
       "auto_away_enabled": {
         "name": "Auto away enabled"
       },
-      "cold_temperature_alert_enabled": {"name": "Cold temperature alert enabled"},
+      "cold_temperature_alert_enabled": {
+        "name": "Cold temperature alert enabled"
+      },
       "equipment_alert": {
         "name": "Equipment alert"
       },
@@ -21,8 +23,12 @@
       "follow_me_enabled": {
         "name": "Follow me enabled"
       },
-      "hot_temperature_alert_enabled": {"name": "Hot temperature alert enabled"},
-      "microphone_enabled": {"name": "Microphone enabled"},
+      "hot_temperature_alert_enabled": {
+        "name": "Hot temperature alert enabled"
+      },
+      "microphone_enabled": {
+        "name": "Microphone enabled"
+      },
       "cloud_data_stale": {
         "name": "Cloud data stale"
       },
@@ -44,11 +50,15 @@
       "sensor_in_use": {
         "name": "Beestat-reported sensor in use"
       },
-      "service_reminder_enabled": {"name": "Service reminder enabled"},
+      "service_reminder_enabled": {
+        "name": "Service reminder enabled"
+      },
       "smart_circulation_enabled": {
         "name": "Smart circulation enabled"
       },
-      "wifi_offline_alert_enabled": {"name": "Wi-Fi offline alert enabled"}
+      "wifi_offline_alert_enabled": {
+        "name": "Wi-Fi offline alert enabled"
+      }
     },
     "button": {
       "import_statistics": {
@@ -94,9 +104,15 @@
       "compressor_minimum_outdoor_temperature": {
         "name": "Compressor minimum outdoor temperature"
       },
-      "cold_temperature_alert": {"name": "Cold temperature alert threshold"},
-      "cooling_differential": {"name": "Cooling differential"},
-      "cooling_dissipation_time": {"name": "Cooling dissipation time"},
+      "cold_temperature_alert": {
+        "name": "Cold temperature alert threshold"
+      },
+      "cooling_differential": {
+        "name": "Cooling differential"
+      },
+      "cooling_dissipation_time": {
+        "name": "Cooling dissipation time"
+      },
       "filter_recent_runtime_hours_per_day": {
         "name": "Filter recent runtime hours per day"
       },
@@ -121,22 +137,36 @@
       "heat_cool_minimum_delta": {
         "name": "Heat cool minimum delta"
       },
-      "heating_differential": {"name": "Heating differential"},
-      "heating_dissipation_time": {"name": "Heating dissipation time"},
-      "high_humidity_alert": {"name": "High humidity alert threshold"},
-      "hot_temperature_alert": {"name": "Hot temperature alert threshold"},
+      "heating_differential": {
+        "name": "Heating differential"
+      },
+      "heating_dissipation_time": {
+        "name": "Heating dissipation time"
+      },
+      "high_humidity_alert": {
+        "name": "High humidity alert threshold"
+      },
+      "hot_temperature_alert": {
+        "name": "Hot temperature alert threshold"
+      },
       "hold_action": {
         "name": "Hold action"
       },
-      "last_service_date": {"name": "Last service date"},
-      "low_humidity_alert": {"name": "Low humidity alert threshold"},
+      "last_service_date": {
+        "name": "Last service date"
+      },
+      "low_humidity_alert": {
+        "name": "Low humidity alert threshold"
+      },
       "metadata_sync_last_success": {
         "name": "Metadata sync last success"
       },
       "next_scheduled_comfort_profile_time": {
         "name": "Next scheduled comfort profile time"
       },
-      "playback_volume": {"name": "Playback volume"},
+      "playback_volume": {
+        "name": "Playback volume"
+      },
       "runtime_summary_lag_days": {
         "name": "Runtime summary lag days"
       },
@@ -152,8 +182,12 @@
       "scheduled_comfort_profile": {
         "name": "Scheduled comfort profile"
       },
-      "service_reminder_date": {"name": "Service reminder date"},
-      "service_reminder_interval": {"name": "Service reminder interval"},
+      "service_reminder_date": {
+        "name": "Service reminder date"
+      },
+      "service_reminder_interval": {
+        "name": "Service reminder interval"
+      },
       "statistics_imported_rows": {
         "name": "Imported rows"
       },
@@ -172,230 +206,232 @@
       "status": {
         "name": "Status"
       },
-      "temperature_correction": {"name": "Temperature correction"}
+      "temperature_correction": {
+        "name": "Temperature correction"
+      }
     }
   },
   "config": {
     "step": {
       "user": {
         "title": "Connect Beestat",
-        "description": "Use Beestat as a secondary cloud/history surface. Existing Ecobee HomeKit entities remain the primary live/control source and are enriched automatically when they match Beestat thermostats and room sensors.",
+        "description": "Connect your Beestat account to import HVAC history, schedules, alerts, and thermostat details into Home Assistant. The integration calculates filter estimates locally from Beestat runtime. Local thermostat control stays with the integration providing it.",
         "data": {
           "api_key": "Beestat API key",
           "api_base": "Beestat API URL"
         },
         "data_description": {
-          "api_key": "API key from Beestat. It is stored in the Home Assistant config entry and used only for Beestat API calls.",
-          "api_base": "Optional HTTPS Beestat API base URL. Keep the default unless Beestat changes its API host or you are testing a compatible secure endpoint."
+          "api_key": "Enter the API key for your Beestat account. Home Assistant stores it in this integration entry.",
+          "api_base": "Keep the default Beestat API endpoint unless you operate a trusted alternative. The API key is sent to this address."
         }
       },
       "reconfigure": {
         "title": "Reconfigure Beestat Statistics",
-        "description": "Update the Beestat API key or API URL used by this integration.",
+        "description": "Update the connection used by this integration. A possible account change requires a separate confirmation.",
         "data": {
           "api_key": "Beestat API key",
           "api_base": "Beestat API URL"
         },
         "data_description": {
-          "api_key": "Enter a replacement Beestat API key, or leave blank to keep the current stored key.",
-          "api_base": "HTTPS Beestat API base URL. Keep the default unless you need to move the integration back from a custom secure endpoint."
+          "api_key": "Enter a replacement key, or leave this blank to keep the saved key.",
+          "api_base": "Keep the default Beestat API endpoint unless you operate a trusted alternative. The API key is sent to this address."
         }
       },
       "reauth_confirm": {
         "title": "Reauthenticate Beestat Statistics",
-        "description": "Beestat rejected the configured API key. Enter a valid Beestat API key to continue importing HVAC history.",
+        "description": "Beestat rejected the saved credentials. Enter a valid API key to reconnect.",
         "data": {
           "api_key": "Beestat API key",
           "api_base": "Beestat API URL"
         },
         "data_description": {
-          "api_key": "Enter a current Beestat API key. Reauthentication requires a non-empty key.",
-          "api_base": "HTTPS Beestat API base URL to validate the new key against."
+          "api_key": "Enter a valid API key for the Beestat account you want to use.",
+          "api_base": "Keep the default Beestat API endpoint unless you operate a trusted alternative. The API key is sent to this address."
         }
       },
       "account_change_confirm": {
         "title": "Confirm Beestat account change",
-        "description": "The validated connection cannot be proven to match the saved Beestat account from its thermostat fingerprint and may belong to a different account. Continuing replaces the connection and resets saved source selections and per-source overrides so they cannot be applied to unrelated source IDs. Existing entities for sources not present in the new account stop updating. Recorder statistics already imported remain, and future sources with overlapping stable slugs can continue those statistic series. Confirm only when this possible account change and history boundary are intentional."
+        "description": "These credentials may belong to a different Beestat account. Continuing clears source selections and per-source settings, including mappings and saved filter changes, then discovers the new account's sources. Import timing and Recorder history remain; a source with the same statistic slug can continue an existing history series. Continue only if you intend this account and history change."
       }
     },
     "error": {
       "api_key_required": "Enter a Beestat API key.",
-      "account_identity_unavailable": "Beestat accepted the connection but returned no identifiable thermostats, so account continuity cannot be proven.",
-      "invalid_auth": "Beestat rejected this API key.",
-      "invalid_api_base": "Enter an HTTPS API URL without user information, a query, or a fragment.",
-      "mapping_source_unavailable": "The selected Home Assistant entity has no available registry identity. Select a registered entity.",
-      "cannot_connect": "Unable to connect to Beestat with this API key.",
-      "unknown": "Unexpected error while validating the Beestat connection."
+      "account_identity_unavailable": "Beestat returned no usable thermostat identity. Confirm that the account contains a thermostat, then try again.",
+      "invalid_auth": "Beestat rejected this API key. Check the key and try again.",
+      "invalid_api_base": "Enter an HTTPS URL with no username, password, query string, or fragment.",
+      "mapping_source_unavailable": "A selected entity has no usable registry identity. Select an entity currently registered in Home Assistant.",
+      "cannot_connect": "The Beestat request failed. Check the API URL and Home Assistant's connection, then try again.",
+      "unknown": "Setup could not finish. Check the Home Assistant logs for Beestat Statistics, then try again."
     },
     "abort": {
       "already_configured": "Beestat Statistics is already configured.",
-      "account_identity_unavailable": "Beestat returned no identifiable thermostats, so the account could not be configured.",
-      "configuration_changed": "The Beestat configuration changed while this flow was open. Start the update again so the newer configuration is preserved.",
-      "reauth_successful": "Beestat Statistics was reauthenticated.",
-      "reconfigure_successful": "Beestat Statistics was reconfigured.",
-      "yaml_connection_unavailable": "The Beestat YAML connection could not be validated. Check the HTTPS API URL and API key.",
-      "yaml_connection_change_requires_reconfigure": "The YAML connection was not applied because it could not be confirmed as the configured Beestat account. Use Reconfigure to validate and confirm the connection change, then make YAML match the saved connection."
+      "account_identity_unavailable": "The connection could not be saved because Beestat returned no usable thermostat identity.",
+      "configuration_changed": "The saved configuration changed while this form was open. Reopen the form to review the current settings.",
+      "reauth_successful": "Beestat authentication updated.",
+      "reconfigure_successful": "Beestat connection updated.",
+      "yaml_connection_unavailable": "The Beestat connection in YAML could not be validated. Check its API key and URL.",
+      "yaml_connection_change_requires_reconfigure": "The YAML connection could not be confirmed as the saved account. Open Reconfigure for Beestat Statistics to validate and confirm it, then make YAML match the saved connection."
     }
   },
   "exceptions": {
     "beestat_auth_failed": {
-      "message": "Beestat rejected the configured API key. Reauthenticate the integration to continue importing HVAC history."
+      "message": "Beestat rejected the saved API key. Reauthenticate Beestat Statistics to reconnect."
     },
     "beestat_request_failed": {
-      "message": "The Beestat request failed. Check the Beestat Statistics status sensor for details."
+      "message": "The Beestat request did not complete. Check the integration status and Home Assistant logs."
     },
     "invalid_api_base": {
-      "message": "The Beestat API URL is invalid or insecure. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment."
+      "message": "The saved API URL is invalid. Reconfigure it with an HTTPS URL containing no username, password, query string, or fragment."
     },
     "filter_change_boundary_date_mismatch": {
-      "message": "The repair timestamp's local date does not match this thermostat's saved filter-change date."
+      "message": "Save a Home Assistant filter-date override first, then use a time on that same date in Home Assistant's time zone."
     },
     "filter_change_boundary_local_time_invalid": {
-      "message": "The filter-change timestamp is ambiguous or does not exist in Home Assistant's local timezone. Include an explicit UTC offset."
+      "message": "This local time is ambiguous or does not exist because of a clock change. Enter the timestamp with an explicit UTC offset."
     },
     "filter_change_boundary_out_of_range": {
-      "message": "The filter-change timestamp must be in the past 31 days."
+      "message": "Enter a replacement time within the past 31 days and no later than now."
     },
     "no_loaded_entry": {
-      "message": "No Beestat Statistics config entry is loaded."
+      "message": "Beestat Statistics must be loaded before this action can run."
     },
     "invalid_rebuild_date_range": {
-      "message": "The rebuild start date must be on or before the end date."
+      "message": "The start date must be on or before the end date."
     },
     "unknown_thermostat_id": {
-      "message": "Beestat thermostat ID {thermostat_id} is not configured for this integration entry."
+      "message": "Thermostat {thermostat_id} is not included in the current Beestat configuration."
     },
     "statistics_import_failed": {
-      "message": "Beestat statistics import failed. Check the Beestat Statistics status sensor and Home Assistant log for details."
+      "message": "The statistics import did not finish. Check the integration status and Home Assistant logs before trying again."
     },
     "filter_change_boundary_conflict": {
-      "message": "The saved filter boundary changed. Read the current boundary before recording a replacement."
+      "message": "The saved filter cycle differs from the expected values. Read the current saved filter state and review it before submitting again."
     },
     "filter_change_not_after_prior": {
-      "message": "The replacement timestamp must be later than the saved exact filter boundary. Use the repair action for a correction."
+      "message": "A replacement must be later than the previous saved timestamp and cannot precede its saved date. To correct an existing record, edit Filter changed date or use Repair filter change boundary."
     },
     "request_id_reused": {
-      "message": "This request ID already identifies a different filter change. Use a new ID for a new replacement."
+      "message": "This request ID already belongs to a different replacement. Use a new ID for a new replacement."
     }
   },
   "issues": {
     "invalid_override_entity_domains": {
       "title": "Beestat override entities use the wrong domain",
-      "description": "Beestat Statistics has advanced entity overrides assigned to the wrong Home Assistant domain: {entities}. Update or remove those overrides, then reload the integration."
+      "description": "These mappings select an entity of the wrong type: {entities}. Open the integration's mapping options and choose a climate, temperature, occupancy, or motion entity as appropriate; filter helpers must use input_datetime."
     },
     "mapping_device_conflicts": {
       "title": "Beestat mappings select conflicting source devices",
-      "description": "Beestat Statistics found {conflict_count} explicit mapping conflict(s). Each thermostat or room-sensor mapping must use entities from one physical source device, and one source device cannot be assigned to multiple mappings of the same type. Open the integration options and correct or remove the conflicting mappings. Device linking and temperature projections remain disabled for the affected mappings until they are consistent."
+      "description": "{conflict_count} conflict(s) prevent a unique mapping. Choose entities for the same physical device and avoid reusing that device for other sources of the same type. Device links and temperature projections for affected mappings remain disabled until corrected. A cross-integration thermostat probe requires matching hardware identity."
     },
     "missing_override_entities": {
       "title": "Beestat override entities are missing",
-      "description": "Beestat Statistics has advanced entity overrides that no longer point to existing Home Assistant entities: {entities}. Update or remove those overrides, then reload the integration."
+      "description": "These saved entity mappings cannot be resolved: {entities}. Restore the entities or select their replacements in the integration's mapping options."
     },
     "insecure_api_base": {
       "title": "Beestat API URL is invalid or insecure",
-      "description": "Beestat Statistics will not send the API key because the configured URL is invalid or does not meet the HTTPS safety requirements. Open Reconfigure and select a valid HTTPS API URL without user information, a query, or a fragment. The saved URL was not contacted."
+      "description": "The saved API URL was rejected before sending credentials. Open Reconfigure and use the default Beestat endpoint or another trusted HTTPS endpoint without embedded credentials, a query string, or a fragment."
     },
     "yaml_connection_change_requires_reconfigure": {
       "title": "Beestat YAML connection change needs confirmation",
-      "description": "The connection in YAML differs from the saved Beestat Statistics connection and was not applied. Use Reconfigure to validate and confirm the intended connection, then update or remove the YAML block so it matches the saved connection. Existing mappings and imported Recorder history were left unchanged."
+      "description": "The YAML connection could not be confirmed as the saved Beestat account. Open Reconfigure to review its API key and URL and confirm any account switch. Keep YAML aligned with the connection you choose."
     }
   },
   "services": {
     "get_configuration": {
       "name": "Get Beestat configuration",
-      "description": "Return saved overrides, effective local mappings, comfort profiles, and the privacy-allowlisted cached Ecobee configuration without changing state or contacting Beestat.",
+      "description": "Read saved settings, effective mappings, filter state, and source details without contacting Beestat or changing state. Credentials are omitted; private identifiers and household details are included.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",
-          "description": "Beestat Statistics configuration entry to inspect."
+          "description": "Loaded Beestat Statistics entry to inspect."
         }
       }
     },
     "import_statistics": {
       "name": "Import Beestat statistics",
-      "description": "Sync Beestat runtime data, refresh native Beestat sensors, and import derived daily external statistics into Home Assistant Recorder.",
+      "description": "Refresh Beestat runtime and metadata, update integration entities, and import daily history into Home Assistant's long-term statistics.",
       "fields": {
         "point_lookback_days": {
           "name": "Point lookback days",
-          "description": "Number of recent local days of 5-minute sensor history to aggregate into daily room and air-quality statistics."
+          "description": "Days of five-minute thermostat and room-sensor history to read for this import. Omit to use the configured lookback."
         },
         "skip_sync": {
           "name": "Skip Beestat sync",
-          "description": "Skip Beestat runtime, thermostat, and sensor sync calls before importing."
+          "description": "Skip requesting a Beestat refresh from ecobee. The import still reads data from Beestat over the network."
         }
       }
     },
     "rebuild_statistics": {
       "name": "Rebuild Beestat statistics",
-      "description": "Rebuild derived Recorder statistics from the full Beestat summary baseline, optionally for one thermostat. Cumulative statistics rewrite the affected tail through the latest source day; measurement statistics use the selected date range.",
+      "description": "Reimport historical Beestat statistics. Cumulative totals are rebuilt from the start date through the latest source day; measurement series use the selected date range.",
       "fields": {
         "thermostat_id": {
           "name": "Thermostat ID",
-          "description": "Optional configured Beestat thermostat ID to rebuild. Omit to rebuild all configured thermostats and sensors."
+          "description": "Beestat thermostat to rebuild, including its room sensors. Omit to rebuild all included sources."
         },
         "start_date": {
           "name": "Start date",
-          "description": "Optional first local date to write back to Recorder after rebuilding cumulative values from the full baseline."
+          "description": "First local date to update in Recorder. Earlier summary history is read to calculate cumulative totals. Omit for all available summaries and the configured point-history lookback."
         },
         "end_date": {
           "name": "End date",
-          "description": "Optional last local date for measurement statistics. Cumulative statistics continue through the latest source day to preserve corrected totals."
+          "description": "Last local date to update for measurements. Cumulative totals are updated through the latest source day. Omit to read point history through now."
         },
         "skip_sync": {
           "name": "Skip Beestat sync",
-          "description": "Skip Beestat runtime, thermostat, and sensor sync calls before rebuilding."
+          "description": "Skip requesting a Beestat refresh from ecobee. The rebuild still reads data from Beestat over the network."
         }
       }
     },
     "repair_filter_change_boundary": {
       "name": "Repair filter change boundary",
-      "description": "Assign an exact timestamp to an existing Home Assistant filter-change date and reconcile its five-minute Beestat runtime boundary. Intended for a verified recent historical button press; it does not dismiss alerts or write Ecobee settings.",
+      "description": "Correct the time of a filter change already saved in Home Assistant on the same date. Refreshes Beestat to recalculate runtime; reconciliation may remain pending. This correction does not dismiss filter alerts.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",
-          "description": "Loaded Beestat Statistics configuration entry that owns the thermostat."
+          "description": "Loaded Beestat Statistics entry containing the thermostat."
         },
         "thermostat_id": {
           "name": "Thermostat ID",
-          "description": "Configured Beestat thermostat ID whose saved filter date matches the timestamp's local date."
+          "description": "Beestat thermostat with a saved Home Assistant filter-date override to correct."
         },
         "changed_at": {
           "name": "Changed at",
-          "description": "Verified filter-change timestamp from the last 31 days. An unambiguous value without an offset uses Home Assistant's local timezone; include an explicit offset during a repeated daylight-saving hour."
+          "description": "Verified replacement time on the saved date, within the past 31 days. Dates use Home Assistant's time zone; include a UTC offset to avoid clock-change ambiguity."
         }
       }
     },
     "record_filter_change": {
       "name": "Record filter change",
-      "description": "Record a verified physical replacement at its actual timestamp using the saved prior boundary and a replay-safe request ID. Returns the persisted timestamp even when runtime coverage remains pending. Use the date entity or repair action for corrections.",
+      "description": "Record a completed physical filter replacement using its actual time and the captured previous saved state. Keep that previous state unchanged on retries. Attempts to dismiss matching filter alerts and refresh runtime. Check the returned status; runtime reconciliation may remain pending.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",
-          "description": "Loaded Beestat Statistics configuration entry that owns the thermostat."
+          "description": "Loaded Beestat Statistics entry containing the thermostat."
         },
         "thermostat_id": {
           "name": "Thermostat ID",
-          "description": "Configured Beestat thermostat ID whose filter was replaced."
+          "description": "Beestat thermostat whose filter was replaced."
         },
         "changed_at": {
           "name": "Changed at",
-          "description": "Actual physical replacement timestamp in the last 31 days. Include an explicit offset during a repeated daylight-saving hour."
+          "description": "Actual replacement time within the past 31 days, no later than now, after any saved timestamp and not before the saved date. Include a UTC offset to distinguish repeated local times."
         },
         "expected_changed_at": {
           "name": "Expected previous timestamp",
-          "description": "Previously saved filter_changed_at attribute, or null when no exact timestamp is saved."
+          "description": "Previous filter_changed_at from saved_overrides.thermostats in Get Beestat configuration. Use null when absent."
         },
         "expected_changed_date": {
           "name": "Expected previous date",
-          "description": "Previously saved home_assistant_override_date attribute, or null when no override date is saved."
+          "description": "Previous filter_changed_date from saved_overrides.thermostats in Get Beestat configuration. Use null when absent."
         },
         "expected_request_id": {
           "name": "Expected previous request ID",
-          "description": "The prior cycle's filter_change_event.request_id captured with the reminder, or null when no event exists. Preserve this value across retries; a newer correction does not authorize an old completion."
+          "description": "Previous filter_change_event.request_id from saved_overrides.thermostats in Get Beestat configuration. Use null when absent."
         },
         "request_id": {
           "name": "Request ID",
-          "description": "Stable opaque ID for this replacement, up to 128 characters. Reuse it only when retrying the same replacement."
+          "description": "Unique ID for this replacement, 1–128 characters. Reuse the same ID and replacement time when retrying the same request."
         }
       }
     }
@@ -404,7 +440,7 @@
     "step": {
       "init": {
         "title": "Beestat Statistics options",
-        "description": "Choose which Beestat sources are exposed, tune import timing, or pin Beestat rows to existing HomeKit/Ecobee entities.",
+        "description": "Choose import timing, included Beestat sources, or the local entities associated with each thermostat and room sensor.",
         "menu_options": {
           "timing": "Import timing",
           "source_scope": "Choose Beestat sources",
@@ -415,49 +451,49 @@
       },
       "timing": {
         "title": "Import timing",
-        "description": "Tune the recurring Beestat sync and how much recent point-history data each import reads.",
+        "description": "Set how often statistics are imported and how much recent point history each import reads. More frequent imports cannot make Beestat publish data sooner.",
         "data": {
           "point_lookback_days": "Point-history lookback days",
           "scan_interval_seconds": "Import interval seconds"
         },
         "data_description": {
-          "point_lookback_days": "Number of recent local days of point-history data to aggregate into Recorder statistics. Larger values import more history and take longer.",
-          "scan_interval_seconds": "How often Home Assistant syncs Beestat and imports Recorder statistics. The minimum is 300 seconds."
+          "point_lookback_days": "Days of thermostat and room-sensor point history to read per import. Default: 45. Daily runtime summaries use a separate import window.",
+          "scan_interval_seconds": "Seconds between scheduled imports. Default: 21600 (6 hours); minimum: 300."
         }
       },
       "source_scope": {
         "title": "Choose Beestat sources",
-        "description": "Select the Beestat thermostats and room sensors this entry exposes and imports. Newly discovered active sources are included automatically unless you explicitly exclude them. Existing Recorder statistics are not deleted when a source is excluded.",
+        "description": "Choose which discovered thermostats and room sensors to load and import. Newly discovered active sources are included by default; excluding a listed source stops its future updates and imports while retaining Recorder history.",
         "data": {
           "included_thermostat_ids": "Included thermostats",
           "included_sensor_ids": "Included room sensors"
         },
         "data_description": {
-          "included_thermostat_ids": "Thermostats to expose as entities and include in future statistics imports.",
-          "included_sensor_ids": "Room sensors to expose as entities and include in future statistics imports."
+          "included_thermostat_ids": "Select the thermostats to include. Clearing the selection excludes all listed thermostats.",
+          "included_sensor_ids": "Select the room sensors to include. Clearing the selection excludes all listed room sensors."
         }
       },
       "source_scope_confirm": {
         "title": "Confirm source exclusions",
-        "description": "This excludes {thermostat_count} currently included thermostat(s) and {sensor_count} currently included room sensor(s). Their native entities stop updating after reload and future statistics imports omit them. Recorder statistics already imported remain available."
+        "description": "Stop loading Beestat entities and importing data for {thermostat_count} thermostat(s) and {sensor_count} room sensor(s)? Existing Recorder statistics remain. You can include these sources again in the source selection."
       },
       "confirm_automatic_mappings": {
         "title": "Confirm automatic HomeKit mappings",
-        "description": "Home Assistant found {thermostat_count} thermostat mapping(s) and {sensor_count} room-sensor mapping(s), covering {entity_count} local entities. Review the exact cached matches below, then confirm to pin them through stable entity-registry references in one update. If a match changes while this page is open, Home Assistant shows the refreshed list for confirmation again. Missing, ambiguous, or conflicting matches remain unresolved.\n\n{mapping_details}"
+        "description": "Review {entity_count} automatic entity mapping(s) for {thermostat_count} thermostat(s) and {sensor_count} room sensor(s):\n\n{mapping_details}\n\nConfirm to save these mappings so they follow entity renames. Verify that each entity belongs to the intended physical device."
       },
       "thermostat_mapping": {
         "title": "Map a Beestat thermostat",
-        "description": "Choose the Beestat thermostat whose local HomeKit/Ecobee entities or filter forecast settings need a manual override.",
+        "description": "Choose the Beestat thermostat whose local entity mappings or filter settings you want to edit.",
         "data": {
           "id": "Beestat thermostat"
         },
         "data_description": {
-          "id": "Select the Beestat thermostat whose HomeKit entities should be pinned."
+          "id": "Thermostat discovered in your Beestat account."
         }
       },
       "thermostat_mapping_detail": {
         "title": "Thermostat HomeKit mapping",
-        "description": "Selected Beestat thermostat: {item}. Pin it to existing Home Assistant entities only when automatic matching is wrong or incomplete. Leave fields blank to keep automatic behavior.",
+        "description": "Configure {item}. Select entities for the same physical thermostat; clear a selection to restore automatic matching. Filter estimates are calculated locally from Beestat history. Choose limits suitable for your filter and equipment. See the integration guide for mapping and filter tracking.",
         "data": {
           "climate_entity_id": "Climate entity",
           "temperature_entity_id": "Temperature entity",
@@ -469,29 +505,29 @@
           "filter_notice_days": "Filter notice days"
         },
         "data_description": {
-          "climate_entity_id": "HomeKit climate entity for this Ecobee thermostat.",
-          "temperature_entity_id": "HomeKit temperature sensor for this thermostat.",
-          "occupancy_entity_id": "HomeKit occupancy binary sensor for this thermostat, when available.",
-          "motion_entity_id": "HomeKit motion binary sensor for this thermostat, when available.",
-          "filter_changed_entity_id": "Optional existing input_datetime helper. The Home Assistant Filter changed date entity is preferred for new setups.",
-          "filter_lifetime_runtime_hours": "Runtime-hours replacement threshold used to forecast the filter due date.",
-          "filter_max_age_days": "Calendar-age replacement threshold in days, measured from the effective filter changed date.",
-          "filter_notice_days": "Days before the calculated due date that should be treated as the notice window."
+          "climate_entity_id": "Local climate entity for this thermostat. The mapping associates its Home Assistant device with Beestat data.",
+          "temperature_entity_id": "Local temperature sensor for this thermostat.",
+          "occupancy_entity_id": "Local occupancy sensor for this thermostat.",
+          "motion_entity_id": "Local motion sensor for this thermostat.",
+          "filter_changed_entity_id": "Optional input_datetime helper used as a fallback filter date. Clear to allow automatic helper discovery. New setups can use the integration's Filter changed date entity.",
+          "filter_lifetime_runtime_hours": "Recorded fan-runtime limit for the filter estimate. The 250-hour software default is not an equipment recommendation. Incomplete history makes runtime projections provisional.",
+          "filter_max_age_days": "Calendar-age limit from the effective filter date, including when runtime history is incomplete. The 90-day software default is not an equipment recommendation.",
+          "filter_notice_days": "Turn on Filter due soon this many days before the estimated due date. Default: 7; 0 means the due date. Set up an automation to send a notification."
         }
       },
       "sensor_mapping": {
         "title": "Map a Beestat room sensor",
-        "description": "Choose the Beestat room sensor whose local HomeKit/Ecobee entities or statistic import toggles need a manual override.",
+        "description": "Choose the Beestat room sensor whose local entity mappings or imported measurements you want to edit.",
         "data": {
           "id": "Beestat room sensor"
         },
         "data_description": {
-          "id": "Select the Beestat room sensor whose HomeKit entities should be pinned."
+          "id": "Room sensor discovered in your Beestat account."
         }
       },
       "sensor_mapping_detail": {
         "title": "Room sensor HomeKit mapping",
-        "description": "Selected Beestat room sensor: {item}. Pin it to existing Home Assistant entities and choose which daily Recorder statistics to import. Leave entity fields blank to keep automatic behavior.",
+        "description": "Configure {item}. Select local entities for the same physical sensor; clear a selection to restore automatic matching. Choose which measurements to import as daily statistics.",
         "data": {
           "thermostat_id": "Owning thermostat",
           "temperature_entity_id": "Temperature entity",
@@ -503,21 +539,21 @@
           "include_voc": "Import TVOC statistics"
         },
         "data_description": {
-          "thermostat_id": "Optional Beestat thermostat ID when Beestat does not report the owning thermostat.",
-          "temperature_entity_id": "HomeKit temperature sensor for this Ecobee room sensor.",
-          "occupancy_entity_id": "HomeKit occupancy binary sensor for this room sensor, when available.",
-          "motion_entity_id": "HomeKit motion binary sensor for this room sensor, when available.",
-          "include_temperature": "Import daily Recorder temperature statistics for this sensor.",
-          "include_air_quality": "Import daily Recorder air-quality statistics when Beestat exposes them.",
-          "include_co2": "Import daily Recorder CO2 statistics when Beestat exposes them.",
-          "include_voc": "Import daily Recorder TVOC statistics when Beestat exposes them."
+          "thermostat_id": "Override the owning Beestat thermostat. This takes precedence over the ownership reported by Beestat.",
+          "temperature_entity_id": "Local temperature sensor for this room sensor.",
+          "occupancy_entity_id": "Local occupancy sensor for this room sensor.",
+          "motion_entity_id": "Local motion sensor for this room sensor.",
+          "include_temperature": "Import temperature history when Beestat supplies it for this sensor.",
+          "include_air_quality": "Import the air-quality history supplied by Beestat for this sensor.",
+          "include_co2": "Import the CO2 history supplied by Beestat for this sensor.",
+          "include_voc": "Import the TVOC history supplied by Beestat for this sensor."
         }
       }
     },
     "error": {
-      "mapping_device_conflict": "Choose entities from one physical HomeKit/Ecobee device (a cross-integration thermostat probe requires a matching hardware serial), and do not assign that source device to another mapping of the same type.",
-      "mapping_source_unavailable": "The selected Home Assistant entity has no available registry identity. Select a registered entity.",
-      "no_discovered_items": "No Beestat thermostats or room sensors have been discovered yet. Refresh runtime data, then try again."
+      "mapping_device_conflict": "Choose entities for one physical device and avoid reusing it for sources of the same type. A thermostat probe from another integration needs matching hardware identity.",
+      "mapping_source_unavailable": "A selected entity has no usable registry identity. Select an entity currently registered in Home Assistant.",
+      "no_discovered_items": "No Beestat sources are available for this selection. Check the integration status and refresh runtime data."
     },
     "abort": {
       "no_automatic_mappings": "No unconfirmed automatic mappings are currently available. Existing explicit mappings were left unchanged."

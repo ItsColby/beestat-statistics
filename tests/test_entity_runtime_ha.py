@@ -18,10 +18,17 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest
-from homeassistant.const import CONF_API_KEY, STATE_UNAVAILABLE
+from homeassistant.const import (
+    CONF_API_KEY,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import EntityPlatform
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed_exact,
@@ -32,6 +39,10 @@ from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
     BeestatClient,
+)
+from custom_components.beestat_statistics.binary_sensor import (
+    BeestatFilterDueProblemBinarySensor,
+    BeestatFilterDueSoonProblemBinarySensor,
 )
 from custom_components.beestat_statistics.button import BeestatFilterChangedButton
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
@@ -146,6 +157,79 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
             assert state.attributes["unit_of_measurement"] in {"°C", "°F"}
             expected = 2.0 if state.attributes["unit_of_measurement"] == "°C" else 3.6
             assert float(state.state) == pytest.approx(expected)
+
+
+async def test_filter_notice_remains_independent_of_due_uncertainty(
+    hass: HomeAssistant,
+    coordinator: BeestatRuntimeDataCoordinator,
+) -> None:
+    """Missing exposure preserves unknown due while the calendar notice is usable."""
+
+    now = coordinator.data.projected_at
+    entry = coordinator.beestat_config_entry
+
+    def rebuild(*, maximum_days: int, notice_days: int):
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                "thermostats": [
+                    {
+                        "id": 1,
+                        "filter_changed_date": (
+                            now.date() - timedelta(days=83)
+                        ).isoformat(),
+                        "filter_max_age_days": maximum_days,
+                        "filter_notice_days": notice_days,
+                    }
+                ]
+            },
+        )
+        return coordinator._build_runtime_data(
+            [],
+            [{"id": 1, "name": "Zone A"}],
+            [],
+            now,
+            now,
+            True,
+            None,
+            None,
+            evaluated_at=now,
+            fetched_at=now,
+        )
+
+    coordinator.async_set_updated_data(rebuild(maximum_days=90, notice_days=7))
+    thermostat = coordinator.data.config.thermostats[0]
+    due = BeestatFilterDueProblemBinarySensor(coordinator, thermostat)
+    notice = BeestatFilterDueSoonProblemBinarySensor(coordinator, thermostat)
+    due.entity_id = "binary_sensor.filter_due"
+    notice.entity_id = "binary_sensor.filter_notice"
+    async with _entity_platform(coordinator, "binary_sensor") as platform:
+        await platform.async_add_entities([due, notice])
+        assert hass.states.get(due.entity_id).state == STATE_UNKNOWN
+        assert hass.states.get(notice.entity_id).state == STATE_ON
+
+        coordinator.async_set_updated_data(rebuild(maximum_days=90, notice_days=0))
+        await hass.async_block_till_done()
+        assert hass.states.get(due.entity_id).state == STATE_UNKNOWN
+        assert hass.states.get(notice.entity_id).state == STATE_OFF
+
+        coordinator.async_set_updated_data(rebuild(maximum_days=83, notice_days=0))
+        await hass.async_block_till_done()
+        assert hass.states.get(due.entity_id).state == STATE_ON
+        assert hass.states.get(notice.entity_id).state == STATE_ON
+
+        good_data = coordinator.data
+        coordinator.async_set_update_error(UpdateFailed("Synthetic source failure"))
+        await hass.async_block_till_done()
+        assert hass.states.get(due.entity_id).state == STATE_UNAVAILABLE
+        assert hass.states.get(notice.entity_id).state == STATE_UNAVAILABLE
+
+        coordinator.async_set_updated_data(
+            replace(good_data, config=replace(good_data.config, thermostats=()))
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(due.entity_id).state == STATE_UNAVAILABLE
+        assert hass.states.get(notice.entity_id).state == STATE_UNAVAILABLE
 
 
 async def test_temperature_listener_updates_filter_uncertainty_without_revision_churn(

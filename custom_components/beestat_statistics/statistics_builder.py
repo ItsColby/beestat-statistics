@@ -240,8 +240,8 @@ def build_summary_sum_statistics(
             total = 0.0
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
-                value = _as_float(row.get(spec.field)) or 0.0
-                if value < 0:
+                value = _cumulative_value(row, spec.field)
+                if value is None:
                     break
                 next_total = _finite_add(total, value)
                 if next_total is None:
@@ -511,14 +511,26 @@ def _hours_for_fields(
     row: dict[str, Any],
     fields: tuple[str, ...],
 ) -> float | None:
-    values = tuple(_as_float(row.get(field)) or 0.0 for field in fields)
-    if any(value < 0 for value in values):
-        return None
+    values: list[float] = []
+    for field in fields:
+        value = _cumulative_value(row, field)
+        if value is None:
+            return None
+        values.append(value)
     try:
         hours = fsum(value / 3600 for value in values)
     except OverflowError:
         return None
     return hours if isfinite(hours) else None
+
+
+def _cumulative_value(row: dict[str, Any], field: str) -> float | None:
+    """Preserve omitted optional counters without masking explicit invalid data."""
+
+    if field not in row:
+        return 0.0
+    value = _as_float(row[field])
+    return value if value is not None and value >= 0 else None
 
 
 def _finite_mean(values: list[float]) -> float | None:

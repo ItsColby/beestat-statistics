@@ -1,6 +1,10 @@
 blueprint:
   name: Beestat runtime data stale notification
-  description: Notify when a Beestat runtime summary lag sensor stays above the selected threshold.
+  description: >-
+    Run your notification action after the Runtime summary lag days sensor crosses above
+    your threshold for the chosen duration. It monitors the age of daily Beestat
+    history. It fires once per crossing, so a continuously stale value does not produce
+    repeat notifications.
   domain: automation
   author: ItsColby
   homeassistant:
@@ -8,7 +12,9 @@ blueprint:
   input:
     lag_sensor:
       name: Runtime summary lag sensor
-      description: Beestat runtime summary lag-days sensor to monitor.
+      description: >-
+        Select this integration's Runtime summary lag days sensor for one thermostat.
+        The value must be in days; other duration units are not converted.
       selector:
         entity:
           filter:
@@ -16,7 +22,8 @@ blueprint:
             device_class: duration
     threshold_days:
       name: Stale threshold
-      description: Trigger when the lag is greater than this many days.
+      description: >-
+        Notify when summary lag is strictly greater than this number of days.
       default: 1
       selector:
         number:
@@ -27,14 +34,19 @@ blueprint:
           mode: box
     stale_for:
       name: Stale duration
-      description: How long the lag must remain above the threshold before notifying.
+      description: >-
+        Time the lag must stay above the threshold. A Home Assistant restart or
+        automation reload resets the wait. See [numeric-state trigger
+        behavior](https://www.home-assistant.io/triggers/numeric_state/).
       default:
         hours: 1
       selector:
         duration: {}
     notify_action:
       name: Notification action
-      description: Action sequence to run when the selected Beestat data is stale.
+      description: >-
+        Choose the notification actions, destination, and message to use when the
+        trigger fires.
       selector:
         action: {}
 

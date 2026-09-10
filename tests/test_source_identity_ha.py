@@ -201,6 +201,109 @@ def test_existing_cloud_only_mapping_remains_valid(hass, thermostat_pair):
     )
 
 
+@pytest.mark.parametrize("source", ["same_device", "matched_cloud", "wrong_device"])
+def test_builtin_sensor_override_must_agree_with_inherited_parent(
+    hass, thermostat_pair, source
+):
+    pair = thermostat_pair
+    registry = er.async_get(hass)
+    temperature = pair.temperature
+    if source != "matched_cloud":
+        device_id = pair.homekit_device.id
+        if source == "wrong_device":
+            device_id = (
+                dr.async_get(hass)
+                .async_get_or_create(
+                    config_entry_id=pair.homekit.entry_id,
+                    identifiers={("homekit_controller:accessory-id", "other:aid:2")},
+                    manufacturer="ecobee",
+                    name="Other room",
+                )
+                .id
+            )
+        temperature = registry.async_get_or_create(
+            "sensor",
+            "homekit_controller",
+            "synthetic_temperature",
+            config_entry=pair.homekit,
+            device_id=device_id,
+            original_device_class="temperature",
+        )
+    config = build_beestat_config(
+        hass,
+        ({"id": 1001, "name": "Zone"},),
+        ({"id": 2001, "thermostat_id": 1001, "type": "thermostat"},),
+        {
+            "thermostats": [{"id": 1001, "climate_entity_id": pair.climate.entity_id}],
+            "sensors": [{"id": 2001, "temperature_entity_id": temperature.entity_id}],
+        },
+    )
+    sensor = config.sensors[0]
+    if source == "wrong_device":
+        assert sensor.device_id is None
+        assert sensor.temperature_entity_id is None
+        assert [
+            (item.resource_type, item.resource_ids, item.reason)
+            for item in config.mapping_device_conflicts
+        ] == [("sensor", (2001,), "cross_device")]
+    else:
+        assert sensor.device_id == pair.homekit_device.id
+        assert sensor.temperature_entity_id == temperature.entity_id
+        assert config.mapping_device_conflicts == ()
+
+
+async def test_builtin_sensor_mapping_flow_rejects_foreign_device(
+    hass, thermostat_pair
+):
+    pair = thermostat_pair
+    rows = ({"id": 1001, "name": "Zone"},)
+    sensors = ({"id": 2001, "thermostat_id": 1001, "type": "thermostat"},)
+    options = {
+        "thermostats": [{"id": 1001, "climate_entity_id": pair.climate.entity_id}]
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={"api_key": "synthetic-key"}, options=options
+    )
+    entry.add_to_hass(hass)
+    entry.runtime_data = types.SimpleNamespace(
+        coordinator=types.SimpleNamespace(
+            data=types.SimpleNamespace(
+                thermostat_rows=rows,
+                sensor_rows=sensors,
+                config=build_beestat_config(hass, rows, sensors, options),
+            )
+        )
+    )
+    other = dr.async_get(hass).async_get_or_create(
+        config_entry_id=pair.homekit.entry_id,
+        identifiers={("homekit_controller:accessory-id", "other:aid:2")},
+        manufacturer="ecobee",
+    )
+    temperature = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "homekit_controller",
+        "other_temperature",
+        config_entry=pair.homekit,
+        device_id=other.id,
+        original_device_class="temperature",
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "sensor_mapping"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"id": "2001"}
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"temperature_entity_id": temperature.entity_id}
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "mapping_device_conflict"}
+    assert entry.options == options
+    reload.assert_not_called()
+
+
 async def test_options_save_mixed_mapping_with_stable_references(hass, thermostat_pair):
     pair = thermostat_pair
     entry = MockConfigEntry(domain=DOMAIN, data={"api_key": "synthetic-key"})
@@ -238,6 +341,7 @@ async def test_options_save_mixed_mapping_with_stable_references(hass, thermosta
     reload.assert_called_once()
 
 
+@pytest.mark.parametrize("mapping_owner", ["thermostat", "builtin_sensor"])
 @pytest.mark.parametrize(
     "change",
     [
@@ -249,25 +353,41 @@ async def test_options_save_mixed_mapping_with_stable_references(hass, thermosta
     ],
 )
 async def test_identity_drift_rebuilds_both_sources_and_recovers(
-    hass, thermostat_pair, change
+    hass, thermostat_pair, change, mapping_owner
 ):
     pair = thermostat_pair
-    entry = MockConfigEntry(domain=DOMAIN, options={"thermostats": [pair.row]})
+    options = {
+        "thermostat": {"thermostats": [pair.row]},
+        "builtin_sensor": {
+            "thermostats": [{"id": 1001, "climate_entity_id": pair.climate.entity_id}],
+            "sensors": [
+                {"id": 2001, "temperature_entity_id": pair.temperature.entity_id}
+            ],
+        },
+    }[mapping_owner]
+    entry = MockConfigEntry(domain=DOMAIN, options=options)
     entry.add_to_hass(hass)
     rows = ({"id": 1001, "name": "Zone"},)
     sensors = ({"id": 2001, "thermostat_id": 1001, "type": "thermostat"},)
 
     def rebuild():
-        return build_beestat_config(hass, rows, sensors, {"thermostats": [pair.row]})
+        return build_beestat_config(hass, rows, sensors, options)
+
+    def mapped_source(config):
+        return (
+            config.thermostats[0]
+            if mapping_owner == "thermostat"
+            else config.sensors[0]
+        )
 
     initial = rebuild()
     assert initial.thermostats[0].device_id == pair.homekit_device.id
-    assert initial.thermostats[0].temperature_entity_id == pair.temperature.entity_id
+    assert mapped_source(initial).temperature_entity_id == pair.temperature.entity_id
     # Cloud availability never changes the explicit source to the display value.
     hass.states.async_set(
         pair.temperature.entity_id, "unavailable", {"unit_of_measurement": "°F"}
     )
-    assert rebuild().thermostats[0].temperature_entity_id == pair.temperature.entity_id
+    assert mapped_source(rebuild()).temperature_entity_id == pair.temperature.entity_id
     listeners = []
 
     def add_listener(listener):
@@ -275,12 +395,16 @@ async def test_identity_drift_rebuilds_both_sources_and_recovers(
         return lambda: listeners.remove(listener)
 
     def update():
-        coordinator.data = types.SimpleNamespace(config=rebuild())
+        coordinator.data = types.SimpleNamespace(
+            config=rebuild(), thermostat_rows=rows, sensor_rows=sensors
+        )
         for listener in tuple(listeners):
             listener()
 
     coordinator = types.SimpleNamespace(
-        data=types.SimpleNamespace(config=initial),
+        data=types.SimpleNamespace(
+            config=initial, thermostat_rows=rows, sensor_rows=sensors
+        ),
         async_add_listener=add_listener,
         async_rebuild_runtime_from_cached_rows=Mock(side_effect=update),
     )
@@ -329,17 +453,17 @@ async def test_identity_drift_rebuilds_both_sources_and_recovers(
         devices.async_update_device(duplicate.id, serial_number="123456789012")
     await hass.async_block_till_done()
     coordinator.async_rebuild_runtime_from_cached_rows.assert_called()
-    rejected = rebuild().thermostats[0]
+    rejected = mapped_source(rebuild())
     assert rejected.device_id is None
     assert rejected.temperature_entity_id is None
-    assert rejected.climate_entity_id == pair.climate.entity_id
+    assert rebuild().thermostats[0].climate_entity_id == pair.climate.entity_id
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, "mapping_device_conflicts")
         is not None
     )
     _restore_identity(change, pair, duplicate, devices, registry)
     await hass.async_block_till_done()
-    assert rebuild().thermostats[0].temperature_entity_id == pair.temperature.entity_id
+    assert mapped_source(rebuild()).temperature_entity_id == pair.temperature.entity_id
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, "mapping_device_conflicts") is None
     )
