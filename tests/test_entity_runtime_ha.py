@@ -22,7 +22,10 @@ from homeassistant.const import CONF_API_KEY, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import EntityPlatform
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed_exact,
+)
 
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
@@ -141,6 +144,133 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
             assert state.attributes["unit_of_measurement"] in {"°C", "°F"}
             expected = 2.0 if state.attributes["unit_of_measurement"] == "°C" else 3.6
             assert float(state.state) == pytest.approx(expected)
+
+
+async def test_spread_context_tracks_cloud_membership_not_local_projection_time(
+    hass: HomeAssistant,
+    coordinator: BeestatRuntimeDataCoordinator,
+    freezer: Any,
+) -> None:
+    """Temperature, coverage and schedule changes preserve cloud provenance."""
+
+    names = ("Bedroom", "Office", "Hall")
+    sensor_rows = [
+        {"id": index, "thermostat_id": 1, "identifier": f"rs:{index}", "name": name}
+        for index, name in enumerate(names, 10)
+    ]
+    hass.config_entries.async_update_entry(
+        coordinator.beestat_config_entry,
+        options={
+            "sensors": [
+                {"id": row["id"], "temperature_entity_id": f"sensor.{name.lower()}"}
+                for row, name in zip(sensor_rows, names, strict=True)
+            ]
+        },
+    )
+    for name, value in zip(names, (20, 22, 24), strict=True):
+        hass.states.async_set(
+            f"sensor.{name.lower()}", value, {"unit_of_measurement": "°C"}
+        )
+    profiles = [
+        {
+            "climateRef": ref,
+            "name": ref.title(),
+            "sensors": [{"id": f"rs:{index}:1"} for index in members],
+        }
+        for ref, members in (("home", (10, 11, 12)), ("sleep", (10, 12)))
+    ]
+    schedule = [["home"] * 26 + ["sleep"] * 22 for _ in range(7)]
+
+    def publish_profile(ref: str | None, synced_at: datetime) -> None:
+        coordinator.async_set_updated_data(
+            coordinator._build_runtime_data(
+                [],
+                [
+                    {
+                        "id": 1,
+                        "name": "Zone A",
+                        "timezone": "UTC",
+                        "program": {
+                            "currentClimateRef": ref,
+                            "climates": profiles,
+                            "schedule": schedule,
+                        },
+                    }
+                ],
+                sensor_rows,
+                synced_at,
+                synced_at,
+                True,
+                None,
+                None,
+                evaluated_at=synced_at,
+            )
+        )
+
+    synced_at = coordinator.data.metadata_sync_success_at
+    assert synced_at is not None
+    publish_profile("home", synced_at)
+    thermostat = coordinator.data.config.thermostats[0]
+    description = next(
+        description
+        for description in _thermostat_sensor_descriptions(thermostat=thermostat)
+        if description.translation_key == "current_profile_room_temperature_spread"
+    )
+    entity = BeestatSensor(coordinator, description, None)
+    entity.entity_id = "sensor.profile_spread"
+    async with _entity_platform(coordinator, "sensor") as platform:
+        await platform.async_add_entities([entity])
+        state = hass.states.get(entity.entity_id)
+        assert float(state.state) == 4
+        assert state.attributes["profile_name"] == "Home"
+        assert state.attributes["profile_ref"] == "home"
+        assert state.attributes["configured_sensor_count"] == 3
+        assert state.attributes["valid_sensor_count"] == 3
+
+        freezer.move_to(synced_at + timedelta(minutes=10))
+        hass.states.async_set("sensor.office", STATE_UNAVAILABLE)
+        hass.states.async_set("sensor.hall", 25, {"unit_of_measurement": "°C"})
+        coordinator.async_rebuild_runtime_from_cached_rows()
+        await hass.async_block_till_done()
+        state = hass.states.get(entity.entity_id)
+        assert float(state.state) == 5
+        assert state.attributes["configured_sensor_count"] == 3
+        assert state.attributes["valid_sensor_count"] == 2
+        assert state.attributes["unavailable_sensor_names"] == ["Office"]
+        assert state.attributes["metadata_synced_at"] == synced_at.isoformat()
+
+        boundary = synced_at + timedelta(hours=1)
+        freezer.move_to(boundary)
+        async_fire_time_changed_exact(hass, boundary)
+        await hass.async_block_till_done()
+        state = hass.states.get(entity.entity_id)
+        assert coordinator.data.thermostat_metadata[1].scheduled_climate_ref == "sleep"
+        assert state.attributes["profile_ref"] == "home"
+        assert state.attributes["metadata_synced_at"] == synced_at.isoformat()
+        assert not coordinator._client.mock_calls
+
+        refreshed_at = synced_at + timedelta(hours=2)
+        freezer.move_to(refreshed_at)
+        publish_profile("sleep", refreshed_at)
+        await hass.async_block_till_done()
+        state = hass.states.get(entity.entity_id)
+        assert float(state.state) == 5
+        assert state.attributes["profile_name"] == "Sleep"
+        assert state.attributes["profile_ref"] == "sleep"
+        assert state.attributes["configured_sensor_count"] == 2
+        assert state.attributes["valid_sensor_count"] == 2
+        assert state.attributes["unavailable_sensor_names"] == []
+        assert state.attributes["metadata_synced_at"] == refreshed_at.isoformat()
+
+        for ref in ("unknown-profile", None):
+            publish_profile(ref, refreshed_at)
+            await hass.async_block_till_done()
+            state = hass.states.get(entity.entity_id)
+            assert state.state == STATE_UNAVAILABLE
+            assert "profile_ref" not in state.attributes
+            assert "profile_name" not in state.attributes
+            assert "metadata_synced_at" not in state.attributes
+            assert "configured_sensor_count" not in state.attributes
 
 
 @pytest.mark.parametrize(

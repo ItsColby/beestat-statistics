@@ -137,6 +137,11 @@
   immediately without a Beestat request. Unknown, unavailable, nonnumeric,
   missing-unit, unconvertible, missing-identity, or ambiguous-identity sources
   are rejected honestly. Source observation age is not an availability gate.
+  Spread attributes expose the same cached profile name/reference used for
+  membership and the existing metadata-sync success timestamp; local state and
+  timer projections must not relabel this acquisition as fresh cloud data. Missing
+  membership leaves the entity unavailable without inventing zero coverage. Partial
+  membership coverage preserves the valid-source range and unavailable names.
 - Mapped Beestat entities link through the existing HomeKit/Ecobee device entry;
   they must not return that other integration's identifiers or connections in
   `device_info` or add the Beestat config entry as a device owner. Setup removes

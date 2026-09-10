@@ -370,9 +370,11 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "local_thermostat_count",
             "mapped_room_sensor_count",
             "mapped_thermostat_count",
+            "metadata_synced_at",
             "next_scheduled_at",
             "next_scheduled_profile",
             "next_scheduled_profile_ref",
+            "profile_name",
             "profile_ref",
             "profile_sensors",
             "participating_sensor_count",
@@ -1082,7 +1084,12 @@ def _room_temperature_spread_attributes(
         or (projection := data.room_temperature_spreads.get(thermostat_id)) is None
     ):
         return None
+    metadata = data.thermostat_metadata.get(thermostat_id)
     return {
+        "profile_name": metadata.current_climate_name if metadata else None,
+        "profile_ref": metadata.current_climate_ref if metadata else None,
+        # The cloud membership's acquisition time, never the local projection time.
+        "metadata_synced_at": _isoformat(data.metadata_sync_success_at),
         "configured_sensor_count": projection.participating_sensor_count,
         "configured_sensor_names": list(projection.participating_sensor_names),
         # Retained for entity-attribute compatibility. These are configured

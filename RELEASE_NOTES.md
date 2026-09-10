@@ -1,3 +1,19 @@
+# Beestat Statistics v2026.9.10
+
+## Changed
+
+- Include the last cloud-reported profile name, profile reference, and metadata
+  refresh time on room-temperature spread entities. Live temperature changes
+  and local schedule updates preserve that cloud refresh time.
+- Keep missing readings unavailable and retain the existing probe-coverage
+  attributes for interpreting partial ranges.
+
+## Compatibility
+
+- Preserve entity and statistic identities, temperature calculations, import
+  timing, and thermostat controls. No configuration migration is required.
+- Profile context remains diagnostic and does not add Recorder attribute churn.
+
 # Beestat Statistics v2026.9.9
 
 ## Fixed
