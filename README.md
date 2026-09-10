@@ -331,7 +331,16 @@ their explicitly mapped Home Assistant temperature entities. It does not claim w
 Follow Me is momentarily weighting. It rebuilds immediately from local state
 changes and profile transitions without cloud I/O, uses Home Assistant's native
 temperature-delta semantics, and retains legacy participating-sensor attributes
-for compatibility. Advanced setting entities such
+for compatibility. Its `profile_name` and `profile_ref` identify the last
+cloud-reported profile; `metadata_synced_at` is the successful Beestat metadata
+refresh time, not the thermostat's observation time or a local temperature
+update. Local temperature changes and schedule projections preserve that
+timestamp. Check `valid_sensor_count` against `configured_sensor_count` and
+`unavailable_sensor_names`: a partial spread still reports the range of valid
+sources when at least two remain, so it can understate the full profile's range.
+An unknown profile membership leaves the spread unavailable. Home Assistant
+omits context and coverage attributes while the spread is unavailable.
+Advanced setting entities such
 as Auto Away, Follow Me, Smart Circulation, preheat/precool, compressor
 protection, staging differentials and dissipation times, temperature correction,
 temperature/humidity alert policies, service reminders, Wi-Fi alerts, microphone

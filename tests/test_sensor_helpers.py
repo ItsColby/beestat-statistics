@@ -620,13 +620,42 @@ class SensorHelpersTest(unittest.TestCase):
             coldest_sensor_name="Bedroom",
         )
         coordinator = types.SimpleNamespace(
-            data=types.SimpleNamespace(room_temperature_spreads={1: projection})
+            data=types.SimpleNamespace(
+                room_temperature_spreads={1: projection},
+                thermostat_metadata={
+                    1: types.SimpleNamespace(
+                        current_climate_name="Home", current_climate_ref="home"
+                    )
+                },
+                metadata_sync_success_at=datetime(2026, 7, 5, 12, tzinfo=UTC),
+            )
         )
 
         attributes = self.sensor._room_temperature_spread_attributes(coordinator, 1)
         self.assertEqual(2, attributes["configured_sensor_count"])
         self.assertEqual(["Bedroom", "Office"], attributes["configured_sensor_names"])
         self.assertEqual(2, attributes["participating_sensor_count"])
+        self.assertEqual("Home", attributes["profile_name"])
+        self.assertEqual("home", attributes["profile_ref"])
+        self.assertEqual("2026-07-05T12:00:00+00:00", attributes["metadata_synced_at"])
+        self.assertLessEqual(
+            {"profile_name", "profile_ref", "metadata_synced_at"},
+            self.sensor.BeestatSensor._unrecorded_attributes,
+        )
+
+    def test_spread_missing_metadata_does_not_claim_profile_or_coverage(self) -> None:
+        coordinator = types.SimpleNamespace(data=None)
+        self.assertIsNone(
+            self.sensor._room_temperature_spread_attributes(coordinator, 1)
+        )
+        coordinator.data = types.SimpleNamespace(
+            room_temperature_spreads={},
+            thermostat_metadata={},
+            metadata_sync_success_at=None,
+        )
+        self.assertIsNone(
+            self.sensor._room_temperature_spread_attributes(coordinator, 1)
+        )
 
     def test_spread_unit_follows_recovered_and_updated_projection(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
