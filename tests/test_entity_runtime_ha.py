@@ -27,6 +27,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
+from custom_components.beestat_statistics import _async_track_room_temperature_sources
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
@@ -39,6 +40,7 @@ from custom_components.beestat_statistics.coordinator import (
     RoomTemperatureSpread,
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
+from custom_components.beestat_statistics.runtime import BeestatStatisticsRuntime
 from custom_components.beestat_statistics.sensor import (
     BeestatSensor,
     _thermostat_sensor_descriptions,
@@ -144,6 +146,94 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
             assert state.attributes["unit_of_measurement"] in {"°C", "°F"}
             expected = 2.0 if state.attributes["unit_of_measurement"] == "°C" else 3.6
             assert float(state.state) == pytest.approx(expected)
+
+
+async def test_temperature_listener_updates_filter_uncertainty_without_revision_churn(
+    hass: HomeAssistant,
+    coordinator: BeestatRuntimeDataCoordinator,
+    freezer: Any,
+) -> None:
+    """An unrelated mapped-temperature report must not look like new filter evidence."""
+
+    now = coordinator.data.projected_at
+    changed = datetime(2026, 7, 4, tzinfo=UTC)
+    source_end = datetime(2026, 7, 4, 23, 55, tzinfo=UTC)
+    entry = coordinator.beestat_config_entry
+    hass.states.async_set("sensor.zone_temperature", 20, {"unit_of_measurement": "°C"})
+    await hass.async_block_till_done()
+    options = {
+        "thermostats": [
+            {
+                "id": 1,
+                "temperature_entity_id": "sensor.zone_temperature",
+                "filter_changed_at": changed.isoformat(),
+                "filter_changed_date": changed.date().isoformat(),
+            }
+        ]
+    }
+    hass.config_entries.async_update_entry(entry, options=options)
+    coordinator._filter_day_cache[1] = (
+        (changed, "UTC"),
+        tuple(
+            {
+                "timestamp": (changed + timedelta(minutes=5 * index)).isoformat(),
+                "fan": 0,
+            }
+            for index in range(288)
+        ),
+    )
+    coordinator.data = coordinator._build_runtime_data(
+        [],
+        [{"id": 1, "name": "Zone A", "data_end": source_end.isoformat()}],
+        [],
+        now,
+        now,
+        True,
+        None,
+        None,
+        evaluated_at=now,
+        fetched_at=now,
+    )
+    entry.runtime_data = BeestatStatisticsRuntime(
+        coordinator._client, coordinator, Mock(), timedelta(minutes=30)
+    )
+    _async_track_room_temperature_sources(hass, entry)
+    thermostat = coordinator.data.config.thermostats[0]
+    description = next(
+        description
+        for description in _thermostat_sensor_descriptions(thermostat=thermostat)
+        if description.translation_key == "filter_due_date"
+    )
+    entity = BeestatSensor(coordinator, description, None)
+    entity.entity_id = "sensor.filter_due_date"
+    async with _entity_platform(coordinator, "sensor") as platform:
+        await platform.async_add_entities([entity])
+        before = hass.states.get(entity.entity_id)
+        assert before.attributes["runtime_unknown_interval_minutes"] == 720
+        assert before.attributes["runtime_threshold_reached"] is False
+
+        for seconds in (15, 30, 60):
+            freezer.move_to(now + timedelta(seconds=seconds))
+            hass.states.async_set(
+                "sensor.zone_temperature", 20 + seconds, {"unit_of_measurement": "°C"}
+            )
+            await hass.async_block_till_done()
+            after = hass.states.get(entity.entity_id)
+            assert coordinator.data.projected_at == now + timedelta(seconds=seconds)
+            assert after.state == before.state
+            assert (
+                after.attributes["forecast_revision"]
+                == before.attributes["forecast_revision"]
+            )
+            assert after.attributes["runtime_unknown_interval_minutes"] == (
+                720 + seconds / 60
+            )
+            assert after.attributes["changed_at"] == changed.isoformat()
+            assert after.attributes["runtime_source_data_end"] == source_end.isoformat()
+
+        assert entry.options == options
+        assert coordinator.data.fetched_at == now
+        assert not coordinator._client.mock_calls
 
 
 async def test_spread_context_tracks_cloud_membership_not_local_projection_time(

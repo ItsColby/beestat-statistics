@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import astuple, dataclass
+from dataclasses import dataclass, fields
 from datetime import date, datetime, timedelta
 from hashlib import sha256
 from math import ceil
@@ -69,6 +69,8 @@ class FilterForecast:
     recent_runtime_window_end: date | None = None
     recent_runtime_complete_days: int = 0
     recent_runtime_excluded_days: int = 0
+    # Revision input; the published uncertainty also includes the unreported tail.
+    runtime_source_unknown_interval_minutes: float | None = None
 
 
 def build_filter_forecast(
@@ -182,13 +184,23 @@ def build_filter_forecast(
         recent_runtime_window_end=rate.window_end if rate is not None else None,
         recent_runtime_complete_days=rate.complete_days if rate is not None else 0,
         recent_runtime_excluded_days=rate.excluded_days if rate is not None else 0,
+        runtime_source_unknown_interval_minutes=(
+            observation.source_unknown_interval_seconds / 60
+            if observation is not None
+            and observation.source_unknown_interval_seconds is not None
+            else None
+        ),
     )
 
 
 def filter_forecast_revision(forecast: FilterForecast) -> str:
-    """Return a stable content revision for one coherent forecast snapshot."""
+    """Revise forecast semantics and source quality, not elapsed-only telemetry."""
 
-    payload = "\x1f".join(_revision_value(value) for value in astuple(forecast))
+    payload = "\x1f".join(
+        _revision_value(getattr(forecast, field.name))
+        for field in fields(forecast)
+        if field.name != "runtime_unknown_interval_minutes"
+    )
     return sha256(payload.encode()).hexdigest()[:16]
 
 

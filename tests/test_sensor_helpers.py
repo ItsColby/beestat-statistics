@@ -7,7 +7,7 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -440,6 +440,87 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertEqual(after.remaining_runtime_hours, 0)
         self.assertEqual(after.runtime_due_date, date(2026, 7, 5))
         self.assertTrue(after.due)
+
+    def test_forecast_revision_distinguishes_source_uncertainty_from_elapsed_tail(
+        self,
+    ) -> None:
+        changed = datetime(2026, 7, 4, tzinfo=UTC)
+        source_end = datetime(2026, 7, 4, 23, 55, tzinfo=UTC)
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone",
+            name="Zone",
+            filter_changed_at=changed,
+            filter_lifetime_runtime_hours=250,
+        )
+        raw = self.filter_runtime.ChangeDayObservation(
+            3600, 300, 0, "source_gap", None, source_end
+        )
+
+        def forecast(at: datetime, change_day=raw, horizon=source_end):
+            observation = self.filter_runtime.build_filter_runtime_observation(
+                [],
+                changed_date=changed.date(),
+                changed_at=changed,
+                change_day=change_day,
+                source_data_end=horizon,
+                evaluated_at=at,
+                local_tz=ZoneInfo("UTC"),
+            )
+            summary = types.SimpleNamespace(
+                filter_changed_date=changed.date(),
+                filter_changed_source="home_assistant",
+                filter_runtime_hours=observation.observed_hours,
+                recent_runtime_hours_per_day=None,
+                filter_runtime_observation=observation,
+            )
+            return self.filter_forecast.build_filter_forecast(
+                thermostat, summary, today=at.date()
+            )
+
+        first_at = datetime(2026, 7, 5, 12, tzinfo=UTC)
+        first = forecast(first_at)
+        later = forecast(first_at + timedelta(seconds=15))
+        revision = self.filter_forecast.filter_forecast_revision(first)
+        self.assertEqual(self.filter_forecast.filter_forecast_revision(later), revision)
+        self.assertEqual(later.runtime_unknown_interval_minutes, 725.25)
+        self.assertEqual(first.runtime_unknown_interval_minutes, 725)
+        self.assertEqual(later.runtime_source_unknown_interval_minutes, 5)
+        self.assertEqual(later.changed_at, changed)
+        self.assertFalse(later.runtime_threshold_reached)
+
+        variants = {
+            "source_gap_duration": forecast(first_at, replace(raw, gap_seconds=600)),
+            "source_horizon": forecast(
+                first_at, horizon=source_end + timedelta(minutes=5)
+            ),
+            "coverage": forecast(
+                first_at, replace(raw, gap_seconds=0, boundary_status="finalized")
+            ),
+            "observed_threshold": forecast(
+                first_at, replace(raw, observed_seconds=250 * 3600)
+            ),
+        }
+        for reason, value in variants.items():
+            with self.subTest(reason=reason):
+                self.assertNotEqual(
+                    self.filter_forecast.filter_forecast_revision(value), revision
+                )
+        corrected = variants["source_gap_duration"]
+        self.assertEqual(corrected.runtime_coverage, first.runtime_coverage)
+        self.assertEqual(corrected.runtime_hours, first.runtime_hours)
+        self.assertEqual(corrected.due_date, first.due_date)
+
+        # Unreported time can invalidate a previous not-due proof. That is semantic.
+        thermostat = replace(thermostat, filter_lifetime_runtime_hours=13.1)
+        before_threshold = forecast(first_at)
+        uncertain = forecast(first_at + timedelta(minutes=2))
+        self.assertFalse(before_threshold.runtime_threshold_reached)
+        self.assertIsNone(uncertain.runtime_threshold_reached)
+        self.assertNotEqual(
+            self.filter_forecast.filter_forecast_revision(before_threshold),
+            self.filter_forecast.filter_forecast_revision(uncertain),
+        )
 
     def test_lower_bound_proof_and_calendar_cap_are_independent_of_projection(
         self,
