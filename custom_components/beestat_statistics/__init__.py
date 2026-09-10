@@ -86,6 +86,10 @@ from .const import (
     ATTR_CHANGED_AT,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_END_DATE,
+    ATTR_EXPECTED_CHANGED_AT,
+    ATTR_EXPECTED_CHANGED_DATE,
+    ATTR_EXPECTED_REQUEST_ID,
+    ATTR_REQUEST_ID,
     ATTR_SKIP_SYNC,
     ATTR_START_DATE,
     CONF_API_BASE,
@@ -128,6 +132,7 @@ from .const import (
     SERVICE_GET_CONFIGURATION,
     SERVICE_IMPORT_STATISTICS,
     SERVICE_REBUILD_STATISTICS,
+    SERVICE_RECORD_FILTER_CHANGE,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
     sensor_entity_unique_id,
     thermostat_entity_unique_id,
@@ -146,7 +151,13 @@ from .entity_reference import (
     configured_entity_references,
     entity_reference_matches_entry,
 )
-from .entry_options import async_mark_filter_changed, resolve_filter_change_timestamp
+from .entry_options import (
+    FilterChangeConflictError,
+    async_mark_filter_changed,
+    resolve_filter_change_timestamp,
+    saved_filter_boundary,
+)
+from .filter_forecast import build_filter_forecast, filter_forecast_quality_attributes
 from .import_evidence import SkippedWindowEvidence
 from .issues import (
     async_set_insecure_api_base_issue,
@@ -347,6 +358,27 @@ REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = vol.Schema(
         vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
         vol.Required(CONF_THERMOSTAT_ID): vol.Coerce(int),
         vol.Required(ATTR_CHANGED_AT): cv.datetime,
+    }
+)
+
+
+def _positive_thermostat_id(value: Any) -> int:
+    if (thermostat_id := positive_resource_id(value)) is None:
+        raise vol.Invalid("thermostat_id must be an exact positive integer")
+    return thermostat_id
+
+
+RECORD_FILTER_CHANGE_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Required(CONF_THERMOSTAT_ID): _positive_thermostat_id,
+        vol.Required(ATTR_CHANGED_AT): cv.datetime,
+        vol.Required(ATTR_EXPECTED_CHANGED_AT): vol.Any(None, cv.datetime),
+        vol.Required(ATTR_EXPECTED_CHANGED_DATE): vol.Any(None, cv.date),
+        vol.Required(ATTR_EXPECTED_REQUEST_ID): vol.Any(
+            None, vol.All(cv.string, vol.Length(min=1, max=128))
+        ),
+        vol.Required(ATTR_REQUEST_ID): vol.All(cv.string, vol.Length(min=1, max=128)),
     }
 )
 
@@ -1041,6 +1073,7 @@ async def _async_handle_get_configuration(
             translation_domain=DOMAIN,
             translation_key="no_loaded_entry",
         )
+    data = runtime.coordinator.data
     return configuration_response(
         entry_id=entry.entry_id,
         entry_data=entry.data,
@@ -1054,6 +1087,18 @@ async def _async_handle_get_configuration(
             "thermostat_settings",
             {},
         ),
+        runtime_quality={
+            thermostat.thermostat_id: filter_forecast_quality_attributes(
+                build_filter_forecast(
+                    thermostat,
+                    data.thermostats.get(thermostat.thermostat_id),
+                    today=data.projected_at.astimezone(
+                        runtime.coordinator.local_tz
+                    ).date(),
+                )
+            )
+            for thermostat in data.config.thermostats
+        },
     )
 
 
@@ -1161,7 +1206,8 @@ async def _async_handle_repair_filter_change_boundary(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_out_of_range",
         )
-    saved_date = thermostat.filter_changed_date
+    prior_boundary = saved_filter_boundary(runtime.coordinator, thermostat_id)
+    saved_date = prior_boundary[1]
     repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
     if saved_date is None or saved_date != repair_date:
         raise ServiceValidationError(
@@ -1173,7 +1219,88 @@ async def _async_handle_repair_filter_change_boundary(
         thermostat_id,
         changed_at,
         dismiss_alerts=False,
+        source="repair",
+        expected_boundary=prior_boundary,
     )
+
+
+async def _async_handle_record_filter_change(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    """Record a timestamped physical replacement against an explicit prior cycle."""
+
+    coordinator = _loaded_filter_coordinator(
+        hass, call.data[ATTR_CONFIG_ENTRY_ID], call.data[CONF_THERMOSTAT_ID]
+    )
+    try:
+        changed_at = resolve_filter_change_timestamp(
+            call.data[ATTR_CHANGED_AT], coordinator.local_tz
+        )
+        expected_at = call.data[ATTR_EXPECTED_CHANGED_AT]
+        if expected_at is not None:
+            expected_at = resolve_filter_change_timestamp(
+                expected_at, coordinator.local_tz
+            )
+    except ValueError, OverflowError:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="filter_change_boundary_local_time_invalid",
+        ) from None
+    now = datetime.now(UTC)
+    try:
+        return await async_mark_filter_changed(
+            coordinator,
+            call.data[CONF_THERMOSTAT_ID],
+            changed_at,
+            source="service",
+            request_id=call.data[ATTR_REQUEST_ID],
+            expected_boundary=(
+                expected_at,
+                call.data[ATTR_EXPECTED_CHANGED_DATE],
+                call.data[ATTR_EXPECTED_REQUEST_ID],
+            ),
+            accepted_interval=(now - timedelta(days=31), now),
+        )
+    except FilterChangeConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=str(err),
+        ) from None
+    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
+        _LOGGER.error(
+            "Unexpected filter-change action failure (%s)", exception_fingerprint(err)
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_request_failed",
+        ) from None
+
+
+def _loaded_filter_coordinator(
+    hass: HomeAssistant, entry_id: str, thermostat_id: int
+) -> BeestatRuntimeDataCoordinator:
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if (
+        entry is None
+        or entry.domain != DOMAIN
+        or entry.state is not ConfigEntryState.LOADED
+        or (runtime := getattr(entry, "runtime_data", None)) is None
+        or runtime.coordinator.data is None
+    ):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    if not any(
+        item.thermostat_id == thermostat_id
+        for item in runtime.coordinator.data.config.thermostats
+    ):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_thermostat_id",
+            translation_placeholders={"thermostat_id": str(thermostat_id)},
+        )
+    return cast(BeestatRuntimeDataCoordinator, runtime.coordinator)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -1206,6 +1333,14 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
         partial(_async_handle_repair_filter_change_boundary, hass),
         schema=REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RECORD_FILTER_CHANGE,
+        partial(_async_handle_record_filter_change, hass),
+        schema=RECORD_FILTER_CHANGE_SERVICE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
 
     if conf := config.get(DOMAIN):
@@ -2211,7 +2346,7 @@ def _filter_series_statistics(
             if _statistic_row_in_range(
                 row,
                 start_day=start_day,
-                end_day=end_day,
+                end_day=None if item.metadata.get("has_sum") else end_day,
                 local_tz=local_tz,
             )
         ]

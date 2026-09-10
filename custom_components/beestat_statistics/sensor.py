@@ -36,8 +36,10 @@ from .entity import (
     thermostat_suggested_object_id,
 )
 from .filter_forecast import (
+    FILTER_FORECAST_QUALITY_FIELDS,
     FilterForecast,
     build_filter_forecast,
+    filter_forecast_quality_attributes,
     filter_forecast_revision,
 )
 from .profile import schedule_profile_payload
@@ -341,6 +343,7 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
     _attr_has_entity_name = True
     _unrecorded_attributes = frozenset(
         {
+            *FILTER_FORECAST_QUALITY_FIELDS,
             "current_profile",
             "current_profile_ref",
             "data_begin",
@@ -818,6 +821,9 @@ def _thermostat_sensor_descriptions(
                 thermostat_id=thermostat_id,
                 field="filter_runtime_hours",
             ),
+            extra_attributes_fn=partial(
+                _filter_quality_attributes, thermostat_id=thermostat_id
+            ),
         ),
         BeestatSensorEntityDescription(
             key="filter_recent_runtime_hours_per_day",
@@ -831,6 +837,9 @@ def _thermostat_sensor_descriptions(
                 _summary_value,
                 thermostat_id=thermostat_id,
                 field="recent_runtime_hours_per_day",
+            ),
+            extra_attributes_fn=partial(
+                _filter_quality_attributes, thermostat_id=thermostat_id
             ),
         ),
         BeestatSensorEntityDescription(
@@ -1191,6 +1200,7 @@ def _filter_forecast_attributes(
     if forecast is None:
         return None
     return {
+        **filter_forecast_quality_attributes(forecast),
         "changed_source": forecast.changed_source,
         "lifetime_runtime_hours": forecast.lifetime_runtime_hours,
         "max_age_days": forecast.max_age_days,
@@ -1217,6 +1227,7 @@ def _filter_forecast_snapshot_attributes(
     if forecast is None:
         return None
     return {
+        **filter_forecast_quality_attributes(forecast),
         "forecast_revision": filter_forecast_revision(forecast),
         "changed_date": (
             forecast.changed_date.isoformat()
@@ -1250,6 +1261,16 @@ def _filter_forecast_snapshot_attributes(
         "due": forecast.due,
         "due_soon": forecast.due_soon,
     }
+
+
+def _filter_quality_attributes(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+) -> dict[str, Any] | None:
+    forecast = _filter_forecast(coordinator, thermostat_id)
+    return (
+        filter_forecast_quality_attributes(forecast) if forecast is not None else None
+    )
 
 
 def _comfort_profile_attributes(

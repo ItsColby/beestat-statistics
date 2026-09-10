@@ -75,7 +75,9 @@ When YAML continues to own thermostat mappings, a native **Mark filter changed**
 click remains stored in config-entry options and is overlaid on the YAML mapping
 after later imports or restarts. An explicit YAML `filter_changed_date` remains
 date-only declarative input, takes precedence, and clears any saved click-time
-runtime boundary.
+runtime boundary. A changed explicit YAML boundary, including loss of its exact
+timestamp on the same date, records a `configuration` correction; unchanged
+imports preserve the existing latest-event receipt.
 
 Configuration fields:
 
@@ -195,7 +197,7 @@ Per-thermostat entities are created for discovered Beestat thermostats. When a l
 - runtime summary stale problem binary sensor
 - cloud data stale problem binary sensor
 
-The runtime due date is a projection until cumulative filter runtime reaches
+The runtime due date is a projection until observed filter runtime reaches
 the configured threshold. After the threshold is crossed, it remains pinned to
 the first Beestat daily-summary date that met the threshold instead of moving
 forward with each local calendar day.
@@ -273,7 +275,72 @@ The integration intentionally keeps the Beestat API boundary narrow: `runtime.sy
 
 When a thermostat is mapped to a `filter_changed_entity_id`, changes to that Home Assistant helper also trigger a Beestat statistics import so filter-runtime statistics catch up without a separate automation. The helper is a compatibility bridge; the Home Assistant **Filter changed date** entity is preferred for new changes.
 
-For filter tracking, use the per-thermostat **Filter changed date** entity or press **Mark filter changed** on the thermostat device. The effective filter date comes from the Home Assistant date override first, then a configured legacy helper, then Beestat/Ecobee filter metadata when available. Filter forecast sensors use the effective date, Beestat runtime since that date, the recent runtime rate, and the per-thermostat lifetime/max-age settings. The primary **Filter due date** entity also exposes one coherent, content-revisioned forecast snapshot containing every runtime, threshold, intermediate date, and due-state field needed by downstream automations; consumers do not need to combine sequential sibling-entity publications. **Mark filter changed** immediately saves the exact UTC click timestamp before any fallible cloud work, so the new filter starts at zero even if Beestat is temporarily stale or unavailable. The coordinator then reads only the relevant raw-runtime window, reconciles the click to Beestat's nearest 5-minute source boundary, and retries every 15 minutes for the first six hours while that interval is pending. Normal coordinator refreshes continue reconciliation attempts after the fast-retry window without creating perpetual 15-minute cloud syncs. While the exact boundary is pending, the ambiguous change day is excluded but unambiguous later-date runtime counts toward the new filter's lifetime. Reconciliation compares the persisted timestamp again immediately before saving, so a slow older request cannot overwrite a newer repeated press or another options update. After reconciliation, same-day runtime and forecasts subtract the finalized change-day baseline, and the due indicators resolve the latest saved thresholds without requiring an integration reload. Repeated presses on the same day replace the prior timestamp and reset the new-filter lifetime again. Manually editing **Filter changed date** clears the click timestamp and boundary because date-only input does not establish when during that day the replacement occurred. The date entity exposes unrecorded boundary status and timestamps for local troubleshooting. The integration also best-effort dismisses active Beestat filter-looking alerts for that thermostat; it does not write Ecobee settings or directly edit Beestat sync-owned filter metadata. The filter due sensor is a problem binary sensor; filter due soon is an advisory binary sensor for the notice window.
+For filter tracking, press **Mark filter changed** when replacing a filter, or
+use **Filter changed date** to correct its date. The effective date comes from
+the Home Assistant override first, then a configured legacy helper, then
+Beestat/Ecobee filter metadata. The button saves the local date and exact UTC
+click timestamp before fallible cloud work. Repeated presses record a new
+replacement boundary. A manual date edit clears the exact timestamp because a
+date alone cannot identify which part of that day's runtime followed replacement.
+
+Filter runtime counts observed fan exposure. On a timestamped change day it
+counts only complete five-minute source intervals after the replacement;
+the straddling interval is omitted, never prorated. Valid later intervals still
+count when the source has a gap at replacement time. Later days use daily
+summary runtime and coverage counts. Date-only changes omit their ambiguous
+change day. Missing history is unknown exposure, not zero runtime, and this
+integration cannot reconstruct runtime absent from Beestat.
+
+The **Filter due date** entity publishes one coherent forecast snapshot, with a
+content revision that changes when its coverage or provenance changes even if
+the due date stays the same. Its unrecorded attributes include:
+
+- `runtime_observed_hours`, `runtime_coverage` (`complete`, `partial`, or
+  `unknown`), `runtime_source_data_end`, and `runtime_is_lower_bound`. Coverage
+  describes source rows through the reported horizon; it does not prove freshness.
+- `runtime_unknown_interval_minutes`: unobserved elapsed time, including
+  unreported source time and boundary uncertainty; it is not measured missing
+  fan runtime. `runtime_boundary_precision_minutes` and
+  `runtime_boundary_uncertainty_minutes` distinguish normal source precision
+  from missing source rows.
+- `runtime_threshold_reached`: true when observed exposure proves the limit
+  reached, false when the assessed maximum possible exposure remains below it,
+  and unknown otherwise. Calendar-age limits remain independent of coverage.
+- `runtime_forecast_basis`, `remaining_runtime_hours_is_upper_bound`, and
+  `runtime_due_date_is_projection`, alongside the configured limits and dates.
+- `recent_runtime_window_start`, `recent_runtime_window_end`,
+  `recent_runtime_complete_days`, and `recent_runtime_excluded_days`.
+
+Boundary status and post-replacement coverage answer different questions. A
+`source_gap` can prevent validation of the change-day baseline even when every
+post-replacement interval is present; `finalized` means that baseline was
+validated. Observed runtime rounds down to 0.1 hour and remaining runtime rounds
+up to 0.1 hour; threshold decisions use the unrounded exposure.
+
+The recent rate uses only complete days from the previous 30 local days; it
+excludes today, missing days, and incomplete or invalid summaries. This demand
+sample can include days before the filter replacement. Expected coverage
+follows the actual length of each local day across daylight-saving
+changes. If no complete days are available, the calendar limit still provides
+a due date. A runtime date derived from incomplete exposure remains a qualified
+estimate, and the remaining runtime is an upper bound. Consumers should use
+this snapshot instead of combining sequential sibling-entity updates. The
+filter due problem sensor reports proven runtime or calendar limits; the due
+soon advisory includes the forecast notice window.
+
+The coordinator retains only the relevant raw change day for boundary
+assessment. A changed daily-summary fingerprint or six-hour cache expiry causes
+that day to be read again during a refresh, including after a boundary was
+finalized, so corrected pre-replacement history is not charged to the new
+filter. Pending boundaries retry every 15
+minutes for six hours; normal refreshes continue afterward. Every awaited
+reconciliation rechecks the saved replacement and timezone before persisting.
+The date entity exposes the last replacement or correction as
+`filter_change_event`, with its prior/new boundary, `request_id` and
+`prior_request_id`; this is a single latest-event receipt, not a maintenance
+history. Filter alert dismissal
+is best-effort after a replacement. The integration does not write Ecobee
+settings or Beestat's sync-owned filter metadata.
 
 Use the **Refresh Runtime** button to refresh native Beestat status/profile/freshness entities without importing Recorder statistics. Use the **Import Statistics** button or service action to sync Beestat and import daily external statistics. Use `beestat_statistics.rebuild_statistics` only when you need to repair or backfill Recorder statistics from the full Beestat summary baseline.
 
@@ -315,7 +382,47 @@ Fields:
 - `point_lookback_days`: optional number of recent local days to read for point-history statistics.
 - `skip_sync`: optional boolean. Use only for controlled workflows where Beestat was just synced and another sync would be redundant.
 
-The `beestat_statistics.rebuild_statistics` service action forces the full Beestat summary baseline before writing statistics, optionally limited by configured Beestat `thermostat_id`, `start_date`, and `end_date`. Use it for repairs, corrected historical Beestat rows, or targeted backfills rather than routine imports.
+The `beestat_statistics.rebuild_statistics` service action forces the full
+Beestat summary baseline before writing statistics, optionally scoped to a
+configured `thermostat_id`. `start_date` selects the first local date to write.
+For cumulative statistics, the corrected tail is written through the latest
+source day so later totals cannot retain an old offset. `end_date` limits
+measurement statistics only. Use this action for repairs, corrected historical
+Beestat rows, or targeted backfills rather than routine imports.
+
+Use the response-producing `beestat_statistics.record_filter_change` action
+when another maintenance workflow knows the actual replacement timestamp. It
+shares the native button's persistence and reconciliation owner and requires:
+
+- `config_entry_id` and the configured `thermostat_id`.
+- `changed_at`: an actual replacement timestamp within the last 31 days and
+  not in the future. An unambiguous offsetless value uses Home Assistant's
+  timezone; include an explicit offset during a repeated daylight-saving hour.
+- `expected_changed_at`: the date entity's saved `filter_changed_at`, or null.
+- `expected_changed_date`: its saved `home_assistant_override_date`, or null;
+  this is the persisted override, which can differ from the effective date.
+- `expected_request_id`: its saved `filter_change_event.request_id`, or null
+  when no event exists.
+- `request_id`: one stable opaque ID of 1–128 characters for this replacement.
+
+Capture all three expected fields with the maintenance cycle and preserve them
+across retries. Comparing the prior request identity also rejects stale work
+after a correction changes the boundary and then changes it back. A replacement
+must be later than the previous exact timestamp; changed prior fields or reuse
+of an ID for a different replacement reject the action. Retrying the current
+request with the same timestamp returns `already_recorded` without repeating
+effects, even after the timestamp becomes older than 31 days. The age limit
+applies to new recordings. This bounded replay receipt does not retain older
+requests after another mutation.
+
+The schema-version-1 response identifies the entry, thermostat and request,
+returns `requested_changed_at`, the persisted `changed_at` and `changed_date`,
+and `boundary_status`. Treat `recorded` or `already_recorded` with the exact
+requested timestamp as saved; `pending_data` does not undo that saved result.
+`superseded` means a later mutation won and must not be treated as successful
+completion of this request. Date edits, repairs and changed explicit YAML
+boundaries record corrections, so downstream workflows can distinguish them
+from a physical replacement.
 
 The `beestat_statistics.repair_filter_change_boundary` service action assigns a verified timestamp to an existing filter date from the last 31 days, then runs the same bounded five-minute reconciliation without dismissing alerts. It requires the loaded config entry and Beestat thermostat ID, interprets an unambiguous timestamp without an offset in Home Assistant's local timezone, and rejects timestamps whose local date does not match the saved filter date. During a repeated daylight-saving hour, include an explicit offset so the exact occurrence is known; nonexistent local times are rejected. This is a narrow historical repair tool, not the normal replacement workflow.
 

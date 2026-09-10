@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .api import exception_fingerprint
 from .config_payload import update_thermostat_override_options
+from .config_rows import effective_override_items, override_id
 from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+    CONF_FILTER_CHANGE_EVENT,
     CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
+    CONF_THERMOSTATS,
 )
+from .filter_action import FilterChangeEvent, parse_filter_change_event
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +68,9 @@ async def async_set_filter_changed_date(
         boundary_reconciled_at=None,
         boundary_source_data_end=None,
         rebuild_from_cached_rows=False,
+        event=_filter_change_event(
+            coordinator, thermostat_id, changed_date, None, "date"
+        ),
     )
 
 
@@ -72,13 +80,53 @@ async def async_mark_filter_changed(
     changed_at: datetime,
     *,
     dismiss_alerts: bool = True,
-) -> None:
-    """Reset filter runtime at the moment the native button is pressed."""
+    source: Literal["button", "service", "repair"] = "button",
+    request_id: str | None = None,
+    expected_boundary: tuple[datetime | None, date | None, str | None] | None = None,
+    accepted_interval: tuple[datetime, datetime] | None = None,
+) -> dict[str, Any]:
+    """Record a replacement or correction, with an optional optimistic guard."""
 
     if changed_at.tzinfo is None:
         raise ValueError("changed_at must be timezone-aware")
     changed_at = changed_at.astimezone(UTC)
     changed_date = changed_at.astimezone(coordinator.local_tz).date()
+    request_id = request_id or uuid4().hex
+    current = _saved_filter_options(coordinator, thermostat_id)
+    previous_event = parse_filter_change_event(current.get(CONF_FILTER_CHANGE_EVENT))
+    if previous_event is not None and previous_event.request_id == request_id:
+        if (
+            previous_event.changed_at != changed_at.isoformat()
+            or previous_event.source != source
+        ):
+            raise FilterChangeConflictError("request_id_reused")
+        return _filter_change_response(
+            coordinator, thermostat_id, changed_at, request_id, "already_recorded"
+        )
+    if accepted_interval is not None:
+        earliest, latest = accepted_interval
+        if not earliest <= changed_at <= latest:
+            raise FilterChangeConflictError("filter_change_boundary_out_of_range")
+    if expected_boundary is not None:
+        expected_at, expected_date, expected_request_id = expected_boundary
+        if (
+            current.get(CONF_FILTER_CHANGED_AT) != _isoformat_or_none(expected_at)
+            or current.get(CONF_FILTER_CHANGED_DATE)
+            != (expected_date.isoformat() if expected_date is not None else None)
+            or (previous_event.request_id if previous_event is not None else None)
+            != expected_request_id
+        ):
+            raise FilterChangeConflictError("filter_change_boundary_conflict")
+        if source != "repair" and (
+            (expected_at is not None and changed_at <= expected_at)
+            or (expected_date is not None and changed_date < expected_date)
+        ):
+            raise FilterChangeConflictError("filter_change_not_after_prior")
+    event = _filter_change_event(
+        coordinator, thermostat_id, changed_date, changed_at, source, request_id
+    )
+    # Guard, complete option merge, and persistence contain no await. The first
+    # yield occurs only after this action owns a durable boundary and receipt.
     await _async_apply_filter_change(
         coordinator,
         thermostat_id,
@@ -90,6 +138,7 @@ async def async_mark_filter_changed(
         rebuild_from_cached_rows=True,
         rollback_on_refresh_error=False,
         dismiss_alerts=dismiss_alerts,
+        event=event,
     )
     try:
         await coordinator.async_refresh_runtime(
@@ -102,6 +151,109 @@ async def async_mark_filter_changed(
             exception_fingerprint(err),
         )
         coordinator.async_schedule_filter_boundary_reconcile()
+    return _filter_change_response(
+        coordinator, thermostat_id, changed_at, request_id, "recorded"
+    )
+
+
+class FilterChangeConflictError(ValueError):
+    """The caller's prior boundary or request identity no longer owns this cycle."""
+
+
+def saved_filter_boundary(
+    coordinator: BeestatRuntimeDataCoordinator, thermostat_id: int
+) -> tuple[datetime | None, date | None, str | None]:
+    """Read the persisted guard, independent of a possibly stale projection."""
+
+    row = _saved_filter_options(coordinator, thermostat_id)
+    event = parse_filter_change_event(row.get(CONF_FILTER_CHANGE_EVENT))
+    changed_at = row.get(CONF_FILTER_CHANGED_AT)
+    changed_date = row.get(CONF_FILTER_CHANGED_DATE)
+    return (
+        datetime.fromisoformat(changed_at).astimezone(UTC)
+        if changed_at is not None
+        else None,
+        date.fromisoformat(changed_date) if changed_date is not None else None,
+        event.request_id if event is not None else None,
+    )
+
+
+def _saved_filter_options(
+    coordinator: BeestatRuntimeDataCoordinator, thermostat_id: int
+) -> dict[str, Any]:
+    entry = cast("BeestatStatisticsConfigEntry", coordinator.config_entry)
+    source = entry.options if CONF_THERMOSTATS in entry.options else entry.data
+    return next(
+        (
+            row
+            for row in effective_override_items(source.get(CONF_THERMOSTATS))
+            if override_id(row) == thermostat_id
+        ),
+        {},
+    )
+
+
+def _filter_change_event(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    changed_date: date,
+    changed_at: datetime | None,
+    source: Literal["button", "service", "repair", "date"],
+    request_id: str | None = None,
+) -> FilterChangeEvent:
+    previous = _saved_filter_options(coordinator, thermostat_id)
+    prior_event = parse_filter_change_event(previous.get(CONF_FILTER_CHANGE_EVENT))
+    return FilterChangeEvent(
+        action="replacement" if source in {"button", "service"} else "correction",
+        source=source,
+        request_id=request_id or uuid4().hex,
+        prior_request_id=prior_event.request_id if prior_event is not None else None,
+        prior_changed_at=previous.get(CONF_FILTER_CHANGED_AT),
+        prior_changed_date=previous.get(CONF_FILTER_CHANGED_DATE),
+        changed_at=_isoformat_or_none(changed_at),
+        changed_date=changed_date.isoformat(),
+        recorded_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def _filter_change_response(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    requested_at: datetime,
+    request_id: str,
+    status: str,
+) -> dict[str, Any]:
+    saved = _saved_filter_options(coordinator, thermostat_id)
+    event = parse_filter_change_event(saved.get(CONF_FILTER_CHANGE_EVENT))
+    requested_date = requested_at.astimezone(coordinator.local_tz).date().isoformat()
+    if (
+        event is None
+        or event.request_id != request_id
+        or saved.get(CONF_FILTER_CHANGED_AT) != requested_at.isoformat()
+        or saved.get(CONF_FILTER_CHANGED_DATE) != requested_date
+    ):
+        status = "superseded"
+    boundary_status = "legacy_date_only"
+    if saved.get(CONF_FILTER_CHANGED_AT) is not None:
+        boundary_status = (
+            "finalized"
+            if saved.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT) is not None
+            and saved.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS) is not None
+            else "pending_data"
+        )
+    return {
+        "schema_version": 1,
+        "status": status,
+        "config_entry_id": cast(
+            "BeestatStatisticsConfigEntry", coordinator.config_entry
+        ).entry_id,
+        "thermostat_id": thermostat_id,
+        "request_id": request_id,
+        "requested_changed_at": requested_at.isoformat(),
+        "changed_at": saved.get(CONF_FILTER_CHANGED_AT),
+        "changed_date": saved.get(CONF_FILTER_CHANGED_DATE),
+        "boundary_status": boundary_status,
+    }
 
 
 async def _async_apply_filter_change(
@@ -116,6 +268,7 @@ async def _async_apply_filter_change(
     rebuild_from_cached_rows: bool,
     rollback_on_refresh_error: bool = True,
     dismiss_alerts: bool = True,
+    event: FilterChangeEvent,
 ) -> None:
     """Persist one filter change and refresh its derived runtime state."""
 
@@ -127,6 +280,7 @@ async def _async_apply_filter_change(
         {
             CONF_FILTER_CHANGED_DATE: changed_date.isoformat(),
             CONF_FILTER_CHANGED_AT: _isoformat_or_none(changed_at),
+            CONF_FILTER_CHANGE_EVENT: event.as_dict(),
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: (
                 change_day_runtime_baseline_seconds
             ),

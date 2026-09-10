@@ -103,7 +103,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
@@ -121,7 +121,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
@@ -140,7 +140,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [{"id": 1001, "filter_changed_date": "2026-07-05"}],
         )
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
@@ -159,7 +159,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [
                 {
                     "id": 1001,
@@ -187,7 +187,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [
                 {
                     "id": 1001,
@@ -223,7 +223,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [{"id": 1001, "filter_changed_date": "2026-06-18"}],
         )
         self.assertEqual(coordinator.refresh_skip_sync_values, [True])
@@ -241,7 +241,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            coordinator.config_entry.options["thermostats"],
+            _boundary_options(coordinator),
             [
                 {
                     "id": 1001,
@@ -326,6 +326,225 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
             coordinator.config_entry.options["thermostats"][0]["filter_changed_date"],
         )
 
+    async def test_replacement_pending_result_survives_refresh_error(self):
+        coordinator = _FakeCoordinator(refresh_error=RuntimeError("offline"))
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        response = await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            changed_at,
+            source="service",
+            request_id="completion-1",
+            expected_boundary=(None, None, None),
+        )
+        self.assertEqual(response["status"], "recorded")
+        self.assertEqual(response["changed_at"], changed_at.isoformat())
+        self.assertEqual(response["boundary_status"], "pending_data")
+        event = coordinator.config_entry.options["thermostats"][0][
+            "filter_change_event"
+        ]
+        self.assertEqual(event["action"], "replacement")
+        self.assertEqual(event["source"], "service")
+        self.assertEqual(event["request_id"], "completion-1")
+        self.assertIsNone(event["prior_changed_at"])
+
+    async def test_replay_uses_persisted_receipt_without_refresh_or_dismiss(self):
+        coordinator = _FakeCoordinator()
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            changed_at,
+            source="service",
+            request_id="completion-1",
+            expected_boundary=(None, None, None),
+        )
+        restarted = _FakeCoordinator()
+        restarted.config_entry.options = coordinator.config_entry.options
+        response = await self.entry_options.async_mark_filter_changed(
+            restarted,
+            1001,
+            changed_at,
+            source="service",
+            request_id="completion-1",
+            expected_boundary=(None, None, None),
+        )
+        self.assertEqual(response["status"], "already_recorded")
+        self.assertEqual(restarted.refresh_skip_sync_values, [])
+        self.assertEqual(restarted.dismissed_thermostat_ids, [])
+
+    async def test_stale_prior_and_reused_request_cannot_overwrite_new_cycle(self):
+        coordinator = _FakeCoordinator()
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            changed_at,
+            source="service",
+            request_id="completion-1",
+            expected_boundary=(None, None, None),
+        )
+        saved = coordinator.config_entry.options
+        for request_id, reason in (
+            ("completion-1", "request_id_reused"),
+            ("completion-2", "filter_change_boundary_conflict"),
+        ):
+            with self.assertRaisesRegex(
+                self.entry_options.FilterChangeConflictError, reason
+            ):
+                await self.entry_options.async_mark_filter_changed(
+                    coordinator,
+                    1001,
+                    changed_at.replace(hour=22),
+                    source="service",
+                    request_id=request_id,
+                    expected_boundary=(None, None, None),
+                )
+        self.assertIs(coordinator.config_entry.options, saved)
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+
+    async def test_matching_prior_allows_second_same_day_replacement(self):
+        coordinator = _FakeCoordinator()
+        first = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        second = first.replace(hour=22)
+        await self.entry_options.async_mark_filter_changed(coordinator, 1001, first)
+        first_event = coordinator.config_entry.options["thermostats"][0][
+            "filter_change_event"
+        ]
+        result = await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            second,
+            source="service",
+            request_id="second",
+            expected_boundary=(first, date(2026, 7, 5), first_event["request_id"]),
+        )
+        event = coordinator.config_entry.options["thermostats"][0][
+            "filter_change_event"
+        ]
+        self.assertEqual(first_event["source"], "button")
+        self.assertNotEqual(first_event["request_id"], event["request_id"])
+        self.assertEqual(event["prior_changed_at"], first.isoformat())
+        self.assertEqual(result["status"], "recorded")
+        with self.assertRaisesRegex(
+            self.entry_options.FilterChangeConflictError, "not_after_prior"
+        ):
+            await self.entry_options.async_mark_filter_changed(
+                coordinator,
+                1001,
+                first,
+                source="service",
+                request_id="older",
+                expected_boundary=(second, date(2026, 7, 5), event["request_id"]),
+            )
+
+    async def test_newer_action_during_refresh_is_not_our_success(self):
+        def clear_boundary(coordinator):
+            coordinator.config_entry.options = {"thermostats": [{"id": 1001}]}
+
+        coordinator = _FakeCoordinator(during_refresh=clear_boundary)
+        response = await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
+            source="service",
+            request_id="completion-1",
+            expected_boundary=(None, None, None),
+        )
+        self.assertEqual(response["status"], "superseded")
+        self.assertIsNone(response["changed_at"])
+        self.assertIsNone(response["changed_date"])
+
+    async def test_manual_date_and_historical_repair_are_corrections(self):
+        coordinator = _FakeCoordinator()
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        await self.entry_options.async_mark_filter_changed(
+            coordinator, 1001, changed_at
+        )
+        await self.entry_options.async_set_filter_changed_date(
+            coordinator, 1001, changed_at.date()
+        )
+        row = coordinator.config_entry.options["thermostats"][0]
+        self.assertEqual(row["filter_change_event"]["action"], "correction")
+        self.assertEqual(row["filter_change_event"]["source"], "date")
+        self.assertIsNone(row["filter_change_event"]["changed_at"])
+        await self.entry_options.async_mark_filter_changed(
+            coordinator, 1001, changed_at, source="repair", dismiss_alerts=False
+        )
+        event = coordinator.config_entry.options["thermostats"][0][
+            "filter_change_event"
+        ]
+        self.assertEqual(event["action"], "correction")
+        self.assertEqual(event["source"], "repair")
+
+    def test_event_parser_rejects_incomplete_or_contradictory_provenance(self):
+        parse = self.entry_options.parse_filter_change_event
+        base = {
+            "schema_version": 1,
+            "action": "replacement",
+            "source": "service",
+            "request_id": "test-request",
+            "prior_request_id": None,
+            "prior_changed_at": None,
+            "prior_changed_date": None,
+            "changed_at": "2026-07-05T21:48:00+00:00",
+            "changed_date": "2026-07-05",
+            "recorded_at": "2026-07-05T22:00:00+00:00",
+        }
+        self.assertEqual(parse(base).as_dict(), base)
+        for updates in (
+            {"source": "repair"},
+            {"request_id": "x" * 129},
+            {"recorded_at": "unknown"},
+            {"schema_version": 2},
+            {"changed_at": None},
+            {"changed_date": None},
+        ):
+            self.assertIsNone(parse({**base, **updates}))
+
+    async def test_correction_back_to_prior_date_cannot_authorize_old_replay(self):
+        coordinator = _FakeCoordinator()
+        coordinator.config_entry.options = {
+            "thermostats": [{"id": 1001, "filter_changed_date": "2026-07-04"}]
+        }
+        original_guard = self.entry_options.saved_filter_boundary(coordinator, 1001)
+        changed_at = datetime(2026, 7, 5, 21, 48, tzinfo=UTC)
+        await self.entry_options.async_mark_filter_changed(
+            coordinator,
+            1001,
+            changed_at,
+            source="service",
+            request_id="original",
+            expected_boundary=original_guard,
+        )
+        await self.entry_options.async_set_filter_changed_date(
+            coordinator, 1001, date(2026, 7, 4)
+        )
+        current = coordinator.config_entry.options
+        event = current["thermostats"][0]["filter_change_event"]
+        self.assertEqual(event["prior_request_id"], "original")
+        with self.assertRaisesRegex(
+            self.entry_options.FilterChangeConflictError, "boundary_conflict"
+        ):
+            await self.entry_options.async_mark_filter_changed(
+                coordinator,
+                1001,
+                changed_at,
+                source="service",
+                request_id="original",
+                expected_boundary=original_guard,
+            )
+        self.assertIs(coordinator.config_entry.options, current)
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001, 1001])
+
+
+def _boundary_options(coordinator):
+    """Project stored policy fields; event provenance is asserted separately."""
+    return [
+        {key: value for key, value in row.items() if key != "filter_change_event"}
+        for row in coordinator.config_entry.options["thermostats"]
+    ]
+
 
 class _FakeCoordinator:
     def __init__(
@@ -337,7 +556,9 @@ class _FakeCoordinator:
         rebuild_error: Exception | None = None,
         during_refresh: Callable[[_FakeCoordinator], None] | None = None,
     ) -> None:
-        self.config_entry = types.SimpleNamespace(data={}, options={})
+        self.config_entry = types.SimpleNamespace(
+            data={}, options={}, entry_id="test-entry"
+        )
         self.hass = types.SimpleNamespace(
             config_entries=types.SimpleNamespace(async_update_entry=self._update_entry)
         )

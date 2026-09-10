@@ -6,7 +6,7 @@ import asyncio
 import sys
 import types
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -664,33 +664,53 @@ async def test_entry_unload_cancels_projection_timer(
 
 
 @pytest.mark.parametrize(
-    ("before", "later"),
+    ("before", "later", "window_changed"),
     [
-        (datetime(2026, 7, 1, 13, tzinfo=UTC), datetime(2026, 7, 1, 13, 5, tzinfo=UTC)),
-        (datetime(2026, 7, 6, 3, 59, tzinfo=UTC), datetime(2026, 7, 6, 4, tzinfo=UTC)),
+        (
+            datetime(2026, 7, 1, 13, tzinfo=UTC),
+            datetime(2026, 7, 1, 13, 5, tzinfo=UTC),
+            False,
+        ),
+        (
+            datetime(2026, 7, 6, 3, 59, tzinfo=UTC),
+            datetime(2026, 7, 6, 4, tzinfo=UTC),
+            True,
+        ),
     ],
     ids=["same_local_date", "empty_local_midnight"],
 )
-async def test_unchanged_projection_does_not_dispatch_entity_updates(
+async def test_cached_projection_dispatches_changed_rate_window_only(
     hass: HomeAssistant,
     freezer: Any,
     before: datetime,
     later: datetime,
+    window_changed: bool,
 ) -> None:
     freezer.move_to(later)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=before)
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
+    before_rate = coordinator.data.thermostats[1].recent_runtime_rate
+    try:
+        coordinator._async_rebuild_projection_from_cached(later)
 
-    coordinator._async_rebuild_projection_from_cached(later)
+        rate = coordinator.data.thermostats[1].recent_runtime_rate
+        assert rate is not None
+        assert rate.hours_per_day is None
+        assert rate.complete_days == 0
+        assert rate.excluded_days == 30
+        assert rate.window_end == later.astimezone(
+            coordinator.local_tz
+        ).date() - timedelta(days=1)
+        assert (rate != before_rate) is window_changed
+        assert coordinator.data.projected_at == (later if window_changed else before)
+        assert client.calls == []
+        assert updates == (["updated"] if window_changed else [])
+    finally:
+        await entry._async_process_on_unload(hass)
 
-    assert coordinator.data.projected_at == before
-    assert client.calls == []
-    assert updates == []
-    await entry._async_process_on_unload(hass)
 
-
-async def test_noop_midnight_rearms_real_timer_for_next_schedule_change(
+async def test_midnight_quality_update_rearms_real_timer_for_next_schedule_change(
     hass: HomeAssistant,
     freezer: Any,
 ) -> None:
@@ -707,24 +727,30 @@ async def test_noop_midnight_rearms_real_timer_for_next_schedule_change(
     )
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
+    try:
+        coordinator._async_schedule_projection_boundary(coordinator.data)
+        freezer.move_to(midnight)
+        async_fire_time_changed_exact(hass, midnight)
+        await hass.async_block_till_done()
 
-    coordinator._async_schedule_projection_boundary(coordinator.data)
-    freezer.move_to(midnight)
-    async_fire_time_changed_exact(hass, midnight)
-    await hass.async_block_till_done()
+        assert coordinator.data.projected_at == midnight
+        assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Sleep"
+        rate = coordinator.data.thermostats[1].recent_runtime_rate
+        assert rate is not None
+        assert rate.window_end == date(2026, 6, 30)
+        assert rate.hours_per_day is None
+        assert updates == ["updated"]
 
-    assert coordinator.data.projected_at == before
-    assert updates == []
+        freezer.move_to(schedule_boundary)
+        async_fire_time_changed_exact(hass, schedule_boundary)
+        await hass.async_block_till_done()
 
-    freezer.move_to(schedule_boundary)
-    async_fire_time_changed_exact(hass, schedule_boundary)
-    await hass.async_block_till_done()
-
-    assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
-    assert coordinator.data.projected_at == schedule_boundary
-    assert client.calls == []
-    assert updates == ["updated"]
-    await entry._async_process_on_unload(hass)
+        assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
+        assert coordinator.data.projected_at == schedule_boundary
+        assert client.calls == []
+        assert updates == ["updated", "updated"]
+    finally:
+        await entry._async_process_on_unload(hass)
 
 
 async def test_core_time_zone_update_reprojects_without_io_and_unloads(
@@ -782,18 +808,19 @@ async def test_core_time_zone_update_reprojects_without_io_and_unloads(
 
 
 @pytest.mark.parametrize(
-    ("now", "time_zone"),
+    ("now", "time_zone", "window_changed"),
     [
-        (datetime(2026, 7, 1, 1, tzinfo=UTC), "Europe/London"),
-        (datetime(2026, 7, 1, 17, tzinfo=UTC), "America/Chicago"),
+        (datetime(2026, 7, 1, 1, tzinfo=UTC), "Europe/London", True),
+        (datetime(2026, 7, 1, 17, tzinfo=UTC), "America/Chicago", False),
     ],
     ids=["cross_local_date", "same_local_date"],
 )
-async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
+async def test_core_time_zone_update_reschedules_and_dispatches_changed_rate_window(
     hass: HomeAssistant,
     freezer: Any,
     now: datetime,
     time_zone: str,
+    window_changed: bool,
 ) -> None:
     freezer.move_to(now)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
@@ -806,24 +833,35 @@ async def test_core_time_zone_update_reschedules_without_unchanged_dispatch(
 
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
+    before_rate = coordinator.data.thermostats[1].recent_runtime_rate
+    try:
+        with patch(
+            "custom_components.beestat_statistics.coordinator."
+            "async_track_point_in_utc_time",
+            side_effect=track_projection,
+        ):
+            _async_track_time_zone_updates(hass, entry, coordinator)
+            coordinator._async_schedule_projection_boundary(coordinator.data)
 
-    with patch(
-        "custom_components.beestat_statistics.coordinator."
-        "async_track_point_in_utc_time",
-        side_effect=track_projection,
-    ):
-        _async_track_time_zone_updates(hass, entry, coordinator)
-        coordinator._async_schedule_projection_boundary(coordinator.data)
+            await hass.config.async_update(time_zone=time_zone)
+            await hass.async_block_till_done()
 
-        await hass.config.async_update(time_zone=time_zone)
-        await hass.async_block_till_done()
-
-    assert coordinator.local_tz == ZoneInfo(time_zone)
-    assert client.calls == []
-    assert updates == []
-    assert len(scheduled) == 2
-    scheduled[0][1].assert_called_once_with()
-    await entry._async_process_on_unload(hass)
+        assert coordinator.local_tz == ZoneInfo(time_zone)
+        rate = coordinator.data.thermostats[1].recent_runtime_rate
+        assert rate is not None
+        assert rate.hours_per_day is None
+        assert rate.complete_days == 0
+        assert rate.excluded_days == 30
+        assert rate.window_end == now.astimezone(
+            ZoneInfo(time_zone)
+        ).date() - timedelta(days=1)
+        assert (rate != before_rate) is window_changed
+        assert client.calls == []
+        assert updates == (["updated"] if window_changed else [])
+        assert len(scheduled) == 2
+        scheduled[0][1].assert_called_once_with()
+    finally:
+        await entry._async_process_on_unload(hass)
 
 
 async def test_import_restarts_before_recorder_write_after_timezone_change(

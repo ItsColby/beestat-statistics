@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
+from uuid import uuid4
 
 from .config_rows import effective_override_items, override_id
 from .const import (
@@ -17,6 +18,7 @@ from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
+    CONF_FILTER_CHANGE_EVENT,
     CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
     CONF_FILTER_CHANGED_ENTITY_ID,
@@ -46,6 +48,7 @@ from .const import (
     MIN_SCAN_INTERVAL_SECONDS,
 )
 from .entity_reference import migrate_option_entity_references
+from .filter_action import FilterChangeEvent, parse_filter_change_event
 from .url_validation import normalize_api_base
 
 CONF_API_KEY = "api_key"
@@ -156,6 +159,8 @@ def merge_import_options(
     existing_options: Mapping[str, Any],
     import_data: Mapping[str, Any],
     import_options: Mapping[str, Any],
+    *,
+    existing_data: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Merge YAML import options with UI-owned native mapping options."""
 
@@ -163,7 +168,11 @@ def merge_import_options(
     options.update(import_options)
     if CONF_THERMOSTATS in import_data:
         yaml_thermostats = _yaml_thermostats_with_filter_boundaries(
-            existing_options.get(CONF_THERMOSTATS),
+            (
+                existing_options
+                if CONF_THERMOSTATS in existing_options
+                else existing_data or {}
+            ).get(CONF_THERMOSTATS),
             import_data[CONF_THERMOSTATS],
         )
         if yaml_thermostats is None:
@@ -190,14 +199,21 @@ def _yaml_thermostats_with_filter_boundaries(
     preserved_boundary = False
     for item in imported:
         item_id = override_id(item)
-        if CONF_FILTER_CHANGED_DATE in item or item_id is None:
+        if item_id is None:
             continue
         existing = existing_by_id.get(item_id)
+        if CONF_FILTER_CHANGED_DATE in item:
+            event = _imported_filter_change_event(item, existing or {})
+            if event is not None:
+                item[CONF_FILTER_CHANGE_EVENT] = event.as_dict()
+                preserved_boundary = True
+            continue
         if existing is None or CONF_FILTER_CHANGED_DATE not in existing:
             continue
         item[CONF_FILTER_CHANGED_DATE] = existing[CONF_FILTER_CHANGED_DATE]
         for field in (
             CONF_FILTER_CHANGED_AT,
+            CONF_FILTER_CHANGE_EVENT,
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
             CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
             CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
@@ -206,6 +222,32 @@ def _yaml_thermostats_with_filter_boundaries(
                 item[field] = existing[field]
         preserved_boundary = True
     return imported if preserved_boundary else None
+
+
+def _imported_filter_change_event(
+    imported: dict[str, Any], previous: dict[str, Any]
+) -> FilterChangeEvent | None:
+    """Give a changed explicit YAML boundary its own correction identity."""
+
+    event = parse_filter_change_event(previous.get(CONF_FILTER_CHANGE_EVENT))
+    changed_date = imported[CONF_FILTER_CHANGED_DATE]
+    changed_at = imported.get(CONF_FILTER_CHANGED_AT)
+    if (changed_at, changed_date) == (
+        previous.get(CONF_FILTER_CHANGED_AT),
+        previous.get(CONF_FILTER_CHANGED_DATE),
+    ):
+        return event
+    return FilterChangeEvent(
+        action="correction",
+        source="configuration",
+        request_id=uuid4().hex,
+        prior_request_id=event.request_id if event is not None else None,
+        prior_changed_at=previous.get(CONF_FILTER_CHANGED_AT),
+        prior_changed_date=previous.get(CONF_FILTER_CHANGED_DATE),
+        changed_at=changed_at,
+        changed_date=changed_date,
+        recorded_at=datetime.now(UTC).isoformat(),
+    )
 
 
 def migrate_entry_payload(
@@ -305,6 +347,7 @@ def update_thermostat_override_options(
             CONF_MOTION_ENTITY_ID,
             CONF_MOTION_ENTITY_REF,
             CONF_FILTER_CHANGED_AT,
+            CONF_FILTER_CHANGE_EVENT,
             CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
             CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,

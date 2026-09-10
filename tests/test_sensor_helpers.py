@@ -6,7 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -74,6 +74,8 @@ class SensorHelpersTest(unittest.TestCase):
         self.thermostat_settings = _load_module("thermostat_settings")
         self.profile = _load_module("profile")
         self.sensor = _load_module("sensor")
+        self.filter_runtime = _load_module("filter_runtime")
+        self.filter_forecast = _load_module("filter_forecast")
 
     def tearDown(self) -> None:
         for key, module in self._old_modules.items():
@@ -341,7 +343,147 @@ class SensorHelpersTest(unittest.TestCase):
         assert changed is not None
         self.assertNotEqual(changed["forecast_revision"], original_revision)
 
-    def test_filter_forecast_resets_runtime_on_replacement_date(self) -> None:
+    def test_fractional_boundary_retains_qualified_forecast_and_quality_revision(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_changed_at=datetime(2026, 6, 18, 14, 32, tzinfo=UTC),
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+        )
+        observation = self.filter_runtime.FilterRuntimeObservation(
+            200 * 3600,
+            "complete",
+            180,
+            180,
+            "finalized",
+            datetime(2026, 7, 4, 23, 55, tzinfo=UTC),
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=200,
+            recent_runtime_hours_per_day=10,
+            filter_runtime_observation=observation,
+            recent_runtime_rate=self.filter_runtime.RecentRuntimeRate(
+                10, date(2026, 6, 5), date(2026, 7, 4), 29, 1
+            ),
+        )
+        forecast = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertEqual(forecast.runtime_due_date, date(2026, 7, 10))
+        self.assertEqual(forecast.runtime_coverage, "complete")
+        self.assertTrue(forecast.runtime_is_lower_bound)
+        self.assertEqual(
+            forecast.runtime_forecast_basis, "observed_lower_bound_projection"
+        )
+        self.assertTrue(forecast.remaining_runtime_hours_is_upper_bound)
+        self.assertFalse(forecast.runtime_threshold_reached)
+        self.assertEqual(forecast.recent_runtime_complete_days, 29)
+        before = self.filter_forecast.filter_forecast_revision(forecast)
+        summary.filter_runtime_observation = replace(
+            observation,
+            coverage="partial",
+            unknown_interval_seconds=86400,
+            boundary_status="source_gap",
+        )
+        after = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertEqual(after.runtime_hours, forecast.runtime_hours)
+        self.assertEqual(after.runtime_due_date, forecast.runtime_due_date)
+        self.assertNotEqual(
+            self.filter_forecast.filter_forecast_revision(after), before
+        )
+        attributes = self.filter_forecast.filter_forecast_quality_attributes(after)
+        self.assertEqual(attributes["boundary_status"], "source_gap")
+        self.assertEqual(attributes["runtime_unknown_interval_minutes"], 1440)
+        self.assertLessEqual(
+            attributes.keys(), self.sensor.BeestatSensor._unrecorded_attributes
+        )
+
+    def test_fractional_lifetime_uses_unrounded_proof_and_rounds_remaining_up(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="zone",
+            name="Zone",
+            filter_lifetime_runtime_hours=0.01,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 7, 5),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=0.0,
+            recent_runtime_hours_per_day=1,
+            filter_runtime_observation=self.filter_runtime.FilterRuntimeObservation(
+                35, "complete", 1, 0, "finalized", None
+            ),
+        )
+        before = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 6)
+        )
+        self.assertEqual(before.remaining_runtime_hours, 0.1)
+        self.assertTrue(before.remaining_runtime_hours_is_upper_bound)
+        summary.filter_runtime_observation = replace(
+            summary.filter_runtime_observation, observed_seconds=36
+        )
+        summary.filter_runtime_threshold_date = date(2026, 7, 5)
+        after = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 6)
+        )
+        self.assertTrue(after.runtime_threshold_reached)
+        self.assertEqual(after.remaining_runtime_hours, 0)
+        self.assertEqual(after.runtime_due_date, date(2026, 7, 5))
+        self.assertTrue(after.due)
+
+    def test_lower_bound_proof_and_calendar_cap_are_independent_of_projection(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=249.9,
+            recent_runtime_hours_per_day=10,
+            filter_runtime_observation=self.filter_runtime.FilterRuntimeObservation(
+                249.99 * 3600, "partial", None, 180, "source_gap", None
+            ),
+        )
+        forecast = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertIsNone(forecast.runtime_threshold_reached)
+        self.assertIsNone(forecast.due)
+        self.assertTrue(forecast.runtime_due_date_is_projection)
+        self.assertEqual(forecast.max_age_due_date, date(2026, 9, 16))
+        at_cap = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 9, 16)
+        )
+        self.assertTrue(at_cap.due)
+        summary.filter_runtime_observation = replace(
+            summary.filter_runtime_observation, observed_seconds=250 * 3600
+        )
+        proven = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertTrue(proven.runtime_threshold_reached)
+        self.assertTrue(proven.due)
+        self.assertFalse(proven.runtime_due_date_is_projection)
+
+    def test_filter_forecast_preserves_unknown_runtime_on_replacement_date(
+        self,
+    ) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
             slug="main",
@@ -353,7 +495,10 @@ class SensorHelpersTest(unittest.TestCase):
         summary = types.SimpleNamespace(
             filter_changed_date=date(2026, 7, 5),
             filter_changed_source="native",
-            filter_runtime_hours=276.6,
+            filter_runtime_hours=None,
+            filter_runtime_observation=self.filter_runtime.FilterRuntimeObservation(
+                None, "unknown", None, 0, "pending_data", None
+            ),
             recent_runtime_hours_per_day=15.4,
         )
 
@@ -363,10 +508,10 @@ class SensorHelpersTest(unittest.TestCase):
             today=date(2026, 7, 5),
         )
 
-        self.assertEqual(forecast.runtime_hours, 0.0)
-        self.assertEqual(forecast.remaining_runtime_hours, 250.0)
-        self.assertEqual(forecast.runtime_due_date, date(2026, 7, 21))
-        self.assertFalse(forecast.due)
+        self.assertIsNone(forecast.runtime_hours)
+        self.assertIsNone(forecast.remaining_runtime_hours)
+        self.assertIsNone(forecast.runtime_due_date)
+        self.assertIsNone(forecast.due)
         self.assertFalse(forecast.due_soon)
 
     def test_filter_forecast_uses_click_boundary_runtime_on_replacement_date(
