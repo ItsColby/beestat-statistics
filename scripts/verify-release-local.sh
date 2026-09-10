@@ -56,9 +56,9 @@ run_python() (
   else
     podman run --rm -e HOME=/tmp/home -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
       -e PIP_ROOT_USER_ACTION=ignore -e DEBIAN_FRONTEND=noninteractive \
-      -e PIP_CACHE_DIR=/pip-cache \
+      -e PIP_COMPILE=0 -e PIP_CACHE_DIR=/pip-cache \
       -e PYTHONPYCACHEPREFIX=/tmp/pycache -e XDG_CACHE_HOME=/tmp/cache \
-      -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/tmp/mypy-cache \
+      -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/dev/null \
       -e 'PYTEST_ADDOPTS=-p no:cacheprovider' \
       -v "$repo_root:/workspace:ro" -w /workspace \
       --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \

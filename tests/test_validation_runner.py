@@ -248,6 +248,8 @@ class ValidationRunnerTests(unittest.TestCase):
             args = event["args"]
             self.assertEqual(args[:2], ["run", "--rm"])
             self.assertIn("PIP_CACHE_DIR=/pip-cache", args)
+            self.assertIn("PIP_COMPILE=0", args)
+            self.assertIn("MYPY_CACHE_DIR=/dev/null", args)
             self.assertEqual(
                 args[args.index("--mount") + 1],
                 "type=volume,source=beestat-statistics-validation-pip,target=/pip-cache",

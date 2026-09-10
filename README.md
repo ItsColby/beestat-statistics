@@ -476,10 +476,12 @@ Local containers reuse pip downloads and wheels in the Podman volume
 into a fresh container and reruns every check. The disposable cache contains
 neither installed environments nor validation results; remove it with
 `podman volume rm beestat-statistics-validation-pip` when no local validation is
-running to force fresh downloads. In `all container`, all four independent lanes
-run concurrently against the read-only snapshot. The runner retains every lane's
-result after a failure and waits for all workers before cleanup. Individual lanes
-and native execution remain sequential.
+running to force fresh downloads. Container pip installs defer dependency
+bytecode until imports, and mypy checks run without writing a cache. The explicit
+product `compileall` check and every test remain enabled. In `all container`, all
+four independent lanes run concurrently against the read-only snapshot. The
+runner retains every lane's result after a failure and waits for all workers
+before cleanup. Individual lanes and native execution remain sequential.
 On Linux, the same command surface is:
 
 ```bash
