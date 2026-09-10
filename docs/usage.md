@@ -117,7 +117,9 @@ not ordinary sensor entities. Daily cumulative series include combined cooling,
 heating, and fan runtime; individual compressor/auxiliary stages and available
 humidifier, dehumidifier, ventilator, and economizer runtime; and heating/cooling
 degree days. Runtime uses hours.
-Stage/accessory series appear after nonzero runtime is observed.
+Stage/accessory series appear after nonzero runtime is observed. Once imported,
+they remain eligible for corrections to zero; never-observed hardware stays
+omitted.
 
 Daily measurement series include indoor/outdoor humidity, outdoor temperature,
 heat/cool setpoints, and selected room-sensor temperature, air quality, CO2, and

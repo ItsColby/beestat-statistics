@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from math import fsum, isfinite
@@ -59,6 +60,8 @@ class CumulativeStatisticSeed:
 def cumulative_statistic_ids(
     config: BeestatConfig,
     summary_rows: list[dict[str, Any]] | None = None,
+    *,
+    existing_statistic_ids: Collection[str] = (),
 ) -> tuple[str, ...]:
     """Return cumulative statistic IDs that require Recorder seeding."""
 
@@ -71,7 +74,7 @@ def cumulative_statistic_ids(
         statistic_ids.extend(
             f"{STATISTIC_SOURCE}:{thermostat.slug}_{runtime_slug}_runtime_hours"
             for runtime_slug, _runtime_label, _fields in _runtime_fields(
-                thermostat_rows
+                thermostat_rows, thermostat.slug, existing_statistic_ids
             )
         )
         statistic_ids.extend(
@@ -79,6 +82,16 @@ def cumulative_statistic_ids(
             for spec in SUMMARY_SUM_STATISTICS
         )
     return tuple(statistic_ids)
+
+
+def detailed_runtime_statistic_ids(config: BeestatConfig) -> tuple[str, ...]:
+    """Bound Recorder inventory to possible detailed IDs for configured hardware."""
+
+    return tuple(
+        f"{STATISTIC_SOURCE}:{thermostat.slug}_{slug}_runtime_hours"
+        for thermostat in config.thermostats
+        for slug, _label, _field in DETAILED_RUNTIME_FIELDS
+    )
 
 
 def apply_cumulative_seeds(
@@ -123,11 +136,18 @@ def build_statistics(
     sensor_rows_by_id: dict[int, list[dict[str, Any]]],
     local_tz: ZoneInfo,
     config: BeestatConfig,
+    *,
+    existing_statistic_ids: Collection[str] = (),
 ) -> list[StatisticsSeries]:
     """Build all Beestat statistics series for Home Assistant Recorder."""
 
     return [
-        *build_runtime_statistics(summary_rows, local_tz, config),
+        *build_runtime_statistics(
+            summary_rows,
+            local_tz,
+            config,
+            existing_statistic_ids=existing_statistic_ids,
+        ),
         *build_summary_sum_statistics(summary_rows, local_tz, config),
         *build_summary_mean_statistics(summary_rows, local_tz, config),
         *build_thermostat_point_statistics(thermostat_rows_by_id, local_tz, config),
@@ -139,6 +159,8 @@ def build_runtime_statistics(
     summary_rows: list[dict[str, Any]],
     local_tz: ZoneInfo,
     config: BeestatConfig,
+    *,
+    existing_statistic_ids: Collection[str] = (),
 ) -> list[StatisticsSeries]:
     """Build cumulative HVAC runtime statistics from daily summary rows."""
 
@@ -148,7 +170,9 @@ def build_runtime_statistics(
         rows = rows_by_thermostat.get(thermostat.thermostat_id, [])
         if not rows:
             continue
-        for runtime_slug, runtime_label, fields in _runtime_fields(rows):
+        for runtime_slug, runtime_label, fields in _runtime_fields(
+            rows, thermostat.slug, existing_statistic_ids
+        ):
             series.append(
                 _build_cumulative_runtime_series(
                     thermostat_slug=thermostat.slug,
@@ -165,6 +189,8 @@ def build_runtime_statistics(
 
 def _runtime_fields(
     rows: list[tuple[date, dict[str, Any]]],
+    thermostat_slug: str,
+    existing_statistic_ids: Collection[str],
 ) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     """Select the same ordered runtime groups for construction and Recorder seeding."""
 
@@ -173,7 +199,11 @@ def _runtime_fields(
         *(
             (slug, label, (field,))
             for slug, label, field in DETAILED_RUNTIME_FIELDS
-            if any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows)
+            if (
+                f"{STATISTIC_SOURCE}:{thermostat_slug}_{slug}_runtime_hours"
+                in existing_statistic_ids
+                or any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows)
+            )
         ),
     )
 

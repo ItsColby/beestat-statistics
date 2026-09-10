@@ -417,6 +417,92 @@ class StatisticsBuilderTest(unittest.TestCase):
                         expected,
                     )
 
+    def test_existing_detailed_runtime_survives_an_all_zero_correction(self) -> None:
+        """Only previously imported exact IDs survive without positive source rows."""
+
+        existing_ids = {
+            "beestat:zone_a_cool_stage_2_runtime_hours",
+            "beestat:zone_a_humidifier_runtime_hours",
+            "beestat:other_zone_ventilator_runtime_hours",
+        }
+        rows = [
+            {
+                "thermostat_id": 1,
+                "date": "2026-07-01",
+                "sum_compressor_cool_2": 0,
+                "sum_humidifier": 0,
+            },
+            {"thermostat_id": 1, "date": "2026-07-02"},
+        ]
+        series = statistics_builder.build_statistics(
+            rows,
+            {},
+            {},
+            self.local_tz,
+            self.config,
+            existing_statistic_ids=existing_ids,
+        )
+        expected_ids = {
+            "beestat:zone_a_cool_stage_2_runtime_hours",
+            "beestat:zone_a_humidifier_runtime_hours",
+        }
+        detailed_ids = set(
+            statistics_builder.detailed_runtime_statistic_ids(self.config)
+        )
+        self.assertEqual(len(detailed_ids), 10)
+        self.assertEqual(
+            {item.statistic_id for item in series} & detailed_ids, expected_ids
+        )
+        self.assertEqual(
+            set(
+                statistics_builder.cumulative_statistic_ids(
+                    self.config, rows, existing_statistic_ids=existing_ids
+                )
+            )
+            & detailed_ids,
+            expected_ids,
+        )
+        for statistic_id in expected_ids:
+            self.assertEqual(
+                [row["sum"] for row in _series(series, statistic_id).statistics],
+                [0, 0],
+            )
+        self.assertFalse(
+            any(item.statistic_id.startswith("beestat:other_zone_") for item in series)
+        )
+        self.assertFalse(
+            set(statistics_builder.cumulative_statistic_ids(self.config, rows))
+            & detailed_ids
+        )
+
+    def test_retained_detailed_runtime_still_stops_at_explicit_invalid_input(
+        self,
+    ) -> None:
+        """Recorder presence selects a series but never makes a bad counter zero."""
+
+        for slug, _label, field in statistics_builder.DETAILED_RUNTIME_FIELDS:
+            for invalid in (None, -1, "invalid", True, "NaN", 10**1000):
+                with self.subTest(slug=slug, invalid=invalid):
+                    statistic_id = f"beestat:zone_a_{slug}_runtime_hours"
+                    rows = [
+                        {"thermostat_id": 1, "date": "2026-07-01", field: 0},
+                        {"thermostat_id": 1, "date": "2026-07-02", field: invalid},
+                        {"thermostat_id": 1, "date": "2026-07-03", field: 0},
+                    ]
+                    series = statistics_builder.build_runtime_statistics(
+                        rows,
+                        self.local_tz,
+                        self.config,
+                        existing_statistic_ids={statistic_id},
+                    )
+                    self.assertEqual(
+                        [
+                            row["sum"]
+                            for row in _series(series, statistic_id).statistics
+                        ],
+                        [0],
+                    )
+
     def test_omitted_optional_cumulative_fields_preserve_zero_activity(self) -> None:
         """Omitted counters and explicit zero retain the supported sparse shape."""
 
