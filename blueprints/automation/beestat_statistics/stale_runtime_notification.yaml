@@ -1,6 +1,11 @@
 blueprint:
   name: Beestat runtime data stale notification
-  description: Notify when a Beestat runtime summary lag sensor stays above the selected threshold.
+  description: >-
+    Run your chosen notification action when the age of Beestat's daily runtime
+    summary crosses the selected threshold and stays above it for the configured
+    duration. This measures delayed history, not live thermostat connectivity.
+    The notification does not repeat while the value remains above the threshold.
+    Restarting Home Assistant or reloading automations resets a pending duration.
   domain: automation
   author: ItsColby
   homeassistant:
@@ -8,7 +13,7 @@ blueprint:
   input:
     lag_sensor:
       name: Runtime summary lag sensor
-      description: Beestat runtime summary lag-days sensor to monitor.
+      description: Select this integration's Runtime summary lag days sensor. The comparison uses its numeric value in days; it does not convert other duration units.
       selector:
         entity:
           filter:
@@ -16,7 +21,7 @@ blueprint:
             device_class: duration
     threshold_days:
       name: Stale threshold
-      description: Trigger when the lag is greater than this many days.
+      description: Notify only after the lag crosses above this many days. A value equal to the threshold does not qualify. Adjust the starting value for the delay you want to monitor.
       default: 1
       selector:
         number:
@@ -27,14 +32,14 @@ blueprint:
           mode: box
     stale_for:
       name: Stale duration
-      description: How long the lag must remain above the threshold before notifying.
+      description: Wait this long after the threshold is crossed. The lag must stay above the threshold throughout the wait.
       default:
         hours: 1
       selector:
         duration: {}
     notify_action:
       name: Notification action
-      description: Action sequence to run when the selected Beestat data is stale.
+      description: Choose the actions that send your notification, including its destination and message. This blueprint does not select a notification service for you.
       selector:
         action: {}
 

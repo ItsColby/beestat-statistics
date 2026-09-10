@@ -390,9 +390,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             (ROOT / "custom_components/beestat_statistics/brand/icon.png").is_file()
         )
         release_notes = (ROOT / "RELEASE_NOTES.md").read_text(encoding="utf-8")
-        self.assertTrue(
-            release_notes.startswith(f"# Beestat Statistics v{manifest['version']}\n")
+        versions = re.findall(
+            r"^## Beestat Statistics v([^\n]+)$", release_notes, re.MULTILINE
         )
+        self.assertTrue(release_notes.startswith("# Release notes\n"))
+        self.assertTrue(versions, "Release notes must identify released versions")
+        self.assertEqual(versions[0], manifest["version"])
 
     def test_quality_scale_tracks_claimed_home_assistant_rules(self) -> None:
         quality_scale_path = (
@@ -548,7 +551,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("bash scripts/verify-release-local.sh all", readme)
         self.assertIn("python -m pip check", readme)
         self.assertIn("complete test tree", readme)
-        self.assertIn("Native Windows Python cannot substitute", readme)
+        self.assertIn(
+            "Native Windows Python cannot substitute", " ".join(readme.split())
+        )
         self.assertNotIn("docker run", readme)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
@@ -580,10 +585,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertEqual(2, release_runner.count("pytest tests -q"))
         self.assertIn("python scripts/run_dependency_light_tests.py", release_runner)
+        architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
         self.assertIn(
             r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
-            readme,
+            architecture,
         )
+        self.assertIn("docs/architecture.md#development-and-validation", readme)
         self.assertNotIn("python -m unittest discover -s tests", release_runner)
         self.assertIn("if path not in ha_test_files", dependency_light_runner)
         for relative_path in ha_modules:
@@ -656,7 +663,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("async_remove_device", init_text)
         self.assertIn("beestat_identifiers.isdisjoint", init_text)
         self.assertIn("If a Beestat-only fallback device disappears", readme)
-        self.assertIn("Shared HomeKit/Ecobee devices are not removed", readme)
+        self.assertIn(
+            "Shared HomeKit/Ecobee devices are not removed", " ".join(readme.split())
+        )
 
     def test_mapped_entities_use_home_assistant_helper_device_linking(self) -> None:
         init_text = (
@@ -972,38 +981,35 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         for heading in (
             "# Beestat Statistics",
+            "## What It Provides",
             "## Installation With HACS",
             "## Configuration",
             "## Entities",
-            "## Data Updates",
-            "## Automation Examples",
-            "## Use Cases",
-            "## Service Action",
-            "## Diagnostics",
-            "## Recorder Statistics",
-            "## Supported Scope",
-            "## Known Limitations",
-            "## Troubleshooting",
-            "## Development Validation",
-            "## Release Publishing",
+            "## Filter Tracking",
+            "## Data Updates And Recorder Statistics",
+            "## Actions And Automations",
+            "## Diagnostics And Troubleshooting",
+            "## Development",
             "## Removal",
         ):
             self.assertIn(heading, readme)
 
+        readable = " ".join(readme.split())
         for phrase in (
-            "Configuration fields:",
-            "Advanced thermostat override fields:",
-            "Advanced room-sensor override fields:",
-            "This integration does not provide custom device triggers or conditions.",
-            "No automation is required for normal operation.",
+            "`api_key`",
+            "`filter_lifetime_runtime_hours`",
+            "`filter_max_age_days`",
+            "`thermostat_id`",
+            "There are no custom device triggers or conditions.",
+            "Normal operation requires no automation.",
             "Map a thermostat",
             "Filter changed date",
-            "Temperature statistics use Home Assistant recorder temperature metadata",
-            "HomeKit/Ecobee entities should remain the primary source",
-            "--notes-file",
+            "Temperature statistics support Home Assistant's preferred display unit.",
+            "Use HomeKit/Ecobee entities for live temperature",
+            "not manufacturer recommendations",
             "excluded from Recorder history",
         ):
-            self.assertIn(phrase, readme)
+            self.assertIn(phrase, readable)
 
     def test_repository_support_templates_reduce_secret_leak_risk(self) -> None:
         bug_template = (ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(
@@ -1013,7 +1019,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("Integration version", bug_template)
         self.assertIn("Home Assistant version", bug_template)
         self.assertIn("Redacted diagnostics and logs", bug_template)
-        self.assertIn("Do not paste API keys", bug_template)
+        self.assertIn("Remove API keys", bug_template)
         self.assertTrue((ROOT / ".github/ISSUE_TEMPLATE/config.yml").is_file())
 
     def test_entity_translation_keys_have_names_and_icons(self) -> None:

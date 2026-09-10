@@ -57,73 +57,73 @@ INTEGRATION_DECISIONS = (
         "surface": "runtime.sync, thermostat.sync, sensor.sync",
         "decision": "used",
         "reason": (
-            "The integration needs Beestat cloud/history data refreshed before "
-            "reading native entities or importing Recorder statistics."
+            "Request upstream synchronization before acquiring the shared "
+            "metadata and history used by entities and Recorder imports. "
+            "A sync request does not guarantee new or complete source data."
         ),
     },
     {
         "surface": "thermostat.read_id, sensor.read_id",
         "decision": "used",
         "reason": (
-            "These are the narrow metadata reads that support Home Assistant "
-            "device matching, status sensors, and options-flow discovery."
+            "Discover thermostat and room-sensor identities, match local "
+            "devices, and supply source-selection and status information."
         ),
     },
     {
         "surface": "ecobee_thermostat.read_id",
         "decision": "used",
         "reason": (
-            "The integration projects a strict privacy allowlist of cached "
-            "Ecobee settings for local configuration readback and optional "
-            "diagnostic entities; raw account, location, billing, device, and "
-            "access-control data is never retained."
+            "Read Beestat's cached Ecobee configuration and keep only "
+            "allow-listed fields for response-only configuration readback "
+            "and optional diagnostic entities. Raw vendor payloads are "
+            "excluded from the retained projection."
         ),
     },
     {
         "surface": "runtime_thermostat.read, runtime_sensor.read",
         "decision": "used",
         "reason": (
-            "Point-history reads are windowed and feed daily Home Assistant "
-            "external statistics; thermostat reads also reconcile saved filter "
-            "clicks to the nearest five-minute runtime boundary."
+            "Read bounded point-history windows for daily Recorder statistics. "
+            "Thermostat points also reconcile exact local filter-change "
+            "timestamps and expose observed runtime, gaps, and five-minute "
+            "boundary uncertainty without inventing missing measurements."
         ),
     },
     {
         "surface": "runtime_thermostat_summary.read_id with date attributes",
         "decision": "used",
         "reason": (
-            "Summary rows are windowed for normal imports once Home Assistant "
-            "Recorder has a prior cumulative seed; the importer keeps a "
-            "full-baseline fallback for new installs, missing seeds, and "
-            "rebuilds."
+            "Read daily runtime summaries. Routine imports use an overlap "
+            "window when Recorder provides a cumulative seed; first imports, "
+            "missing seeds, and rebuilds use a full baseline."
         ),
     },
     {
         "surface": "thermostat.get_metrics, thermostat.generate_profile",
         "decision": "not_used",
         "reason": (
-            "These Beestat comparison/profile features are not local HA state, "
-            "are cached app analysis paths, and would broaden the integration "
-            "beyond history import/status enrichment."
+            "Leave comparative metrics and thermal-profile generation in the "
+            "Beestat app. The integration does not acquire or reproduce these "
+            "analysis features."
         ),
     },
     {
         "surface": "thermostat.dismiss_alert",
         "decision": "used",
         "reason": (
-            "When Home Assistant records a filter change, the integration can "
-            "dismiss matching active Beestat filter alerts so Beestat's alert "
-            "state follows the local acknowledgement."
+            "An explicit filter-change action may acknowledge matching active "
+            "filter alerts in Beestat. Household automations decide when to "
+            "invoke the action; a forecast alone does not dismiss an alert."
         ),
     },
     {
         "surface": "thermostat.restore_alert, thermostat.update",
         "decision": "not_used",
         "reason": (
-            "Restoring alerts and broad thermostat updates would make this "
-            "statistics integration a general Beestat control surface. Direct "
-            "filter metadata updates are also avoided because Beestat sync owns "
-            "that field and can overwrite local writes."
+            "General thermostat writes and alert restoration are outside this "
+            "integration's command surface. Filter-change baselines stay local; "
+            "writing Beestat filter metadata would compete with upstream sync."
         ),
     },
 )

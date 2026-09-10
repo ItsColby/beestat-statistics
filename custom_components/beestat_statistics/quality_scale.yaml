@@ -1,6 +1,6 @@
-# Descriptive evidence against Home Assistant's integration quality rules, not
-# a certification target or backlog. Omitted rules are not claimed and create
-# work only when they provide concrete local value.
+# Implementation evidence for the listed Home Assistant quality rules.
+# This inventory does not claim official certification or completion of a tier.
+# Rules absent from this file have no declared status.
 rules:
   # Bronze
   action-setup: done
@@ -13,13 +13,13 @@ rules:
   docs-actions: done
   docs-conditions:
     status: exempt
-    comment: Beestat Statistics does not provide custom device conditions.
+    comment: The integration defines no custom device conditions.
   docs-high-level-description: done
   docs-installation-instructions: done
   docs-removal-instructions: done
   docs-triggers:
     status: exempt
-    comment: Beestat Statistics does not provide custom device triggers.
+    comment: The integration defines no custom device triggers.
   entity-event-setup: done
   entity-unique-id: done
   has-entity-name: done
@@ -44,10 +44,10 @@ rules:
   diagnostics: done
   discovery:
     status: exempt
-    comment: Beestat requires a user-provided API key before account devices can be discovered.
+    comment: Account discovery starts after the user supplies a Beestat API key.
   discovery-update-info:
     status: exempt
-    comment: Beestat is a cloud API and does not expose local network discovery updates.
+    comment: Source discovery uses Beestat cloud metadata, which has no local network discovery updates.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

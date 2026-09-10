@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # Python pins define dependency-closed Home Assistant support lanes and move
-  # only with their product-owned Core and harness contracts.
+  # Update Actions automatically. Review Python pins together with the exact
+  # Home Assistant and test-harness versions in each supported validation lane.
   - package-ecosystem: github-actions
     directory: /
     schedule:

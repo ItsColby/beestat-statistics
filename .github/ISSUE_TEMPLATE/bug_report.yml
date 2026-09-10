@@ -1,17 +1,20 @@
 name: Bug report
-description: Report a Beestat Statistics problem
+description: Describe a problem with setup, entities, filter estimates, or statistics imports
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: >-
-        Do not paste API keys, raw unredacted diagnostics, or screenshots that expose
-        private Home Assistant entity names.
+        Include the versions, steps, and evidence needed to reproduce the problem.
+        Review every attachment before posting. Remove API keys, addresses,
+        coordinates, serial numbers, and private device or entity names from logs
+        and screenshots. Use the integration's redacted diagnostics rather than
+        raw API responses.
   - type: input
     id: integration_version
     attributes:
       label: Integration version
-      description: The Beestat Statistics version shown by HACS or manifest.json.
+      description: Copy the installed version from HACS or the integration's manifest.json.
       placeholder: v2026.8.3
     validations:
       required: true
@@ -36,14 +39,18 @@ body:
     id: problem
     attributes:
       label: What happened?
-      description: Describe the visible problem and what you expected instead.
+      description: >-
+        Describe the observed result, the expected result, and when it happened.
+        For filter estimates, include the configured limits and whether runtime
+        coverage is complete, partial, or unknown. Distinguish a Beestat value from
+        an estimate calculated in Home Assistant.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Reproduction steps
-      description: List the smallest steps that reproduce the issue.
+      description: List the shortest repeatable steps, including the action or options changed and the result after each step.
       placeholder: |
         1. Open ...
         2. Press ...
@@ -53,6 +60,7 @@ body:
     attributes:
       label: Redacted diagnostics and logs
       description: >-
-        Attach Home Assistant diagnostics from the integration page and relevant
-        Home Assistant log lines. Confirm they are redacted before posting.
+        Download diagnostics from the Beestat Statistics entry under Settings >
+        Devices & services. Add relevant log lines with timestamps and timezone.
+        Inspect the contents for personal information before attaching them.
       render: text
