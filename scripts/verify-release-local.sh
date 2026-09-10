@@ -153,24 +153,22 @@ run_lane() {
   return "$lane_status"
 }
 
+lanes=("$mode")
+if [[ "$mode" == all ]]; then
+  lanes=(unit minimum current release)
+fi
 status=0
 if [[ "$mode" == all && "$backend" == container ]]; then
-  # Keep all-lane diagnostics even after failure. Each HA lane gets a fresh
-  # container and reads the same immutable payload; always reap both jobs
-  # before release validation or the snapshot's EXIT cleanup can run.
-  run_lane unit & unit_pid=$!
-  wait "$unit_pid" || status=1
-  run_lane minimum & minimum_pid=$!
-  run_lane current & current_pid=$!
-  wait "$minimum_pid" || status=1
-  wait "$current_pid" || status=1
-  run_lane release & release_pid=$!
-  wait "$release_pid" || status=1
+  # Independent containers read one immutable payload. Preserve every lane's
+  # result and reap all jobs before the snapshot's EXIT cleanup can run.
+  lane_pids=()
+  for lane in "${lanes[@]}"; do
+    run_lane "$lane" & lane_pids+=("$!")
+  done
+  for lane_pid in "${lane_pids[@]}"; do
+    wait "$lane_pid" || status=1
+  done
 else
-  lanes=("$mode")
-  if [[ "$mode" == all ]]; then
-    lanes=(unit minimum current release)
-  fi
   for lane in "${lanes[@]}"; do
     # Calling run_lane conditionally would suppress its errexit semantics.
     run_lane "$lane" & lane_pid=$!
