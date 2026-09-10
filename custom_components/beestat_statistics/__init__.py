@@ -21,8 +21,10 @@ from homeassistant.components.recorder.models.statistics import (
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
+    get_metadata,
     statistics_during_period,
 )
+from homeassistant.components.recorder.tasks import SynchronizeTask
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigEntryState
 from homeassistant.const import (
     CONF_API_KEY,
@@ -173,6 +175,7 @@ from .statistics_builder import (
     apply_cumulative_seeds,
     build_statistics,
     cumulative_statistic_ids,
+    detailed_runtime_statistic_ids,
 )
 from .task_coalescer import CoalescingTaskScheduler
 from .url_validation import normalize_api_base
@@ -634,10 +637,14 @@ class BeestatStatisticsImporter:
     ) -> PreparedImport:
         """Prepare one coherent local-time import before Recorder writes."""
 
+        existing_statistic_ids = await self._async_existing_detailed_statistic_ids(
+            runtime_data
+        )
         summary_plan = await self._async_summary_import_plan(
             runtime_data,
             force_full_summary=force_full_summary,
             temporal_context=temporal_context,
+            existing_statistic_ids=existing_statistic_ids,
         )
         summary_rows = _filter_summary_rows_by_thermostat(
             summary_plan.rows,
@@ -668,6 +675,7 @@ class BeestatStatisticsImporter:
             sensor_rows_by_id,
             temporal_context.local_tz,
             runtime_data.config,
+            existing_statistic_ids=existing_statistic_ids,
         )
         if summary_plan.seeds:
             series = apply_cumulative_seeds(series, summary_plan.seeds)
@@ -693,6 +701,7 @@ class BeestatStatisticsImporter:
         *,
         force_full_summary: bool,
         temporal_context: TemporalContext,
+        existing_statistic_ids: frozenset[str],
     ) -> SummaryImportPlan:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
@@ -702,7 +711,11 @@ class BeestatStatisticsImporter:
                 fallback_reason="forced_full_baseline",
             )
 
-        statistic_ids = cumulative_statistic_ids(runtime_data.config, cached_rows)
+        statistic_ids = cumulative_statistic_ids(
+            runtime_data.config,
+            cached_rows,
+            existing_statistic_ids=existing_statistic_ids,
+        )
         if not statistic_ids:
             return SummaryImportPlan.full(
                 cached_rows,
@@ -767,7 +780,16 @@ class BeestatStatisticsImporter:
 
         # The Recorder window can include hardware absent from the recent cache,
         # or a correction can introduce another stage between the two reads.
-        if not set(cumulative_statistic_ids(runtime_data.config, rows)) <= seeds.keys():
+        if (
+            not set(
+                cumulative_statistic_ids(
+                    runtime_data.config,
+                    rows,
+                    existing_statistic_ids=existing_statistic_ids,
+                )
+            )
+            <= seeds.keys()
+        ):
             full_rows = await self._async_full_summary_rows(runtime_data)
             return SummaryImportPlan.full(
                 full_rows,
@@ -791,6 +813,27 @@ class BeestatStatisticsImporter:
         if runtime_data.summary_rows_full:
             return list(runtime_data.summary_rows)
         return await self._client.async_read_id("runtime_thermostat_summary")
+
+    async def _async_existing_detailed_statistic_ids(
+        self,
+        runtime_data: BeestatRuntimeData,
+    ) -> frozenset[str]:
+        """Retain imported hardware even when its source runtime becomes all zero."""
+
+        statistic_ids = set(detailed_runtime_statistic_ids(runtime_data.config))
+        if not statistic_ids:
+            return frozenset()
+        recorder = get_recorder_instance(self._hass)
+        # Reads use a different executor from imports. Queue an unconditional
+        # marker so even the last running import, including an old entry's
+        # queued work, is processed before inventory and cumulative seed reads.
+        synchronized: asyncio.Future[None] = self._hass.loop.create_future()
+        recorder.queue_task(SynchronizeTask(synchronized))
+        await asyncio.shield(synchronized)
+        metadata = await recorder.async_add_executor_job(
+            partial(get_metadata, self._hass, statistic_ids=statistic_ids)
+        )
+        return frozenset(metadata)
 
     async def _async_latest_cumulative_starts(
         self,

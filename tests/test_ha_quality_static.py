@@ -572,6 +572,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "test_entity_runtime_ha.py",
                 "test_filter_actions_ha.py",
                 "test_filter_lifecycle_ha.py",
+                "test_setup_cancellation_ha.py",
                 "test_source_identity_ha.py",
             },
         )

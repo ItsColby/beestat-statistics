@@ -1144,6 +1144,7 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
         *,
         force_full_summary,
         temporal_context,
+        existing_statistic_ids,
     ):
         attempts.append(
             (
@@ -1185,7 +1186,9 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
         attempts.append(("sensor", context.local_tz, context.evaluated_at))
         return {}
 
-    def build_series(_summary, _thermostat, _sensor, local_tz, _config):
+    def build_series(
+        _summary, _thermostat, _sensor, local_tz, _config, *, existing_statistic_ids
+    ):
         attempts.append(("build", local_tz, now))
         return [
             StatisticsSeries(
@@ -1200,6 +1203,9 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
 
     with (
         patch.object(coordinator, "async_refresh_runtime", new=refresh_runtime),
+        patch.object(
+            importer, "_async_existing_detailed_statistic_ids", return_value=frozenset()
+        ),
         patch.object(importer, "_async_summary_import_plan", new=summary_plan),
         patch.object(importer, "_async_fetch_thermostat_rows", new=thermostat_rows),
         patch.object(importer, "_async_fetch_sensor_rows", new=sensor_rows),

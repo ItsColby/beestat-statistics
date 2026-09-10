@@ -3,6 +3,17 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.10.4
+
+- Preserve previously imported stage and accessory series when Beestat corrects
+  their runtime to zero. Rebuilds and overlapping imports now update those
+  existing totals; hardware with no imported or observed runtime stays omitted.
+- Order Recorder metadata and cumulative-seed reads after earlier queued writes
+  so an import cannot overwrite a preceding correction with an outdated offset.
+- Exercise setup cancellation and clean retry through Home Assistant's native
+  config-entry lifecycle. Existing mappings, filter policy and statistic
+  identities require no migration.
+
 ## Beestat Statistics v2026.9.10.3
 
 - Stop affected cumulative statistics at explicitly invalid counters, and
