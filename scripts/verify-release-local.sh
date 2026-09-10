@@ -60,7 +60,7 @@ run_python() (
       -e PYTHONPYCACHEPREFIX=/tmp/pycache -e XDG_CACHE_HOME=/tmp/cache \
       -e RUFF_CACHE_DIR=/tmp/ruff-cache -e MYPY_CACHE_DIR=/tmp/mypy-cache \
       -e 'PYTEST_ADDOPTS=-p no:cacheprovider' \
-      -v "$repo_root:/workspace" -w /workspace \
+      -v "$repo_root:/workspace:ro" -w /workspace \
       --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \
       "$python_image" bash -euc \
       'apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && bash -euc "$1"' \
@@ -128,12 +128,8 @@ run_release() {
     podman run --rm -v "$repo_root:/github/workspace:ro" "$hassfest_image"
   fi
 }
-lanes=("$mode")
-if [[ "$mode" == all ]]; then
-  lanes=(unit minimum current release)
-fi
-status=0
-for lane in "${lanes[@]}"; do
+run_lane() {
+  local lane="$1" lane_status
   printf '\nRunning %s validation\n' "$lane"
   # A conditional function call disables errexit inside the entire function.
   # Run each lane in an unconditional subshell so failures cannot become passes.
@@ -153,7 +149,32 @@ for lane in "${lanes[@]}"; do
     printf '%s: PASS\n' "$lane"
   else
     printf '%s: FAIL (exit %s)\n' "$lane" "$lane_status" >&2
-    status=1
   fi
-done
+  return "$lane_status"
+}
+
+status=0
+if [[ "$mode" == all && "$backend" == container ]]; then
+  # Keep all-lane diagnostics even after failure. Each HA lane gets a fresh
+  # container and reads the same immutable payload; always reap both jobs
+  # before release validation or the snapshot's EXIT cleanup can run.
+  run_lane unit & unit_pid=$!
+  wait "$unit_pid" || status=1
+  run_lane minimum & minimum_pid=$!
+  run_lane current & current_pid=$!
+  wait "$minimum_pid" || status=1
+  wait "$current_pid" || status=1
+  run_lane release & release_pid=$!
+  wait "$release_pid" || status=1
+else
+  lanes=("$mode")
+  if [[ "$mode" == all ]]; then
+    lanes=(unit minimum current release)
+  fi
+  for lane in "${lanes[@]}"; do
+    # Calling run_lane conditionally would suppress its errexit semantics.
+    run_lane "$lane" & lane_pid=$!
+    wait "$lane_pid" || status=1
+  done
+fi
 exit "$status"

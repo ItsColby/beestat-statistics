@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 name = Path(sys.argv[0]).name
@@ -59,7 +60,30 @@ elif name == "python" and args[:2] == ["-m", "pip"]:
 event["kind"] = kind
 with open(os.environ["VALIDATION_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(event) + "\n")
-if os.environ.get("VALIDATION_FAIL") == kind:
+if os.environ.get("VALIDATION_OVERLAP") and name == "podman":
+    events = Path(os.environ["VALIDATION_LOG"]).parent
+    if kind in {"minimum", "current"}:
+        assert args[:2] == ["run", "--rm"]
+        assert args[args.index("-v") + 1].endswith(":/workspace:ro")
+        (events / (kind + ".started")).touch()
+        peer = "current" if kind == "minimum" else "minimum"
+        deadline = time.monotonic() + 5
+        while not (events / (peer + ".started")).exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("The two HA lanes did not overlap")
+            time.sleep(0.01)
+        if os.environ.get("VALIDATION_FAIL") == peer:
+            while not (events / (peer + ".done")).exists():
+                if time.monotonic() > deadline:
+                    raise SystemExit("The peer lane did not finish")
+                time.sleep(0.01)
+            time.sleep(0.05)
+            assert Path(mount).is_dir(), "Payload removed before both lanes finished"
+        (events / (kind + ".done")).touch()
+    elif kind == "release":
+        assert (events / "minimum.done").exists()
+        assert (events / "current.done").exists()
+if os.environ.get("VALIDATION_FAIL") in {kind, "both" if kind in {"minimum", "current"} else kind}:
     sys.exit(23)
 """
 
@@ -163,10 +187,10 @@ class ValidationRunnerTests(unittest.TestCase):
         self.env["VALIDATION_FAIL"] = "actionlint"
         result = self.run_validation("all", "container")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(
-            [event["kind"] for event in self.events()],
-            ["actionlint", "minimum", "current", "release"],
-        )
+        kinds = [event["kind"] for event in self.events()]
+        self.assertEqual(kinds[0], "actionlint")
+        self.assertCountEqual(kinds[1:-1], ["minimum", "current"])
+        self.assertEqual(kinds[-1], "release")
         self.assertIn("unit: FAIL (exit 23)", result.stderr)
         self.assertIn("current: PASS", result.stdout)
         self.assertEqual(list(self.scratch.iterdir()), [])
@@ -175,11 +199,41 @@ class ValidationRunnerTests(unittest.TestCase):
         result = self.run_validation("all", "container")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count(": PASS"), 4)
-        self.assertEqual(
-            [event["kind"] for event in self.events()],
-            ["actionlint", "unit-python", "minimum", "current", "release"],
-        )
+        kinds = [event["kind"] for event in self.events()]
+        self.assertEqual(kinds[:2], ["actionlint", "unit-python"])
+        self.assertCountEqual(kinds[2:-1], ["minimum", "current"])
+        self.assertEqual(kinds[-1], "release")
         self.assertEqual(len({event["mount"] for event in self.events()}), 1)
+
+    def test_ha_lanes_overlap_and_both_finish_before_release_and_cleanup(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        result = self.run_validation("all", "container")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count(": PASS"), 4)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+        self.assertTrue((self.root / "minimum.done").exists())
+        self.assertTrue((self.root / "current.done").exists())
+
+    def test_ha_failure_retains_both_results_and_remaining_lane(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        for failure in ("minimum", "current", "both"):
+            with self.subTest(failure=failure):
+                for marker in self.root.glob("*.started"):
+                    marker.unlink()
+                for marker in self.root.glob("*.done"):
+                    marker.unlink()
+                self.env["VALIDATION_FAIL"] = failure
+                result = self.run_validation("all", "container")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                for lane in ("minimum", "current"):
+                    stream = (
+                        result.stderr if failure in {lane, "both"} else result.stdout
+                    )
+                    outcome = "FAIL (exit 23)" if failure in {lane, "both"} else "PASS"
+                    self.assertIn(f"{lane}: {outcome}", stream)
+                    self.assertTrue((self.root / (lane + ".done")).exists())
+                self.assertIn("release: PASS", result.stdout)
+                self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_container_lanes_reuse_only_download_cache(self) -> None:
         for _ in range(2):

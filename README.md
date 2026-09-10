@@ -476,7 +476,11 @@ Local containers reuse pip downloads and wheels in the Podman volume
 into a fresh container and reruns every check. The disposable cache contains
 neither installed environments nor validation results; remove it with
 `podman volume rm beestat-statistics-validation-pip` when no local validation is
-running to force fresh downloads.
+running to force fresh downloads. In `all container`, unit checks run first,
+then the minimum and current HA lanes overlap against the read-only snapshot.
+The runner waits for both lanes before Hassfest and cleanup, retains every
+lane's result after a failure, and still runs all four lanes. Individual lanes
+and native execution remain sequential.
 On Linux, the same command surface is:
 
 ```bash
