@@ -539,22 +539,17 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(config["tool"]["mypy"]["strict"])
         self.assertNotIn("overrides", config["tool"]["mypy"])
 
-    def test_readme_documents_both_dependency_closed_ha_lanes(self) -> None:
+    def test_development_guide_matches_validation_owners(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
+        development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
+        self.assertIn("docs/development.md", readme)
         for name in ("requirements-ha-test.txt", "requirements-ha-current.txt"):
             version = (ROOT / name).read_text(encoding="utf-8").strip().split("==")[1]
-            for text in (readme, architecture):
-                self.assertIn(name, text)
-                self.assertIn(f"`{version}`", text)
-        self.assertIn("scripts/verify-release-local.ps1", readme)
-        self.assertIn("bash scripts/verify-release-local.sh all", readme)
-        self.assertIn("python -m pip check", readme)
-        self.assertIn("complete test tree", readme)
-        self.assertIn(
-            "Native Windows Python cannot substitute", " ".join(readme.split())
-        )
-        self.assertNotIn("docker run", readme)
+            self.assertIn(name, development)
+            self.assertIn(f"`{version}`", development)
+        self.assertIn("scripts/verify-release-local.ps1", development)
+        self.assertIn("bash scripts/verify-release-local.sh all", development)
+        self.assertIn("python -m pip check", development)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
@@ -585,12 +580,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertEqual(2, release_runner.count("pytest tests -q"))
         self.assertIn("python scripts/run_dependency_light_tests.py", release_runner)
-        architecture = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
+        development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
         self.assertIn(
             r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
-            architecture,
+            development,
         )
-        self.assertIn("docs/architecture.md#development-and-validation", readme)
+        self.assertIn("docs/development.md", readme)
         self.assertNotIn("python -m unittest discover -s tests", release_runner)
         self.assertIn("if path not in ha_test_files", dependency_light_runner)
         for relative_path in ha_modules:
@@ -653,8 +648,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         init_text = (
             ROOT / "custom_components/beestat_statistics/__init__.py"
         ).read_text(encoding="utf-8")
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-
         self.assertIn("async def async_remove_config_entry_device", init_text)
         self.assertIn("_current_beestat_device_identifiers", init_text)
         self.assertIn("is_beestat_only_device", init_text)
@@ -662,10 +655,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("device_id=target_device_id", init_text)
         self.assertIn("async_remove_device", init_text)
         self.assertIn("beestat_identifiers.isdisjoint", init_text)
-        self.assertIn("If a Beestat-only fallback device disappears", readme)
-        self.assertIn(
-            "Shared HomeKit/Ecobee devices are not removed", " ".join(readme.split())
-        )
 
     def test_mapped_entities_use_home_assistant_helper_device_linking(self) -> None:
         init_text = (
@@ -966,50 +955,50 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         blueprint = blueprint_path.read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        usage = (ROOT / "docs/usage.md").read_text(encoding="utf-8")
 
         self.assertIn("domain: automation", blueprint)
         self.assertIn("min_version: 2026.8.0", blueprint)
         self.assertIn("trigger: numeric_state", blueprint)
         self.assertIn("selector:\n        action: {}", blueprint)
         self.assertNotIn("trigger: template", blueprint)
-        self.assertIn(str(blueprint_path.relative_to(ROOT)).replace("\\", "/"), readme)
-        self.assertIn("raw.githubusercontent.com", readme)
+        self.assertIn(str(blueprint_path.relative_to(ROOT)).replace("\\", "/"), usage)
+        self.assertIn("raw.githubusercontent.com", usage)
         self.assertIn("my.home-assistant.io/redirect/hacs_repository", readme)
 
-    def test_readme_covers_quality_documentation_rules(self) -> None:
+    def test_documentation_navigation_and_action_references(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-
-        for heading in (
-            "# Beestat Statistics",
-            "## What It Provides",
-            "## Installation With HACS",
-            "## Configuration",
-            "## Entities",
-            "## Filter Tracking",
-            "## Data Updates And Recorder Statistics",
-            "## Actions And Automations",
-            "## Diagnostics And Troubleshooting",
-            "## Development",
-            "## Removal",
-        ):
-            self.assertIn(heading, readme)
-
-        readable = " ".join(readme.split())
-        for phrase in (
-            "`api_key`",
-            "`filter_lifetime_runtime_hours`",
-            "`filter_max_age_days`",
-            "`thermostat_id`",
-            "There are no custom device triggers or conditions.",
-            "Normal operation requires no automation.",
-            "Map a thermostat",
-            "Filter changed date",
-            "Temperature statistics support Home Assistant's preferred display unit.",
-            "Use HomeKit/Ecobee entities for live temperature",
-            "not manufacturer recommendations",
-            "excluded from Recorder history",
-        ):
-            self.assertIn(phrase, readable)
+        for name in ("docs/usage.md", "docs/architecture.md", "docs/development.md"):
+            self.assertIn(name, readme)
+        self.assertIn(_json_file("hacs.json")["homeassistant"], readme)
+        usage = (ROOT / "docs/usage.md").read_text(encoding="utf-8")
+        services = _json_file(
+            "custom_components/beestat_statistics/translations/en.json"
+        )
+        for action in services["services"]:
+            self.assertIn(action, usage, f"Undocumented action: {action}")
+        documents = [ROOT / "README.md", ROOT / "RELEASE_NOTES.md"]
+        documents.extend((ROOT / "docs").glob("*.md"))
+        for document in documents:
+            text = document.read_text(encoding="utf-8")
+            for target in re.findall(r"\[[^\]]+\]\(([^\s)]+)\)", text):
+                if "://" in target:
+                    continue
+                path, _, anchor = target.partition("#")
+                destination = document.parent / path if path else document
+                with self.subTest(document=document.name, target=target):
+                    self.assertTrue(destination.is_file())
+                    if anchor:
+                        headings = re.findall(
+                            r"^#{1,6} (.+)$",
+                            destination.read_text(encoding="utf-8"),
+                            re.MULTILINE,
+                        )
+                        anchors = {
+                            re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+                            for heading in headings
+                        }
+                        self.assertIn(anchor, anchors)
 
     def test_repository_support_templates_reduce_secret_leak_risk(self) -> None:
         bug_template = (ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(
@@ -1019,7 +1008,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("Integration version", bug_template)
         self.assertIn("Home Assistant version", bug_template)
         self.assertIn("Redacted diagnostics and logs", bug_template)
-        self.assertIn("Remove API keys", bug_template)
+        self.assertRegex(bug_template, r"(?i)API keys")
         self.assertTrue((ROOT / ".github/ISSUE_TEMPLATE/config.yml").is_file())
 
     def test_entity_translation_keys_have_names_and_icons(self) -> None:

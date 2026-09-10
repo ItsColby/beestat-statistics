@@ -1,10 +1,14 @@
 import_statistics:
   name: Import Beestat statistics
-  description: "Refresh Beestat runtime and metadata, update the integration entities, and import daily statistics into Home Assistant Recorder."
+  description: >-
+    Refresh Beestat runtime and metadata, update integration entities, and import daily
+    history into Home Assistant's long-term statistics.
   fields:
     point_lookback_days:
       name: Point lookback days
-      description: "Recent local days of five-minute thermostat and room-sensor history to read, including setpoints and available air-quality data. Overrides the configured lookback for this import."
+      description: >-
+        Days of five-minute thermostat and room-sensor history to read for this import.
+        Omit to use the configured lookback.
       required: false
       selector:
         number:
@@ -14,36 +18,47 @@ import_statistics:
           mode: box
     skip_sync:
       name: Skip Beestat sync
-      description: "Skip the Beestat sync requests before reading and importing data. This does not make the import network-free."
+      description: >-
+        Skip requesting a Beestat refresh from ecobee. The import still reads data from
+        Beestat over the network.
       required: false
       default: false
       selector:
         boolean: {}
 get_configuration:
   name: Get Beestat configuration
-  description: "Read saved options, effective entity mappings, comfort profiles, and the allowed cached Ecobee settings. This action returns data without contacting Beestat or changing state."
+  description: >-
+    Read saved settings, effective mappings, filter state, and source details without
+    contacting Beestat or changing state. Credentials are omitted; private identifiers
+    and household details are included.
   fields:
     config_entry_id:
       name: Configuration entry
-      description: "The loaded Beestat Statistics entry to inspect."
+      description: >-
+        Loaded Beestat Statistics entry to inspect.
       required: true
       selector:
         config_entry:
           integration: beestat_statistics
 repair_filter_change_boundary:
   name: Repair filter change boundary
-  description: "Refine the exact time of a filter change already saved in Home Assistant. Its local date must match the saved override date. Refreshes Beestat runtime after saving; incomplete history can leave reconciliation pending. This action does not acknowledge filter alerts or change Ecobee settings."
+  description: >-
+    Correct the time of a filter change already saved in Home Assistant on the same
+    date. Refreshes Beestat to recalculate runtime; reconciliation may remain pending.
+    This correction does not dismiss filter alerts.
   fields:
     config_entry_id:
       name: Configuration entry
-      description: "The loaded Beestat Statistics entry containing this thermostat."
+      description: >-
+        Loaded Beestat Statistics entry containing the thermostat.
       required: true
       selector:
         config_entry:
           integration: beestat_statistics
     thermostat_id:
       name: Thermostat ID
-      description: "The configured Beestat thermostat with an existing Home Assistant filter-date override to refine."
+      description: >-
+        Beestat thermostat with a saved Home Assistant filter-date override to correct.
       required: true
       selector:
         number:
@@ -52,24 +67,33 @@ repair_filter_change_boundary:
           mode: box
     changed_at:
       name: Changed at
-      description: "Verified time of the existing replacement, no more than 31 days old and not in the future. A value without an offset uses Home Assistant's timezone; ambiguous or nonexistent local times are rejected."
+      description: >-
+        Verified replacement time on the saved date, within the past 31 days. Dates use
+        Home Assistant's time zone; include a UTC offset to avoid clock-change
+        ambiguity.
       required: true
       selector:
         datetime: {}
 record_filter_change:
   name: Record filter change
-  description: "Save a physical replacement at its actual time, guarded by the previous boundary and request ID. Attempts to acknowledge matching filter alerts and refresh Beestat runtime. Handle the returned status before taking further action; runtime reconciliation may remain pending. Use a date edit or boundary repair for corrections."
+  description: >-
+    Record a completed physical filter replacement using its actual time and the
+    captured previous saved state. Keep that previous state unchanged on retries.
+    Attempts to dismiss matching filter alerts and refresh runtime. Check the returned
+    status; runtime reconciliation may remain pending.
   fields:
     config_entry_id:
       name: Configuration entry
-      description: "The loaded Beestat Statistics entry containing this thermostat."
+      description: >-
+        Loaded Beestat Statistics entry containing the thermostat.
       required: true
       selector:
         config_entry:
           integration: beestat_statistics
     thermostat_id:
       name: Thermostat ID
-      description: "The configured Beestat thermostat whose filter was replaced."
+      description: >-
+        Beestat thermostat whose filter was replaced.
       required: true
       selector:
         number:
@@ -78,41 +102,56 @@ record_filter_change:
           mode: box
     changed_at:
       name: Changed at
-      description: "For a new replacement, use its actual time within the last 31 days and not in the future. It cannot predate the saved date and must follow any saved exact time. Include a UTC offset to distinguish repeated local times."
+      description: >-
+        Actual replacement time within the past 31 days, no later than now, after any
+        saved timestamp and not before the saved date. Include a UTC offset to
+        distinguish repeated local times.
       required: true
       selector:
         datetime: {}
     expected_changed_at:
       name: Expected previous timestamp
-      description: "The prior filter_changed_at value from the Filter changed date entity, or null if no exact time is saved."
+      description: >-
+        Previous filter_changed_at from saved_overrides.thermostats in Get Beestat
+        configuration. Use null when absent.
       required: true
       selector:
         datetime: {}
     expected_changed_date:
       name: Expected previous date
-      description: "The prior home_assistant_override_date value from the Filter changed date entity, or null if no override date is saved."
+      description: >-
+        Previous filter_changed_date from saved_overrides.thermostats in Get Beestat
+        configuration. Use null when absent.
       required: true
       selector:
         date: {}
     expected_request_id:
       name: Expected previous request ID
-      description: "The prior filter_change_event.request_id captured for this replacement, or null if none exists. Keep that token when retrying; a later correction must not authorize an older request."
+      description: >-
+        Previous filter_change_event.request_id from saved_overrides.thermostats in Get
+        Beestat configuration. Use null when absent.
       required: true
       selector:
         text: {}
     request_id:
       name: Request ID
-      description: "An opaque ID of 1–128 characters for this replacement. An identical retry of the current saved request returns already_recorded without repeating effects, even after 31 days. Use a new ID for a new replacement."
+      description: >-
+        Unique ID for this replacement, 1–128 characters. Reuse the same ID and
+        replacement time when retrying the same request.
       required: true
       selector:
         text: {}
 rebuild_statistics:
   name: Rebuild Beestat statistics
-  description: "Recalculate Recorder statistics from the complete available Beestat summary history. Cumulative totals are rewritten from the start date through the latest source day; measurement series use the selected date range."
+  description: >-
+    Reimport historical Beestat statistics. Cumulative totals are rebuilt from the start
+    date through the latest source day; measurement series use the selected date range.
   fields:
     thermostat_id:
       name: Thermostat ID
-      description: "Rebuild one configured Beestat thermostat and its sensors. Omit to rebuild all configured sources."
+      description: >-
+        Beestat thermostat to rebuild, including its room sensors. Omit to rebuild all
+        included sources.
       required: false
       selector:
         number:
@@ -121,19 +160,26 @@ rebuild_statistics:
           mode: box
     start_date:
       name: Start date
-      description: "First local date to write to Recorder. Earlier source history is still read to calculate cumulative totals."
+      description: >-
+        First local date to update in Recorder. Earlier summary history is read to
+        calculate cumulative totals. Omit for all available summaries and the configured
+        point-history lookback.
       required: false
       selector:
         date: {}
     end_date:
       name: End date
-      description: "Last local date to write for measurement series. Cumulative totals continue through the latest source day so later values stay consistent."
+      description: >-
+        Last local date to update for measurements. Cumulative totals are updated
+        through the latest source day. Omit to read point history through now.
       required: false
       selector:
         date: {}
     skip_sync:
       name: Skip Beestat sync
-      description: "Skip the Beestat sync requests before reading and rebuilding data. This does not make the rebuild network-free."
+      description: >-
+        Skip requesting a Beestat refresh from ecobee. The rebuild still reads data from
+        Beestat over the network.
       required: false
       default: false
       selector:

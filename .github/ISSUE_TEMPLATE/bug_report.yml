@@ -1,20 +1,23 @@
 name: Bug report
-description: Describe a problem with setup, entities, filter estimates, or statistics imports
+description: >-
+  Report unexpected behavior in Beestat Statistics.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: >-
-        Include the versions, steps, and evidence needed to reproduce the problem.
-        Review every attachment before posting. Remove API keys, addresses,
-        coordinates, serial numbers, and private device or entity names from logs
-        and screenshots. Use the integration's redacted diagnostics rather than
-        raw API responses.
+        Describe one reproducible problem and include the versions involved. Attach
+        downloaded integration diagnostics when possible. Before posting, inspect all
+        attachments and remove API keys and other credentials, addresses, coordinates,
+        device identifiers, and private names. Configuration responses and raw Beestat
+        payloads are not redacted diagnostics.
   - type: input
     id: integration_version
     attributes:
       label: Integration version
-      description: Copy the installed version from HACS or the integration's manifest.json.
+      description: >-
+        Installed Beestat Statistics version, as shown by HACS or the integration
+        manifest.
       placeholder: v2026.8.3
     validations:
       required: true
@@ -40,17 +43,19 @@ body:
     attributes:
       label: What happened?
       description: >-
-        Describe the observed result, the expected result, and when it happened.
-        For filter estimates, include the configured limits and whether runtime
-        coverage is complete, partial, or unknown. Distinguish a Beestat value from
-        an estimate calculated in Home Assistant.
+        Describe what you observed, what you expected, and when it happened. For filter
+        estimates, include your runtime and age limits plus the reported runtime
+        coverage. Identify whether the value came from Beestat or was calculated by this
+        integration.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Reproduction steps
-      description: List the shortest repeatable steps, including the action or options changed and the result after each step.
+      description: >-
+        List the steps that lead to the problem, including the action used and whether
+        it happens every time.
       placeholder: |
         1. Open ...
         2. Press ...
@@ -60,7 +65,7 @@ body:
     attributes:
       label: Redacted diagnostics and logs
       description: >-
-        Download diagnostics from the Beestat Statistics entry under Settings >
-        Devices & services. Add relevant log lines with timestamps and timezone.
-        Inspect the contents for personal information before attaching them.
+        Download diagnostics from the Beestat Statistics entry under Settings > Devices
+        & services. Attach relevant log messages with timestamps and time zone, and
+        review every attachment for private details before posting.
       render: text

@@ -1,11 +1,10 @@
 blueprint:
   name: Beestat runtime data stale notification
   description: >-
-    Run your chosen notification action when the age of Beestat's daily runtime
-    summary crosses the selected threshold and stays above it for the configured
-    duration. This measures delayed history, not live thermostat connectivity.
-    The notification does not repeat while the value remains above the threshold.
-    Restarting Home Assistant or reloading automations resets a pending duration.
+    Run your notification action after the Runtime summary lag days sensor crosses above
+    your threshold for the chosen duration. It monitors the age of daily Beestat
+    history. It fires once per crossing, so a continuously stale value does not produce
+    repeat notifications.
   domain: automation
   author: ItsColby
   homeassistant:
@@ -13,7 +12,9 @@ blueprint:
   input:
     lag_sensor:
       name: Runtime summary lag sensor
-      description: Select this integration's Runtime summary lag days sensor. The comparison uses its numeric value in days; it does not convert other duration units.
+      description: >-
+        Select this integration's Runtime summary lag days sensor for one thermostat.
+        The value must be in days; other duration units are not converted.
       selector:
         entity:
           filter:
@@ -21,7 +22,8 @@ blueprint:
             device_class: duration
     threshold_days:
       name: Stale threshold
-      description: Notify only after the lag crosses above this many days. A value equal to the threshold does not qualify. Adjust the starting value for the delay you want to monitor.
+      description: >-
+        Notify when summary lag is strictly greater than this number of days.
       default: 1
       selector:
         number:
@@ -32,14 +34,19 @@ blueprint:
           mode: box
     stale_for:
       name: Stale duration
-      description: Wait this long after the threshold is crossed. The lag must stay above the threshold throughout the wait.
+      description: >-
+        Time the lag must stay above the threshold. A Home Assistant restart or
+        automation reload resets the wait. See [numeric-state trigger
+        behavior](https://www.home-assistant.io/triggers/numeric_state/).
       default:
         hours: 1
       selector:
         duration: {}
     notify_action:
       name: Notification action
-      description: Choose the actions that send your notification, including its destination and message. This blueprint does not select a notification service for you.
+      description: >-
+        Choose the notification actions, destination, and message to use when the
+        trigger fires.
       selector:
         action: {}
 
