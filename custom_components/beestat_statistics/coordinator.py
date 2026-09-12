@@ -775,12 +775,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             summary_window_start = None
             summary_window_end = None
             if summary_window:
-                config = build_beestat_config(
-                    self.hass,
-                    thermostat_rows_tuple,
-                    sensor_rows_tuple,
-                    entry_runtime_config_data(_typed_config_entry(self)),
-                )
                 for _attempt in range(_SUMMARY_TEMPORAL_CONTEXT_ATTEMPTS):
                     query_context = self.capture_temporal_context()
                     query_day = query_context.evaluated_at.astimezone(
