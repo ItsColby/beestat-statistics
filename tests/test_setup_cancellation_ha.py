@@ -46,9 +46,20 @@ pytestmark = [
 ]
 
 
-@pytest.mark.parametrize("cancel_at", ["initial_refresh", "platform_forwarding"])
+@pytest.mark.parametrize(
+    ("cancel_at", "rollback_error"),
+    [
+        ("initial_refresh", None),
+        ("platform_forwarding", None),
+        ("platform_forwarding", RuntimeError("rollback failed")),
+        ("platform_forwarding", asyncio.CancelledError("rollback cancelled")),
+    ],
+)
 async def test_cancelled_setup_releases_resources_and_retries(
-    hass: HomeAssistant, freezer: Any, cancel_at: str
+    hass: HomeAssistant,
+    freezer: Any,
+    cancel_at: str,
+    rollback_error: BaseException | None,
 ) -> None:
     """Cancel the actual setup task, then use HA's reload path for a clean retry."""
 
@@ -95,6 +106,13 @@ async def test_cancelled_setup_releases_resources_and_retries(
         await release.wait()
 
     native_forward = hass.config_entries.async_forward_entry_setups
+    native_unload = hass.config_entries.async_unload_platforms
+
+    async def rollback(*args: Any) -> bool:
+        result = await native_unload(*args)
+        if rollback_error is not None:
+            raise rollback_error
+        return result
 
     async def blocked_forward(config_entry, platforms) -> None:
         await native_forward(config_entry, (Platform.BUTTON,))
@@ -125,6 +143,7 @@ async def test_cancelled_setup_releases_resources_and_retries(
             if cancel_at == "initial_refresh":
                 client.async_sync_runtime.side_effect = blocked_sync
             with (
+                patch.object(hass.config_entries, "async_unload_platforms", rollback),
                 patch.object(
                     hass.config_entries, "async_forward_entry_setups", blocked_forward
                 ),
@@ -151,8 +170,8 @@ async def test_cancelled_setup_releases_resources_and_retries(
                         async_fire_time_changed_exact(hass, import_at)
                     await acquisition_started.wait()
                     old_runtime = entry.runtime_data
-                    setup_task.cancel()
-                    with pytest.raises(asyncio.CancelledError):
+                    setup_task.cancel("setup cancelled")
+                    with pytest.raises(asyncio.CancelledError, match="setup cancelled"):
                         await setup_task
 
             assert entry.state is ConfigEntryState.SETUP_ERROR
@@ -196,15 +215,7 @@ async def test_cancelled_setup_releases_resources_and_retries(
             new_runtime = entry.runtime_data
             assert new_runtime is not old_runtime
             assert not new_runtime.coordinator.is_closed
-            for entity_id, old_entity in old_entities.items():
-                entity = component.get_entity(entity_id)
-                assert entity is not None and entity is not old_entity
-                if isinstance(entity, BeestatButton):
-                    assert entity._coordinator is new_runtime.coordinator
-                    assert entity._importer is new_runtime.importer
-                else:
-                    assert entity.coordinator is new_runtime.coordinator
-                assert hass.states.get(entity_id) is not None
+            _assert_replacement_buttons(hass, old_entities, new_runtime)
             assert new_runtime.coordinator.local_tz.key == "America/New_York"
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
@@ -224,3 +235,19 @@ async def test_cancelled_setup_releases_resources_and_retries(
             release.set()
             if entry.state.recoverable:
                 assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _assert_replacement_buttons(
+    hass: HomeAssistant, old_entities: dict, runtime: Any
+) -> None:
+    """Native retry keeps IDs while replacing every failed runtime owner."""
+    component = hass.data["entity_components"]["button"] if old_entities else None
+    for entity_id, old_entity in old_entities.items():
+        entity = component.get_entity(entity_id)
+        assert entity is not None and entity is not old_entity
+        if isinstance(entity, BeestatButton):
+            assert entity._coordinator is runtime.coordinator
+            assert entity._importer is runtime.importer
+        else:
+            assert entity.coordinator is runtime.coordinator
+        assert hass.states.get(entity_id) is not None

@@ -1525,7 +1525,7 @@ async def async_setup_entry(
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception, asyncio.CancelledError:
-        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        await _async_rollback_platforms(hass, entry)
         raise
     entry.async_create_background_task(
         hass,
@@ -1534,6 +1534,16 @@ async def async_setup_entry(
         eager_start=False,
     )
     return True
+
+
+async def _async_rollback_platforms(
+    hass: HomeAssistant, entry: BeestatStatisticsConfigEntry
+) -> None:
+    """Release acquired platforms without replacing the setup failure."""
+    try:
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    except Exception, asyncio.CancelledError:
+        _LOGGER.exception("Error unloading platforms after setup failure")
 
 
 def _validated_entry_api_base(
