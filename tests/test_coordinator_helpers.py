@@ -253,6 +253,26 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ("Zone A (HomeKit)", "Room A (HomeKit)", "Room B"),
         )
 
+        for device_class in ("temperature_delta", "humidity", None, ""):
+            with self.subTest(device_class=device_class):
+                state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
+                    state="3",
+                    attributes={
+                        "device_class": device_class,
+                        "unit_of_measurement": "°C",
+                    },
+                )
+                invalid_class = self.coordinator._build_room_temperature_spreads(
+                    hass,
+                    self.config_model.BeestatConfig(
+                        thermostats=(thermostat,),
+                        sensors=sensors,
+                    ),
+                    metadata,
+                    sensor_metadata,
+                )[1]
+                self.assertEqual(invalid_class, projection)
+
         state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
             state="78",
             attributes={"unit_of_measurement": "°F"},
@@ -273,6 +293,30 @@ class CoordinatorHelpersTest(unittest.TestCase):
             self.coordinator._convert_temperature(273.15, "K", "°C"),
             0,
         )
+
+    def test_temperature_state_accepts_absolute_and_classless_supported_units(
+        self,
+    ) -> None:
+        for value, source_unit, target_unit, expected in (
+            (22, "°C", "°F", 71.6),
+            (71.6, "°F", "°C", 22),
+            (295.15, "K", "°C", 22),
+        ):
+            for class_attributes in ({}, {"device_class": "temperature"}):
+                with self.subTest(unit=source_unit, attributes=class_attributes):
+                    state = types.SimpleNamespace(
+                        state=str(value),
+                        attributes={
+                            **class_attributes,
+                            "unit_of_measurement": source_unit,
+                        },
+                    )
+                    reading = self.coordinator._temperature_state_value(
+                        state, target_unit
+                    )
+                    self.assertIsNotNone(reading)
+                    self.assertAlmostEqual(reading[0], expected)
+                    self.assertEqual(reading[1], target_unit)
 
     def test_temperature_state_rejects_overflow_after_unit_conversion(self) -> None:
         state = types.SimpleNamespace(

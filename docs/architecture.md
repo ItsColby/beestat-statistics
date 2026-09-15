@@ -51,7 +51,7 @@ Imports capture one evaluation time, timezone, and revision before preparing dai
 
 Current comfort profile mirrors cached `currentClimateRef`; scheduled profiles project the cached program. Neither reconstructs live holds. Sensor `in_use` is Beestat's reported flag, not configured membership or momentary weighting. [`alerts.py`](../custom_components/beestat_statistics/alerts.py) keeps equipment and unknown alerts visible even alongside maintenance reminders.
 
-Room-temperature spread combines mapped readings for identity-qualified members of that thermostat's configured profile. It converts supported explicit units, excludes invalid or unavailable observations, and reports participation and coverage. At least two valid readings can produce a partial range that understates the full profile spread. Observation age alone does not reject a valid local reading.
+Room-temperature spread combines mapped readings for identity-qualified members of that thermostat's configured profile. It converts supported explicit units and accepts only absolute `temperature` observations when a live device class is present; sources with no device-class attribute remain supported. Invalid or unavailable observations reduce coverage without removing their mappings, so a later valid state recovers through local events without cloud I/O. The spread itself is a temperature difference. At least two valid readings can produce a partial range that understates the full profile spread. Observation age alone does not reject a valid local reading.
 
 ## Recorder integrity
 

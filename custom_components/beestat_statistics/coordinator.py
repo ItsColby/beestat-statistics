@@ -1563,9 +1563,12 @@ def _temperature_state_value(
         return None
     value = _finite_float(getattr(state, "state", None))
     attributes = getattr(state, "attributes", None)
-    source_unit = _canonical_temperature_unit(
-        attributes.get("unit_of_measurement") if isinstance(attributes, dict) else None
-    )
+    if (
+        not isinstance(attributes, dict)
+        or attributes.get("device_class", "temperature") != "temperature"
+    ):
+        return None
+    source_unit = _canonical_temperature_unit(attributes.get("unit_of_measurement"))
     if value is None or source_unit is None:
         return None
     destination = target_unit or source_unit
