@@ -279,7 +279,10 @@ class ValidationRunnerTests(unittest.TestCase):
             self.assertIn("python -m pip install", args[-1])
             if event["kind"] in {"minimum", "current"}:
                 self.assertIn("python -m pip check", args[-1])
-                self.assertIn("pytest tests -q", args[-1])
+                self.assertIn(
+                    "python scripts/run_dependency_light_tests.py --home-assistant",
+                    args[-1],
+                )
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_failed_snapshot_does_not_run_validation(self) -> None:

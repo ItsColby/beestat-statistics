@@ -1,4 +1,4 @@
-"""Run tests that do not require Home Assistant or its pytest harness."""
+"""Run dependency-light tests, or select the real Home Assistant test lane."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import ast
 import sys
 import unittest
+from importlib import import_module
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,13 +59,28 @@ def dependency_light_test_files() -> tuple[Path, ...]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the dependency-light suite without importing HA-only modules."""
+    """Run one complete test lane with its native test collector."""
 
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--home-assistant",
+        action="store_true",
+        help="Run native pytest discovery, excluding dependency-light modules",
+    )
+    args = parser.parse_args(argv)
     try:
+        if args.home_assistant:
+            unit_files = dependency_light_test_files()
+            pytest = import_module("pytest")
+
+            return int(
+                pytest.main(
+                    [str(TESTS), "-q", *(f"--ignore={path}" for path in unit_files)]
+                )
+            )
         suite = _load_suite(dependency_light_test_files())
     except (OSError, RuntimeError, SyntaxError, ImportError) as err:
-        print(f"Dependency-light discovery failed: {err}", file=sys.stderr)
+        print(f"Test discovery failed: {err}", file=sys.stderr)
         return 2
     result = unittest.TextTestRunner(verbosity=1).run(suite)
     return 0 if result.wasSuccessful() and result.testsRun > len(result.skipped) else 1
@@ -78,7 +94,7 @@ def _load_suite(test_files: tuple[Path, ...]) -> unittest.TestSuite:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         if any(
             isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-            and node.name.startswith("test_")
+            and node.name.startswith("test")
             for node in tree.body
         ):
             raise RuntimeError(f"{path.name} contains tests outside unittest.TestCase")
