@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -25,6 +26,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
+from custom_components.beestat_statistics import async_setup_entry as native_setup_entry
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.button import BeestatButton
 from custom_components.beestat_statistics.const import (
@@ -106,6 +108,9 @@ async def test_cancelled_setup_releases_resources_and_retries(
         await release.wait()
 
     native_unload = hass.config_entries.async_unload_platforms
+    native_forward = hass.config_entries.async_forward_entry_setups
+    forward_cancellations: list[asyncio.CancelledError] = []
+    setup_cancellations: list[asyncio.CancelledError] = []
     native_platform_setup = EntityPlatform.async_setup_entry
     native_translations = PlatformData.async_load_translations
     button_loaded = asyncio.Event()
@@ -147,6 +152,19 @@ async def test_cancelled_setup_releases_resources_and_retries(
                 blocked_sync if cancel_at == "initial_refresh" else None
             )
             with (
+                patch(
+                    "custom_components.beestat_statistics.async_setup_entry",
+                    partial(
+                        _record_cancellation, native_setup_entry, setup_cancellations
+                    ),
+                ),
+                patch.object(
+                    hass.config_entries,
+                    "async_forward_entry_setups",
+                    partial(
+                        _record_cancellation, native_forward, forward_cancellations
+                    ),
+                ),
                 patch.object(hass.config_entries, "async_unload_platforms", rollback),
                 patch.object(EntityPlatform, "async_setup_entry", track_platform),
                 patch.object(
@@ -180,11 +198,15 @@ async def test_cancelled_setup_releases_resources_and_retries(
                     await acquisition_started.wait()
                     old_runtime = entry.runtime_data
                     setup_task.cancel("setup cancelled")
-                    with pytest.raises(asyncio.CancelledError, match="setup cancelled"):
+                    with pytest.raises(asyncio.CancelledError):
                         await setup_task
 
             assert entry.state is ConfigEntryState.SETUP_ERROR
+            assert len(setup_cancellations) == 1
+            assert setup_cancellations[0] is not rollback_error
             if cancel_at == "platform_forwarding":
+                assert len(forward_cancellations) == 1
+                assert setup_cancellations[0] is forward_cancellations[0]
                 assert date_task is not None and date_task.cancelled()
                 assert all(
                     entry.entry_id not in entity_component._platforms
@@ -270,3 +292,14 @@ async def _unload_then_fail(
     if error is not None:
         raise error
     return result
+
+
+async def _record_cancellation(
+    call: Any, observed: list[asyncio.CancelledError], *args: Any
+) -> Any:
+    """Observe the same native call's exception before Core can replace its message."""
+    try:
+        return await call(*args)
+    except asyncio.CancelledError as err:
+        observed.append(err)
+        raise
