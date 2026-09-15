@@ -576,7 +576,12 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Stage an account replacement or save a same-account connection."""
 
-        if _wrong_account(data_snapshot, account_fingerprint):
+        if _wrong_account(data_snapshot, account_fingerprint) or (
+            not _same_connection_data(data_snapshot, data_updates)
+            and not _validated_connection_change_is_safe(
+                data_snapshot, account_fingerprint
+            )
+        ):
             if _entry_owner_changed(
                 entry,
                 data_snapshot=data_snapshot,

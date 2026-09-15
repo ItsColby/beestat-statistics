@@ -1411,42 +1411,6 @@ async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
-async def test_reauth_flow_confirms_different_account(
-    hass: HomeAssistant,
-) -> None:
-    """Test reauth requires explicit confirmation before switching accounts."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-        data=entry.data,
-    )
-
-    with _mock_validate_input(return_value=ACCOUNT_B):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "different-account-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
-    assert entry.data[CONF_API_KEY] == "old-key"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {},
-    )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_API_KEY] == "different-account-key"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
-
-
 async def test_reauth_flow_recovers_from_unexpected_error(
     hass: HomeAssistant,
 ) -> None:
@@ -1555,69 +1519,147 @@ async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(
     assert dict(entry.data) == original_data
 
 
-async def test_reconfigure_flow_confirms_different_account(
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+@pytest.mark.parametrize(
+    ("legacy", "changed_field"),
+    [
+        (False, CONF_API_KEY),
+        (False, CONF_API_BASE),
+        (False, None),
+        (True, CONF_API_KEY),
+        (True, CONF_API_BASE),
+    ],
+    ids=[
+        "anchored-key",
+        "anchored-endpoint",
+        "anchored-same",
+        "legacy-key",
+        "legacy-endpoint",
+    ],
+)
+async def test_connection_flow_confirms_unproven_account_continuity(
     hass: HomeAssistant,
+    source: str,
+    legacy: bool,
+    changed_field: str | None,
 ) -> None:
-    """Test reconfigure requires explicit confirmation before account replacement."""
+    """Test connection replacement stages a scoped reset until confirmation."""
 
-    entry = _add_mock_entry(
-        hass,
-        data={
-            CONF_API_KEY: "old-key",
-            CONF_API_BASE: API_BASE,
-            CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
-            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
-            "future_data": {"preserve": True},
-        },
-        options={
-            CONF_POINT_LOOKBACK_DAYS: 30,
-            CONF_SCAN_INTERVAL_SECONDS: 900,
-            CONF_SENSORS: [
-                {
-                    CONF_ID: 2001,
-                    CONF_TEMPERATURE_ENTITY_ID: ("sensor.room_sensor_a_temperature"),
-                }
-            ],
-            "future_option": {"preserve": True},
-        },
-    )
+    entry = _add_source_mapping_entry(hass, legacy=legacy)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    connection = {CONF_API_KEY: "old-key", CONF_API_BASE: API_BASE}
+    if changed_field is not None:
+        connection[changed_field] = (
+            "different-account-key"
+            if changed_field == CONF_API_KEY
+            else "https://api.example.test/"
+        )
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
     )
 
-    with _mock_validate_input(return_value=ACCOUNT_B):
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                CONF_API_KEY: "different-account-key",
-                CONF_API_BASE: API_BASE,
-            },
+            connection,
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
-    assert entry.data[CONF_API_KEY] == "old-key"
-    assert CONF_THERMOSTATS in entry.data
-    assert CONF_SENSORS in entry.options
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
+        assert dict(entry.data) == original_data
+        assert dict(entry.options) == original_options
+        reload.assert_not_called()
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {},
-    )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {},
+        )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_API_KEY] == "different-account-key"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
-    assert entry.data["future_data"] == {"preserve": True}
-    assert CONF_THERMOSTATS not in entry.data
-    assert CONF_SENSORS not in entry.options
-    assert entry.options == {
+    assert result["reason"] == f"{source}_successful"
+    assert dict(entry.data) == {
+        **connection,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_B,
+        "future_data": {"preserve": True},
+    }
+    assert dict(entry.options) == {
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
         "future_option": {"preserve": True},
     }
+    reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+async def test_connection_flow_backfills_unchanged_legacy_connection(
+    hass: HomeAssistant,
+    source: str,
+) -> None:
+    """Test validating the same legacy connection retains all source settings."""
+
+    entry = _add_source_mapping_entry(hass, legacy=True)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
+    )
+    with (
+        _mock_validate_input(return_value=ACCOUNT_A),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "old-key" if source == SOURCE_REAUTH else "",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == f"{source}_successful"
+    assert dict(entry.data) == {**original_data, CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A}
+    assert dict(entry.options) == original_options
+    reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+async def test_connection_flow_abandonment_preserves_legacy_entry(
+    hass: HomeAssistant,
+    source: str,
+) -> None:
+    """Test leaving account confirmation preserves every existing entry setting."""
+
+    entry = _add_source_mapping_entry(hass, legacy=True)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
+    )
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "different-account-key", CONF_API_BASE: API_BASE},
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
+        hass.config_entries.flow.async_abort(result["flow_id"])
+
+    assert dict(entry.data) == original_data
+    assert dict(entry.options) == original_options
+    reload.assert_not_called()
 
 
 async def test_reconfigure_second_flow_wins_during_awaited_validation(
@@ -1764,30 +1806,27 @@ async def test_reconfigure_reconciles_concurrent_options_update(
     reload.assert_called_once_with(entry.entry_id)
 
 
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+@pytest.mark.parametrize("legacy", [False, True], ids=["anchored", "legacy"])
+@pytest.mark.parametrize("changed_owner", ["data", "options"])
 async def test_account_change_confirmation_preserves_intervening_entry_update(
     hass: HomeAssistant,
+    source: str,
+    legacy: bool,
+    changed_owner: str,
 ) -> None:
     """Test account replacement aborts when its data or options snapshot drifts."""
 
-    entry = _add_mock_entry(
-        hass,
-        data={
-            **_add_mock_entry_data(),
-            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
-            "future_data": {"v": 1},
-        },
-        options={
-            CONF_POINT_LOOKBACK_DAYS: 30,
-            CONF_SCAN_INTERVAL_SECONDS: 900,
-            CONF_SENSORS: [{CONF_ID: 2001}],
-            "future_option": {"v": 1},
-        },
-    )
+    entry = _add_source_mapping_entry(hass, legacy=legacy)
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
     )
-    with _mock_validate_input(return_value=ACCOUNT_B):
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -1795,12 +1834,18 @@ async def test_account_change_confirmation_preserves_intervening_entry_update(
                 CONF_API_BASE: API_BASE,
             },
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
 
-    external_options = {**dict(entry.options), "future_option": {"v": 2}}
-    hass.config_entries.async_update_entry(entry, options=external_options)
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        external_data = dict(entry.data)
+        external_options = dict(entry.options)
+        if changed_owner == "data":
+            external_data[CONF_API_KEY] = "external-key"
+        else:
+            external_options["future_option"] = {"external": True}
+        hass.config_entries.async_update_entry(
+            entry, data=external_data, options=external_options
+        )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {},
@@ -1808,8 +1853,7 @@ async def test_account_change_confirmation_preserves_intervening_entry_update(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "configuration_changed"
-    assert entry.data[CONF_API_KEY] == "old-key"
-    assert entry.data["future_data"] == {"v": 1}
+    assert dict(entry.data) == external_data
     assert dict(entry.options) == external_options
     reload.assert_not_called()
 
@@ -3595,6 +3639,46 @@ def _add_mock_entry(
     )
     entry.add_to_hass(hass)
     return entry
+
+
+def _add_source_mapping_entry(
+    hass: HomeAssistant,
+    *,
+    legacy: bool,
+) -> MockConfigEntry:
+    """Create an entry with account-scoped rows in both supported owners."""
+
+    data = {
+        **_add_mock_entry_data(),
+        CONF_THERMOSTATS: [
+            {
+                CONF_ID: 1001,
+                "slug": "zone_a",
+                CONF_FILTER_CHANGED_DATE: "2026-01-01",
+                CONF_FILTER_MAX_AGE_DAYS: 60,
+            }
+        ],
+        CONF_SENSORS: [{CONF_ID: 2001}],
+        "future_data": {"preserve": True},
+    }
+    if legacy:
+        data.pop(CONF_ACCOUNT_FINGERPRINT)
+    return _add_mock_entry(
+        hass,
+        data=data,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [{CONF_ID: 1001}],
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2001,
+                    CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_a_temperature",
+                }
+            ],
+            "future_option": {"preserve": True},
+        },
+    )
 
 
 def _mock_validate_input(**kwargs: Any):
