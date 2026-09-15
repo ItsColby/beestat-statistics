@@ -737,6 +737,56 @@ async def test_user_flow_requires_identifiable_account_anchor(
     assert not hass.config_entries.async_entries(DOMAIN)
 
 
+async def test_user_flow_rejects_insecure_api_base_before_validation(
+    hass: HomeAssistant,
+) -> None:
+    """Test an API key cannot be validated against a plaintext endpoint."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "test-api-key",
+                CONF_API_BASE: "http://api.example.test/",
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_API_BASE: "invalid_api_base"}
+    validate.assert_not_awaited()
+
+
+async def test_user_flow_recovers_from_auth_error(hass: HomeAssistant) -> None:
+    """Test the user can recover after Beestat rejects a key."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+
+    with _mock_validate_input(side_effect=BeestatAuthError("invalid key")):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            USER_INPUT,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+
+    with _mock_validate_input():
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            USER_INPUT | {CONF_API_KEY: "fixed-key"},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_API_KEY] == "fixed-key"
+
+
 async def test_user_flow_recovers_from_unexpected_error(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
@@ -769,6 +819,25 @@ async def test_user_flow_recovers_from_unexpected_error(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_API_KEY] == "fixed-key"
+
+
+async def test_user_flow_rejects_blank_api_key(hass: HomeAssistant) -> None:
+    """Test blank credentials fail before network validation."""
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            USER_INPUT | {CONF_API_KEY: ""},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_API_KEY: "api_key_required"}
+    validate.assert_not_awaited()
 
 
 async def test_reauth_preserves_entry_when_account_identity_is_unavailable(
@@ -1375,6 +1444,30 @@ async def test_reauth_flow_recovers_from_unexpected_error(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_KEY] == "replacement-key"
+
+
+async def test_reauth_flow_rejects_blank_api_key(hass: HomeAssistant) -> None:
+    """Test reauth requires a replacement key."""
+
+    entry = _add_mock_entry(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    with _mock_validate_input() as validate:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_API_KEY: "api_key_required"}
+    validate.assert_not_awaited()
 
 
 async def test_reconfigure_flow_allows_blank_key_to_keep_current(
