@@ -131,6 +131,8 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
     )
     entity = BeestatSensor(coordinator, description, None)
     entity.entity_id = "sensor.profile_spread"
+    assert entity.native_unit_of_measurement is None
+    assert not entity.available
     async with _entity_platform(coordinator, "sensor") as platform:
         await platform.async_add_entities([entity])
         assert hass.states.get(entity.entity_id).state == STATE_UNAVAILABLE
@@ -153,6 +155,7 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
             state = hass.states.get(entity.entity_id)
             assert entity.native_unit_of_measurement == unit
             assert entity.native_value == value
+            assert entity.available
             # HA may retain the display unit while converting the new native unit.
             assert state.attributes["unit_of_measurement"] in {"°C", "°F"}
             expected = 2.0 if state.attributes["unit_of_measurement"] == "°C" else 3.6

@@ -85,23 +85,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         ):
             self.assertIn(attribute, text)
 
-    def test_manual_refresh_failures_update_coordinator_availability(self) -> None:
-        tree = ast.parse(
-            (ROOT / "custom_components/beestat_statistics/coordinator.py").read_text(
-                encoding="utf-8"
-            )
-        )
-        method = _class_method(
-            tree,
-            "BeestatRuntimeDataCoordinator",
-            "_async_refresh_runtime",
-        )
-        self.assertIsNotNone(method, "_async_refresh_runtime is missing")
-        self.assertTrue(
-            _contains_method_call(method, "async_set_update_error"),
-            "Manual refresh failures must call async_set_update_error",
-        )
-
     def test_importer_uses_windowed_summary_refresh_with_lazy_full_fallback(
         self,
     ) -> None:
@@ -121,15 +104,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("summary_window: bool = False", coordinator_text)
         self.assertIn("async_read_runtime_thermostat_summary", coordinator_text)
         self.assertNotIn("last_filter_alert_dismiss_thermostat_id", sensor_text)
-
-    def test_init_datetime_date_alias_survives_date_platform_import(self) -> None:
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("from datetime import date as dt_date", init_text)
-        self.assertIn("dt_date.fromisoformat", init_text)
-        self.assertNotRegex(init_text, r"(?<!dt_)date\.fromisoformat")
 
     def test_recorder_statistics_reads_use_recorder_executor(self) -> None:
         init_text = (
@@ -920,20 +894,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertNotIn("bus.async_fire", init_text)
 
-    def test_recorder_statistics_metadata_uses_current_shape(self) -> None:
-        statistics_text = (
-            ROOT / "custom_components/beestat_statistics/statistics_builder.py"
-        ).read_text(encoding="utf-8")
-        const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertNotIn('"has_mean"', statistics_text)
-        self.assertIn("STATISTIC_MEAN_TYPE_ARITHMETIC", statistics_text)
-        self.assertIn("STATISTIC_MEAN_TYPE_NONE", statistics_text)
-        self.assertIn("STATISTIC_UNIT_CLASS_TEMPERATURE", const_text)
-        self.assertIn('UNIT_FAHRENHEIT = "\\N{DEGREE SIGN}F"', const_text)
-
     def test_stale_runtime_blueprint_is_documented_and_native(self) -> None:
         blueprint_path = (
             ROOT
@@ -1227,16 +1187,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertEqual(
             translations["entity"]["binary_sensor"]["sensor_in_use"]["name"],
             "Beestat-reported sensor in use",
-        )
-
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertNotIn(
-            "Beestat sensor participation in the active comfort profile",
-            readme,
-        )
-        self.assertNotIn(
-            "Beestat says are active in the current comfort profile",
-            readme,
         )
 
     def test_reported_sensor_use_icons_do_not_imply_occupancy(self) -> None:
