@@ -118,6 +118,44 @@ class ThermostatSettingsTest(unittest.TestCase):
         ):
             self.assertNotIn(excluded, serialized)
 
+    def test_absolute_settings_validate_after_scaling_without_changing_raw_or_deltas(
+        self,
+    ) -> None:
+        for raw, expected in (
+            (-4597, -459.7),
+            (-4596.7, -459.7),
+            (-400, -40),
+            (350, 35),
+            (354.4, 35.4),
+            (1e308, 1e307),
+            (-4600, None),
+            (-5000, None),
+            (-4597.3, None),
+            (-4597.2000001, None),
+            (None, None),
+            (True, None),
+            (float("inf"), None),
+        ):
+            with self.subTest(raw=raw):
+                snapshot = self.settings.ThermostatSettingsSnapshot(
+                    thermostat_id=1,
+                    source_details={},
+                    settings={"coldTempAlert": raw, "tempCorrection": -5000},
+                    audio={},
+                )
+                actual = self.settings.absolute_temperature_fahrenheit(
+                    snapshot, "coldTempAlert"
+                )
+                if expected is None:
+                    self.assertIsNone(actual)
+                else:
+                    self.assertAlmostEqual(actual, expected)
+                self.assertEqual(snapshot.setting("coldTempAlert"), raw)
+                self.assertEqual(
+                    self.settings.temperature_fahrenheit(snapshot, "tempCorrection"),
+                    -500,
+                )
+
     def test_inactive_and_unmatched_rows_are_ignored(self) -> None:
         snapshots = self.settings.build_thermostat_settings_snapshots(
             ({"thermostat_id": 1, "ecobee_thermostat_id": 2},),

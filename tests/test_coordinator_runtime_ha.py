@@ -145,11 +145,23 @@ async def test_framework_refresh_starts_cached_projection_scheduler(
     assert coordinator._cancel_projection_boundary is None
 
 
-@pytest.mark.parametrize("invalid_class", ["temperature_delta", "humidity"])
-async def test_room_spread_state_class_change_and_recovery_without_io(
+@pytest.mark.parametrize(
+    ("invalid_value", "invalid_class", "invalid_unit"),
+    [
+        ("22", "temperature_delta", "°C"),
+        ("22", "humidity", "°C"),
+        ("-274.15", "temperature", "°C"),
+        ("-460", "temperature", "°F"),
+        ("-459.7", "temperature", "°F"),
+        ("-1", "temperature", "K"),
+    ],
+)
+async def test_room_spread_invalid_observation_and_recovery_without_io(
     hass: HomeAssistant,
     freezer: Any,
+    invalid_value: str,
     invalid_class: str,
+    invalid_unit: str,
 ) -> None:
     """Live quantity changes affect coverage without dropping the selected source."""
 
@@ -214,9 +226,11 @@ async def test_room_spread_state_class_change_and_recovery_without_io(
     entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
     _async_track_room_temperature_sources(hass, entry)
 
-    # The numeric state stays unchanged: the attribute event alone must invalidate it.
+    # Class cases keep the numeric state unchanged, exercising attribute-only events.
     hass.states.async_set(
-        "sensor.room_b_temperature", "22", {**attributes, "device_class": invalid_class}
+        "sensor.room_b_temperature",
+        invalid_value,
+        {"device_class": invalid_class, "unit_of_measurement": invalid_unit},
     )
     await hass.async_block_till_done()
     invalid = coordinator.data.room_temperature_spreads[1]

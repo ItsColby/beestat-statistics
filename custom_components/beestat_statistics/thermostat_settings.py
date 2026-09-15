@@ -9,6 +9,7 @@ from math import isfinite
 from typing import Any
 
 from .config_rows import positive_resource_id
+from .temperature import absolute_temperature_value
 
 # These fields are deliberately explicit. The upstream ecobee_thermostat row also
 # contains account, location, billing, utility, management, device-identifier, and
@@ -271,6 +272,18 @@ def temperature_fahrenheit(
 
     value = _finite_float_or_none(snapshot.setting(key))
     return round(value / 10, 1) if value is not None else None
+
+
+def absolute_temperature_fahrenheit(
+    snapshot: ThermostatSettingsSnapshot, key: str
+) -> float | None:
+    """Validate an absolute tenths-Fahrenheit setting before presentation rounding."""
+
+    value = _finite_float_or_none(snapshot.setting(key))
+    scaled = absolute_temperature_value(
+        value / 10 if value is not None else None, "°F", tenth_fahrenheit_source=True
+    )
+    return round(scaled, 1) if scaled is not None else None
 
 
 def integer_setting(snapshot: ThermostatSettingsSnapshot, key: str) -> int | None:

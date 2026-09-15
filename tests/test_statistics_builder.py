@@ -7,8 +7,10 @@ import math
 import sys
 import types
 import unittest
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -625,6 +627,142 @@ class StatisticsBuilderTest(unittest.TestCase):
             heat_setpoint.metadata["unit_of_measurement"],
             "\N{DEGREE SIGN}F",
         )
+
+    def test_impossible_temperatures_do_not_contaminate_daily_point_statistics(
+        self,
+    ) -> None:
+        values = (-460, -500, -459.7, -40, 80, None, float("inf"), float("nan"))
+        rows = [
+            {
+                "timestamp": f"2026-07-01T12:{index:02d}:00Z",
+                "setpoint_heat": value,
+                "setpoint_cool": value,
+                "temperature": value,
+                "occupancy": index % 2 == 0,
+            }
+            for index, value in enumerate(values)
+        ]
+        thermostat = statistics_builder.build_thermostat_point_statistics(
+            {1: rows}, self.local_tz, self.config
+        )
+        sensor = statistics_builder.build_sensor_statistics(
+            {10: rows}, self.local_tz, self.config
+        )
+        for item in (
+            _series(thermostat, "beestat:zone_a_heat_setpoint"),
+            _series(thermostat, "beestat:zone_a_cool_setpoint"),
+            _series(sensor, "beestat:room_sensor_a_temperature"),
+        ):
+            self.assertEqual(item.source_rows, 3)
+            self.assertEqual(
+                item.statistics,
+                [
+                    {
+                        "start": datetime(2026, 7, 1, tzinfo=self.local_tz),
+                        "mean": -139.9,
+                        "min": -459.7,
+                        "max": 80,
+                    }
+                ],
+            )
+            self.assertEqual(item.metadata["unit_of_measurement"], "°F")
+            self.assertEqual(item.metadata["unit_class"], "temperature")
+        occupancy = _series(sensor, "beestat:room_sensor_a_occupancy")
+        self.assertEqual(occupancy.source_rows, len(rows))
+        self.assertEqual(occupancy.statistics[0]["mean"], 50)
+        self.assertEqual(occupancy.statistics[0]["min"], 0)
+        self.assertEqual(occupancy.statistics[0]["max"], 100)
+        self.assertEqual(
+            statistics_builder.build_thermostat_point_statistics(
+                {1: [rows[0]]}, self.local_tz, self.config
+            ),
+            [],
+        )
+
+    def test_temperature_validation_follows_sensor_unit_scaling(self) -> None:
+        spec = statistics_builder.build_sensor_specs(self.config)[0]
+        with patch.object(
+            statistics_builder,
+            "build_sensor_specs",
+            return_value=(replace(spec, scale=0.1),),
+        ):
+            series = statistics_builder.build_sensor_statistics(
+                {
+                    10: [
+                        {"timestamp": "2026-07-01T12:00:00Z", "temperature": -4000},
+                        {"timestamp": "2026-07-01T12:05:00Z", "temperature": -4600},
+                    ]
+                },
+                self.local_tz,
+                self.config,
+            )
+        self.assertEqual(series[0].source_rows, 1)
+        self.assertEqual(series[0].statistics[0]["mean"], -400)
+
+    def test_summary_temperature_mean_and_extrema_are_validated_independently(
+        self,
+    ) -> None:
+        observations = (
+            (-460, -40, 80),
+            (-40, -460, -20),
+            (-40, -50, -460),
+            (-459.7, -459.7, -459.7),
+            (None, None, None),
+        )
+        series = statistics_builder.build_summary_mean_statistics(
+            [
+                {
+                    "thermostat_id": 1,
+                    "date": f"2026-07-{day:02d}",
+                    "avg_outdoor_temperature": mean,
+                    "min_outdoor_temperature": minimum,
+                    "max_outdoor_temperature": maximum,
+                    "avg_indoor_humidity": 40,
+                }
+                for day, (mean, minimum, maximum) in enumerate(observations, 1)
+            ],
+            self.local_tz,
+            self.config,
+        )
+        temperature = _series(series, "beestat:zone_a_outdoor_temperature")
+        self.assertEqual(temperature.source_rows, 3)
+        self.assertEqual(
+            temperature.statistics,
+            [
+                {
+                    "start": datetime(2026, 7, 2, tzinfo=self.local_tz),
+                    "mean": -40,
+                    "max": -20,
+                },
+                {
+                    "start": datetime(2026, 7, 3, tzinfo=self.local_tz),
+                    "mean": -40,
+                    "min": -50,
+                },
+                {
+                    "start": datetime(2026, 7, 4, tzinfo=self.local_tz),
+                    "mean": -459.7,
+                    "min": -459.7,
+                    "max": -459.7,
+                },
+            ],
+        )
+        humidity = _series(series, "beestat:zone_a_indoor_humidity")
+        self.assertEqual(humidity.source_rows, len(observations))
+        self.assertTrue(all(row["mean"] == 40 for row in humidity.statistics))
+
+    def test_historical_temperature_representation_allowance_is_bounded(self) -> None:
+        for value in (-459.67, -459.7, -459.72, -459.72 - 5e-10):
+            with self.subTest(valid=value):
+                self.assertEqual(
+                    statistics_builder._measurement_value(value, "temperature", "°F"),
+                    value,
+                )
+        for value in (-459.72 - 1e-8, -460, -500):
+            with self.subTest(invalid=value):
+                self.assertIsNone(
+                    statistics_builder._measurement_value(value, "temperature", "°F")
+                )
 
     def test_cumulative_statistic_ids_include_runtime_and_summary_sums(self) -> None:
         self.assertEqual(

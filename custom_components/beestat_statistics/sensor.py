@@ -45,6 +45,7 @@ from .filter_forecast import (
 from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .thermostat_settings import (
+    absolute_temperature_fahrenheit,
     audio_integer_setting,
     date_setting,
     integer_setting,
@@ -140,7 +141,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "hot_temperature_alert",
         "Hot temperature alert threshold",
         "hotTempAlert",
-        "temperature",
+        "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
     ),
@@ -148,7 +149,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "cold_temperature_alert",
         "Cold temperature alert threshold",
         "coldTempAlert",
-        "temperature",
+        "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
     ),
@@ -682,13 +683,13 @@ def _thermostat_sensor_descriptions(
                 _thermostat_setting_available,
                 thermostat_id=thermostat_id,
                 key="compressorProtectionMinTemp",
-                value_type="temperature",
+                value_type="absolute_temperature",
             ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
                 key="compressorProtectionMinTemp",
-                value_type="temperature",
+                value_type="absolute_temperature",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -1124,6 +1125,8 @@ def _thermostat_setting_value(
         or (snapshot := data.thermostat_settings.get(thermostat_id)) is None
     ):
         return None
+    if value_type == "absolute_temperature":
+        return absolute_temperature_fahrenheit(snapshot, key)
     if value_type == "temperature":
         return temperature_fahrenheit(snapshot, key)
     if value_type == "integer":

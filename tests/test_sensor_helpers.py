@@ -834,6 +834,62 @@ class SensorHelpersTest(unittest.TestCase):
             ),
         )
 
+    def test_absolute_setting_sensors_reject_impossible_values_and_recover(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="zone_a", name="Zone A"
+        )
+        descriptions = {
+            item.translation_key: item
+            for item in self.sensor._thermostat_sensor_descriptions(
+                thermostat=thermostat
+            )
+        }
+        snapshot = self.thermostat_settings.ThermostatSettingsSnapshot(
+            thermostat_id=1,
+            source_details={},
+            settings={
+                "tempCorrection": -5000,
+                "heatCoolMinDelta": -5000,
+                "stage1HeatingDifferentialTemp": -5000,
+                "stage1CoolingDifferentialTemp": -5000,
+            },
+            audio={},
+        )
+        coordinator = types.SimpleNamespace(
+            data=types.SimpleNamespace(thermostat_settings={1: snapshot})
+        )
+        for key, source_key in (
+            ("compressor_minimum_outdoor_temperature", "compressorProtectionMinTemp"),
+            ("hot_temperature_alert", "hotTempAlert"),
+            ("cold_temperature_alert", "coldTempAlert"),
+        ):
+            for raw, expected in (
+                (-4600, None),
+                (-5000, None),
+                (-400, -40),
+                (-4597, -459.7),
+            ):
+                with self.subTest(key=key, raw=raw):
+                    snapshot.settings[source_key] = raw
+                    value = descriptions[key].value_fn(coordinator)
+                    if expected is None:
+                        self.assertIsNone(value)
+                    else:
+                        self.assertAlmostEqual(value, expected)
+                    self.assertEqual(
+                        descriptions[key].available_fn(coordinator),
+                        expected is not None,
+                    )
+        for key in (
+            "temperature_correction",
+            "heat_cool_minimum_delta",
+            "heating_differential",
+            "cooling_differential",
+        ):
+            self.assertEqual(descriptions[key].value_fn(coordinator), -500)
+
     def test_spread_attributes_name_configured_membership_without_breaking_legacy(
         self,
     ) -> None:

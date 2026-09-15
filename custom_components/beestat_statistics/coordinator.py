@@ -59,6 +59,7 @@ from .filter_runtime import (
     observed_threshold_date,
 )
 from .profile import ScheduleProfile, schedule_profiles_by_ref
+from .temperature import absolute_temperature_value
 from .thermostat_settings import (
     ThermostatSettingsSnapshot,
     build_thermostat_settings_snapshots,
@@ -1569,7 +1570,10 @@ def _temperature_state_value(
     ):
         return None
     source_unit = _canonical_temperature_unit(attributes.get("unit_of_measurement"))
-    if value is None or source_unit is None:
+    if source_unit is None:
+        return None
+    value = absolute_temperature_value(value, source_unit)
+    if value is None:
         return None
     destination = target_unit or source_unit
     converted = _convert_temperature(value, source_unit, destination)

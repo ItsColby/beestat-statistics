@@ -330,6 +330,38 @@ class CoordinatorHelpersTest(unittest.TestCase):
             (1e308, "°C"),
         )
 
+    def test_absolute_temperature_bounds_preserve_roundoff_and_valid_extremes(
+        self,
+    ) -> None:
+        for unit, zero, negative in (
+            ("K", 0.0, None),
+            ("°C", -273.15, -40),
+            ("°F", -459.67, -40),
+        ):
+            for value in (zero, zero - 5e-10, zero + 5e-10, negative, 1e308):
+                if value is None:
+                    continue
+                with self.subTest(unit=unit, valid=value):
+                    state = types.SimpleNamespace(
+                        state=str(value), attributes={"unit_of_measurement": unit}
+                    )
+                    self.assertEqual(
+                        self.coordinator._temperature_state_value(state, unit),
+                        (value, unit),
+                    )
+            for value in (zero - 1, zero - 1e-8, float("inf"), float("nan")):
+                with self.subTest(unit=unit, invalid=value):
+                    state = types.SimpleNamespace(
+                        state=str(value), attributes={"unit_of_measurement": unit}
+                    )
+                    self.assertIsNone(
+                        self.coordinator._temperature_state_value(state, "°F")
+                    )
+        state = types.SimpleNamespace(
+            state="-459.7", attributes={"unit_of_measurement": "°F"}
+        )
+        self.assertIsNone(self.coordinator._temperature_state_value(state, "°F"))
+
     def test_profile_room_spread_preserves_equal_names_and_fails_ambiguous_identity(
         self,
     ) -> None:
@@ -407,7 +439,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
         state_values["sensor.room_10"].state = "-1e308"
         state_values["sensor.room_11"].state = "1e308"
-        overflowed = self.coordinator._build_room_temperature_spreads(
+        invalid_temperature = self.coordinator._build_room_temperature_spreads(
             hass,
             self.config_model.BeestatConfig(
                 thermostats=(thermostat,),
@@ -416,8 +448,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             thermostat_metadata,
             sensor_metadata,
         )[1]
-        self.assertEqual(overflowed.valid_sensor_count, 2)
-        self.assertIsNone(overflowed.value)
+        self.assertEqual(invalid_temperature.valid_sensor_count, 1)
+        self.assertEqual(invalid_temperature.unavailable_sensor_names, ("Shared name",))
+        self.assertIsNone(invalid_temperature.value)
         state_values["sensor.room_10"].state = "70"
         state_values["sensor.room_11"].state = "74"
 
