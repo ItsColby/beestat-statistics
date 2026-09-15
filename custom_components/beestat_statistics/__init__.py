@@ -1522,7 +1522,11 @@ async def async_setup_entry(
     )
     entry.async_on_unload(remove_interval)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception, asyncio.CancelledError:
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        raise
     entry.async_create_background_task(
         hass,
         async_run_scheduled_import(skip_sync=True),

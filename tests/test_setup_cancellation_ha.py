@@ -14,8 +14,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest
+from homeassistant.components.date import async_setup_entry as native_date_setup
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
+from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -25,6 +26,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.beestat_statistics.api import BeestatClient
+from custom_components.beestat_statistics.button import BeestatButton
 from custom_components.beestat_statistics.const import (
     API_BASE,
     CONF_API_BASE,
@@ -94,13 +96,22 @@ async def test_cancelled_setup_releases_resources_and_retries(
 
     native_forward = hass.config_entries.async_forward_entry_setups
 
-    async def blocked_forward(*args: Any, **kwargs: Any) -> None:
-        # Hold the awaited forwarding boundary while the real timers and
-        # listeners acquired before it remain active.
+    async def blocked_forward(config_entry, platforms) -> None:
+        await native_forward(config_entry, (Platform.BUTTON,))
+        await native_forward(
+            config_entry, tuple(p for p in platforms if p != Platform.BUTTON)
+        )
+
+    date_task: asyncio.Task[Any] | None = None
+
+    async def blocked_date(*args: Any) -> None:
+        nonlocal date_task
+        date_task = asyncio.current_task()
         forwarding_started.set()
         await release.wait()
-        await native_forward(*args, **kwargs)
+        await native_date_setup(*args)
 
+    old_entities = {}
     setup_task: asyncio.Task[bool] | None = None
     with (
         patch(
@@ -113,10 +124,11 @@ async def test_cancelled_setup_releases_resources_and_retries(
         try:
             if cancel_at == "initial_refresh":
                 client.async_sync_runtime.side_effect = blocked_sync
-            with patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=blocked_forward,
+            with (
+                patch.object(
+                    hass.config_entries, "async_forward_entry_setups", blocked_forward
+                ),
+                patch("homeassistant.components.date.async_setup_entry", blocked_date),
             ):
                 async with asyncio.timeout(10):
                     setup_task = asyncio.create_task(
@@ -124,6 +136,11 @@ async def test_cancelled_setup_releases_resources_and_retries(
                     )
                     if cancel_at == "platform_forwarding":
                         await forwarding_started.wait()
+                        component = hass.data["entity_components"]["button"]
+                        old_platform = component._platforms[entry.entry_id]
+                        old_entities = dict(old_platform.entities)
+                        assert old_entities
+                        assert all(hass.states.get(key) for key in old_entities)
                         client.async_sync_runtime.side_effect = blocked_sync
                         # An import can already be running while platform setup
                         # awaits. Exercise its real entry-owned task as well.
@@ -139,6 +156,14 @@ async def test_cancelled_setup_releases_resources_and_retries(
                         await setup_task
 
             assert entry.state is ConfigEntryState.SETUP_ERROR
+            if cancel_at == "platform_forwarding":
+                assert date_task is not None and date_task.cancelled()
+                assert all(
+                    entry.entry_id not in entity_component._platforms
+                    for entity_component in hass.data["entity_components"].values()
+                )
+                assert not old_platform.entities
+                assert all(component.get_entity(key) is None for key in old_entities)
             assert old_runtime.coordinator.is_closed
             assert acquisition_task is not None and acquisition_task.cancelled()
             assert entry.options is saved_options
@@ -171,6 +196,15 @@ async def test_cancelled_setup_releases_resources_and_retries(
             new_runtime = entry.runtime_data
             assert new_runtime is not old_runtime
             assert not new_runtime.coordinator.is_closed
+            for entity_id, old_entity in old_entities.items():
+                entity = component.get_entity(entity_id)
+                assert entity is not None and entity is not old_entity
+                if isinstance(entity, BeestatButton):
+                    assert entity._coordinator is new_runtime.coordinator
+                    assert entity._importer is new_runtime.importer
+                else:
+                    assert entity.coordinator is new_runtime.coordinator
+                assert hass.states.get(entity_id) is not None
             assert new_runtime.coordinator.local_tz.key == "America/New_York"
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
