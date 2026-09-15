@@ -1542,8 +1542,11 @@ async def _async_rollback_platforms(
     """Release acquired platforms without replacing the setup failure."""
     try:
         await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    except Exception, asyncio.CancelledError:
-        _LOGGER.exception("Error unloading platforms after setup failure")
+    except (Exception, asyncio.CancelledError) as err:  # noqa: BLE001 - preserve setup failure
+        _LOGGER.error(
+            "Error unloading platforms after setup failure (%s)",
+            exception_fingerprint(err),
+        )
 
 
 def _validated_entry_api_base(

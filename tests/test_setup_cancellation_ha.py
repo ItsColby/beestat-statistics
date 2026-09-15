@@ -14,11 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest
-from homeassistant.components.date import async_setup_entry as native_date_setup
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import EntityPlatform, PlatformData
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -105,29 +105,32 @@ async def test_cancelled_setup_releases_resources_and_retries(
         acquisition_started.set()
         await release.wait()
 
-    native_forward = hass.config_entries.async_forward_entry_setups
     native_unload = hass.config_entries.async_unload_platforms
+    native_platform_setup = EntityPlatform.async_setup_entry
+    native_translations = PlatformData.async_load_translations
+    button_loaded = asyncio.Event()
 
     async def rollback(*args: Any) -> bool:
-        result = await native_unload(*args)
-        if rollback_error is not None:
-            raise rollback_error
-        return result
+        return await _unload_then_fail(native_unload, rollback_error, *args)
 
-    async def blocked_forward(config_entry, platforms) -> None:
-        await native_forward(config_entry, (Platform.BUTTON,))
-        await native_forward(
-            config_entry, tuple(p for p in platforms if p != Platform.BUTTON)
-        )
+    async def track_platform(platform, config_entry) -> bool:
+        result = await native_platform_setup(platform, config_entry)
+        if platform.platform_name == DOMAIN and platform.domain == Platform.BUTTON:
+            button_loaded.set()
+        return result
 
     date_task: asyncio.Task[Any] | None = None
 
-    async def blocked_date(*args: Any) -> None:
+    async def blocked_translations(platform_data: PlatformData) -> None:
         nonlocal date_task
-        date_task = asyncio.current_task()
-        forwarding_started.set()
-        await release.wait()
-        await native_date_setup(*args)
+        if (
+            platform_data.platform_name == DOMAIN
+            and platform_data.domain == Platform.DATE
+        ):
+            date_task = asyncio.current_task()
+            forwarding_started.set()
+            await release.wait()
+        await native_translations(platform_data)
 
     old_entities = {}
     setup_task: asyncio.Task[bool] | None = None
@@ -140,14 +143,15 @@ async def test_cancelled_setup_releases_resources_and_retries(
         ) as recorder_write,
     ):
         try:
-            if cancel_at == "initial_refresh":
-                client.async_sync_runtime.side_effect = blocked_sync
+            client.async_sync_runtime.side_effect = (
+                blocked_sync if cancel_at == "initial_refresh" else None
+            )
             with (
                 patch.object(hass.config_entries, "async_unload_platforms", rollback),
+                patch.object(EntityPlatform, "async_setup_entry", track_platform),
                 patch.object(
-                    hass.config_entries, "async_forward_entry_setups", blocked_forward
+                    PlatformData, "async_load_translations", blocked_translations
                 ),
-                patch("homeassistant.components.date.async_setup_entry", blocked_date),
             ):
                 async with asyncio.timeout(10):
                     setup_task = asyncio.create_task(
@@ -155,6 +159,11 @@ async def test_cancelled_setup_releases_resources_and_retries(
                     )
                     if cancel_at == "platform_forwarding":
                         await forwarding_started.wait()
+                        await button_loaded.wait()
+                        assert (
+                            entry.entry_id
+                            in hass.data["entity_components"]["date"]._platforms
+                        )
                         component = hass.data["entity_components"]["button"]
                         old_platform = component._platforms[entry.entry_id]
                         old_entities = dict(old_platform.entities)
@@ -251,3 +260,13 @@ def _assert_replacement_buttons(
         else:
             assert entity.coordinator is runtime.coordinator
         assert hass.states.get(entity_id) is not None
+
+
+async def _unload_then_fail(
+    unload: Any, error: BaseException | None, *args: Any
+) -> bool:
+    """Inject rollback failure after real platform cleanup has completed."""
+    result = await unload(*args)
+    if error is not None:
+        raise error
+    return result
