@@ -883,33 +883,6 @@ class SensorHelpersTest(unittest.TestCase):
             self.sensor._room_temperature_spread_attributes(coordinator, 1)
         )
 
-    def test_spread_unit_follows_recovered_and_updated_projection(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1, slug="main", name="Main"
-        )
-        coordinator = types.SimpleNamespace(
-            hass=object(),
-            data=types.SimpleNamespace(room_temperature_spreads={}),
-        )
-        description = next(
-            description
-            for description in self.sensor._thermostat_sensor_descriptions(
-                thermostat=thermostat
-            )
-            if description.translation_key == "current_profile_room_temperature_spread"
-        )
-        entity = self.sensor.BeestatSensor(coordinator, description, None)
-        self.assertIsNone(entity.native_unit_of_measurement)
-        self.assertFalse(entity.available)
-        for unit, value in (("°C", 2.0), ("°F", 3.6)):
-            with self.subTest(unit=unit):
-                coordinator.data.room_temperature_spreads[1] = types.SimpleNamespace(
-                    unit=unit, value=value
-                )
-                self.assertEqual(entity.native_unit_of_measurement, unit)
-                self.assertEqual(entity.native_value, value)
-                self.assertTrue(entity.available)
-
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(
             {

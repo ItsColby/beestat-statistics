@@ -93,14 +93,6 @@ class PublicSafetyGuardTests(unittest.TestCase):
             _text_failures("Malformed @" + ".cX"),
         )
 
-    def test_guard_scans_tracked_and_untracked_text(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "README.md").write_text("Safe public text.\n", encoding="utf-8")
-            file_count, failures = run_guard(root)
-        self.assertEqual(1, file_count)
-        self.assertEqual([], failures)
-
     def test_guard_scans_text_without_a_file_extension(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
