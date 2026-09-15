@@ -171,13 +171,6 @@ FILTER_NOTICE_SELECTOR = NumberSelector(
 )
 BOOLEAN_SELECTOR = BooleanSelector()
 
-DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
-        vol.Optional(CONF_API_BASE, default=API_BASE): API_BASE_SELECTOR,
-    }
-)
-
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional(
@@ -274,7 +267,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if data is None or options is None:
                     return self.async_show_form(
                         step_id="user",
-                        data_schema=DATA_SCHEMA,
+                        data_schema=_connection_data_schema(
+                            user_input or {}, allow_blank_api_key=False
+                        ),
                         errors=errors,
                     )
                 try:
@@ -305,7 +300,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=DATA_SCHEMA,
+            data_schema=_connection_data_schema(
+                user_input or {}, allow_blank_api_key=False
+            ),
             errors=errors,
         )
 
@@ -527,7 +524,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_show_form(
                         step_id=step_id,
                         data_schema=_connection_data_schema(
-                            entry.data,
+                            {**entry.data, **(user_input or {})},
                             allow_blank_api_key=not require_api_key,
                         ),
                         errors=errors,
@@ -562,7 +559,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=step_id,
             data_schema=_connection_data_schema(
-                entry.data,
+                {**entry.data, **(user_input or {})},
                 allow_blank_api_key=not require_api_key,
             ),
             errors=errors,
@@ -887,6 +884,9 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 for field in (
                     *THERMOSTAT_STABLE_ENTITY_FIELDS,
                     CONF_FILTER_CHANGED_ENTITY_ID,
+                    CONF_FILTER_LIFETIME_RUNTIME_HOURS,
+                    CONF_FILTER_MAX_AGE_DAYS,
+                    CONF_FILTER_NOTICE_DAYS,
                 )
                 if field in defaults
             )
@@ -1234,7 +1234,7 @@ def _connection_data_schema(
     *,
     allow_blank_api_key: bool,
 ) -> vol.Schema:
-    """Return a schema for updating required Beestat connection data."""
+    """Return connection fields without prefilling an API key."""
 
     api_key_field = (
         vol.Required(CONF_API_KEY, default="")
