@@ -45,6 +45,36 @@ class DependencyLightRunnerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "No dependency-light"):
                     runner.dependency_light_test_files()
 
+    def test_home_assistant_lane_uses_pytest_and_preserves_its_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unit = root / "test_unit.py"
+            unit.write_text("import unittest\n", encoding="utf-8")
+            core = root / "test_core.py"
+            core.write_text("from homeassistant import core\n", encoding="utf-8")
+            harness = root / "test_harness.py"
+            harness.write_text(
+                "import pytest_homeassistant_custom_component\n", encoding="utf-8"
+            )
+            (root / "feature_test.py").write_text(
+                "def test_future_native_collection(): pass\n", encoding="utf-8"
+            )
+            for exit_code in (0, 1, 5):
+                with (
+                    self.subTest(exit_code=exit_code),
+                    patch.object(runner, "TESTS", root),
+                    patch.dict(runner.sys.modules, {"pytest": SimpleNamespace()}),
+                    patch(
+                        "pytest.main", create=True, return_value=exit_code
+                    ) as collect,
+                    patch.object(runner, "_load_suite") as unit_loader,
+                ):
+                    self.assertEqual(exit_code, runner.main(["--home-assistant"]))
+                    collect.assert_called_once_with(
+                        [str(root), "-q", f"--ignore={unit}"]
+                    )
+                    unit_loader.assert_not_called()
+
     def test_nested_module_is_reported_instead_of_silently_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -63,6 +93,15 @@ class DependencyLightRunnerTests(unittest.TestCase):
                 ("", "did not collect"),
                 ("def test_example(): pass\n", "outside unittest"),
                 ("async def test_example(): pass\n", "outside unittest"),
+                (
+                    (
+                        "import unittest\n"
+                        "class Kept(unittest.TestCase):\n"
+                        "    def test_kept(self): pass\n"
+                        "def testBehavior(): raise AssertionError('must not vanish')\n"
+                    ),
+                    "outside unittest",
+                ),
             ):
                 path = root / "test_example.py"
                 path.write_text(text, encoding="utf-8")

@@ -27,8 +27,8 @@ name instead of `all` in the shell command.
 | Lane | What it checks |
 | --- | --- |
 | `unit` | Dependency-light tests, Ruff, compilation, JSON and whitespace, public safety, actionlint, ShellCheck and workflow security checks |
-| `minimum` | The complete test tree in the supported-minimum HA environment, plus strict mypy |
-| `current` | The complete test tree in the current target HA environment |
+| `minimum` | Native pytest discovery excluding unit-owned modules in the supported-minimum HA environment, plus strict mypy |
+| `current` | Native pytest discovery excluding unit-owned modules in the current target HA environment |
 | `release` | Hassfest validation of the integration; this lane does not publish |
 
 The minimum is Core `2026.8.0` in
@@ -59,8 +59,11 @@ python -m venv .venv
 .\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
 ```
 
-This selector discovers and omits HA-dependent modules. It fails on invalid or
-empty discovery; both HA lanes execute the full test tree with the real harness.
+The unit selector identifies dependency-light `test_*.py` modules by their imports
+and fails on invalid or empty discovery. Both HA lanes pass `--home-assistant`
+to let pytest discover the complete test tree with the real harness, excluding
+only the modules already assigned to `unit`. New pytest-supported file patterns
+remain covered by native discovery.
 A dependency-light pass does not establish HA compatibility. Report skipped or
 unavailable checks separately from passes.
 

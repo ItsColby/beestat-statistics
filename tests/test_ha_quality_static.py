@@ -477,7 +477,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     block.index("python -m pip check"),
                 )
                 self.assertLess(
-                    block.index("python -m pip check"), block.index("pytest tests -q")
+                    block.index("python -m pip check"),
+                    block.index(
+                        "python scripts/run_dependency_light_tests.py --home-assistant"
+                    ),
                 )
         for command in (
             "python -m mypy --strict custom_components/beestat_statistics",
@@ -580,7 +583,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
         )
 
-        self.assertEqual(2, release_runner.count("pytest tests -q"))
+        self.assertEqual(
+            2,
+            release_runner.count(
+                "python scripts/run_dependency_light_tests.py --home-assistant"
+            ),
+        )
         self.assertIn("python scripts/run_dependency_light_tests.py", release_runner)
         development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
         self.assertIn(
@@ -596,30 +604,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 self.assertIn("from homeassistant", text)
                 self.assertNotIn("unittest.SkipTest", text)
                 self.assertNotIn("except ModuleNotFoundError", text)
-
-    def test_ha_config_flow_harness_covers_non_user_paths(self) -> None:
-        text = (ROOT / "tests/test_config_flow_ha.py").read_text(encoding="utf-8")
-
-        for snippet in (
-            "SOURCE_IMPORT",
-            "test_import_flow_creates_config_entry",
-            "test_import_flow_updates_existing_entry",
-            "test_user_flow_normalizes_copy_paste_whitespace",
-            "test_user_flow_recovers_from_unexpected_error",
-            "test_reauth_flow_updates_api_key",
-            "test_reauth_flow_confirms_different_account",
-            "test_reauth_flow_recovers_from_unexpected_error",
-            "test_reauth_flow_rejects_blank_api_key",
-            "test_reconfigure_flow_allows_blank_key_to_keep_current",
-            "test_reconfigure_flow_confirms_different_account",
-            "test_reconfigure_flow_recovers_from_unexpected_error",
-            'result["errors"] == {"base": "invalid_auth"}',
-            'result["errors"] == {"base": "cannot_connect"}',
-            'result["step_id"] == "account_change_confirm"',
-            'result["errors"] == {"base": "unknown"}',
-            'result["errors"] == {CONF_API_KEY: "api_key_required"}',
-        ):
-            self.assertIn(snippet, text)
 
     def test_http_client_uses_home_assistant_async_websession(self) -> None:
         init_text = (

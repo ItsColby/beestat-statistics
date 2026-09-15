@@ -111,7 +111,7 @@ run_minimum() {
     python -m pip install "mypy==2.3.0"
     python -m pip check
     python -m mypy --strict custom_components/beestat_statistics
-    pytest tests -q
+    python scripts/run_dependency_light_tests.py --home-assistant
   '
 }
 run_current() {
@@ -119,7 +119,7 @@ run_current() {
     python -m pip install "pytest-homeassistant-custom-component==0.13.364"
     python -m pip install --upgrade -r requirements-ha-current.txt
     python -m pip check
-    pytest tests -q
+    python scripts/run_dependency_light_tests.py --home-assistant
   '
 }
 run_release() {
