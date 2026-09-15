@@ -631,6 +631,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
+    _displayed_mapping_fields: tuple[str, ...] = ()
     _source_scope_form_signature: _SourceScopeSignature | None = None
     _pending_scope_selection: tuple[frozenset[int], frozenset[int]] | None = None
     _pending_scope_signature: _SourceScopeSignature | None = None
@@ -874,12 +875,31 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._thermostat_id is None:
             return await self.async_step_thermostat_mapping()
 
+        defaults = _override_defaults(
+            self.config_entry,
+            self._thermostat_id,
+            er.async_get(self.hass),
+            thermostats=True,
+        )
+        if user_input is None:
+            self._displayed_mapping_fields = tuple(
+                field
+                for field in (
+                    *THERMOSTAT_STABLE_ENTITY_FIELDS,
+                    CONF_FILTER_CHANGED_ENTITY_ID,
+                )
+                if field in defaults
+            )
+
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
                 updates = mapping_updates_with_entity_references(
                     er.async_get(self.hass),
-                    user_input,
+                    {
+                        **dict.fromkeys(self._displayed_mapping_fields),
+                        **user_input,
+                    },
                     THERMOSTAT_STABLE_ENTITY_FIELDS,
                 )
             except ValueError:
@@ -902,12 +922,6 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 else:
                     return self.async_create_entry(data=candidate_options)
 
-        defaults = _override_defaults(
-            self.config_entry,
-            self._thermostat_id,
-            er.async_get(self.hass),
-            thermostats=True,
-        )
         defaults = {
             CONF_FILTER_LIFETIME_RUNTIME_HOURS: DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
             CONF_FILTER_MAX_AGE_DAYS: DEFAULT_FILTER_MAX_AGE_DAYS,
@@ -943,7 +957,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                         vol.Optional(CONF_FILTER_NOTICE_DAYS): FILTER_NOTICE_SELECTOR,
                     }
                 ),
-                defaults,
+                user_input if user_input is not None else defaults,
             ),
             errors=errors,
         )
@@ -978,12 +992,28 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._sensor_id is None:
             return await self.async_step_sensor_mapping()
 
+        defaults = _override_defaults(
+            self.config_entry,
+            self._sensor_id,
+            er.async_get(self.hass),
+            thermostats=False,
+        )
+        if user_input is None:
+            self._displayed_mapping_fields = tuple(
+                field
+                for field in (*SENSOR_STABLE_ENTITY_FIELDS, CONF_THERMOSTAT_ID)
+                if field in defaults
+            )
+
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
                 updates = mapping_updates_with_entity_references(
                     er.async_get(self.hass),
-                    user_input,
+                    {
+                        **dict.fromkeys(self._displayed_mapping_fields),
+                        **user_input,
+                    },
                     SENSOR_STABLE_ENTITY_FIELDS,
                 )
             except ValueError:
@@ -1006,12 +1036,6 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 else:
                     return self.async_create_entry(data=candidate_options)
 
-        defaults = _override_defaults(
-            self.config_entry,
-            self._sensor_id,
-            er.async_get(self.hass),
-            thermostats=False,
-        )
         return self.async_show_form(
             step_id="sensor_mapping_detail",
             description_placeholders=_sensor_placeholders(
@@ -1038,7 +1062,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                         vol.Optional(CONF_INCLUDE_VOC): BOOLEAN_SELECTOR,
                     }
                 ),
-                defaults,
+                user_input if user_input is not None else defaults,
             ),
             errors=errors,
         )

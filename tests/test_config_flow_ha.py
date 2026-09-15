@@ -70,6 +70,7 @@ from custom_components.beestat_statistics.const import (
     CONF_CLIMATE_ENTITY_REF,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_CHANGED_ENTITY_ID,
     CONF_FILTER_NOTICE_DAYS,
     CONF_ID,
     CONF_INCLUDE_TEMPERATURE,
@@ -80,6 +81,7 @@ from custom_components.beestat_statistics.const import (
     CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_REF,
+    CONF_THERMOSTAT_ID,
     CONF_THERMOSTATS,
     CONFIG_ENTRY_MINOR_VERSION,
     CONFIG_ENTRY_UNIQUE_ID,
@@ -3108,6 +3110,146 @@ async def test_options_flow_rejects_duplicate_explicit_device_claim(
             CONF_CLIMATE_ENTITY_REF: _stable_reference(second),
         }
     ]
+
+
+@pytest.mark.parametrize("mapping_kind", ["thermostat", "sensor"])
+@pytest.mark.parametrize("saved_mapping_missing", [False, True])
+@pytest.mark.parametrize(
+    "error", ["mapping_source_unavailable", "mapping_device_conflict"]
+)
+async def test_options_flow_preserves_rejected_mapping_input(
+    hass: HomeAssistant, mapping_kind: str, error: str, saved_mapping_missing: bool
+) -> None:
+    """Keep attempted selections and cleared fields through correction and save."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    devices = {
+        name: dr.async_get(hass).async_get_or_create(
+            config_entry_id=source_entry.entry_id,
+            identifiers={("homekit_controller", f"source-device-{name}")},
+        )
+        for name in ("a", "b")
+    }
+    sources = {
+        name: er.async_get(hass).async_get_or_create(
+            domain,
+            "homekit_controller",
+            name,
+            config_entry=source_entry,
+            device_id=devices[device].id,
+            suggested_object_id=name,
+        )
+        for name, domain, device in (
+            ("temperature_a", "sensor", "a"),
+            ("temperature_b", "sensor", "b"),
+            ("occupancy_a", "binary_sensor", "a"),
+            ("motion_a", "binary_sensor", "a"),
+        )
+    }
+    thermostat = mapping_kind == "thermostat"
+    item_id = 1001 if thermostat else 2002
+    section = CONF_THERMOSTATS if thermostat else CONF_SENSORS
+    setting = CONF_FILTER_NOTICE_DAYS if thermostat else CONF_INCLUDE_TEMPERATURE
+    cleared_field = CONF_FILTER_CHANGED_ENTITY_ID if thermostat else CONF_THERMOSTAT_ID
+    saved_options = {
+        section: [
+            {
+                CONF_ID: item_id,
+                CONF_TEMPERATURE_ENTITY_ID: sources["temperature_a"].entity_id,
+                CONF_TEMPERATURE_ENTITY_REF: _stable_reference(
+                    sources["temperature_a"]
+                ),
+                CONF_MOTION_ENTITY_ID: sources["motion_a"].entity_id,
+                entity_reference_field(CONF_MOTION_ENTITY_ID): _stable_reference(
+                    sources["motion_a"]
+                ),
+                setting: 7 if thermostat else True,
+                cleared_field: "input_datetime.filter_changed" if thermostat else 1001,
+                **({CONF_FILTER_CHANGED_DATE: "2026-08-01"} if thermostat else {}),
+            }
+        ]
+    }
+    entry = _add_mock_entry(hass, options=saved_options)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+        ],
+        sensors=[_configured_sensor(sensor_id=2002, name="Room A", slug="room_a")],
+    )
+    if saved_mapping_missing:
+        er.async_get(hass).async_remove(sources["motion_a"].entity_id)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": f"{mapping_kind}_mapping"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ID: str(item_id)}
+    )
+    if saved_mapping_missing:
+        assert CONF_MOTION_ENTITY_ID not in _suggested_values(result)
+    else:
+        assert _suggested_values(result)[CONF_MOTION_ENTITY_ID] == (
+            sources["motion_a"].entity_id
+        )
+    assert _suggested_values(result)[setting] == (7 if thermostat else True)
+    attempted = {
+        CONF_TEMPERATURE_ENTITY_ID: (
+            "sensor.missing"
+            if error == "mapping_source_unavailable"
+            else sources["temperature_b"].entity_id
+        ),
+        CONF_OCCUPANCY_ENTITY_ID: sources["occupancy_a"].entity_id,
+        setting: 0 if thermostat else False,
+    }
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], attempted
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == f"{mapping_kind}_mapping_detail"
+    assert result["errors"] == {"base": error}
+    assert _suggested_values(result) == attempted
+    assert entry.options == saved_options
+    reload.assert_not_called()
+
+    corrected = dict(_suggested_values(result))
+    corrected[CONF_TEMPERATURE_ENTITY_ID] = sources["temperature_a"].entity_id
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], corrected
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    reload.assert_called_once_with(entry.entry_id)
+    saved = result["data"][section][0]
+    _assert_stable_mapping(saved, CONF_TEMPERATURE_ENTITY_ID, sources["temperature_a"])
+    _assert_stable_mapping(saved, CONF_OCCUPANCY_ENTITY_ID, sources["occupancy_a"])
+    assert saved[setting] == attempted[setting]
+    assert cleared_field not in saved
+    if thermostat:
+        assert saved[CONF_FILTER_CHANGED_DATE] == "2026-08-01"
+    if saved_mapping_missing:
+        _assert_stable_mapping(saved, CONF_MOTION_ENTITY_ID, sources["motion_a"])
+        restored = er.async_get(hass).async_get_or_create(
+            "binary_sensor",
+            "homekit_controller",
+            "motion_a",
+            config_entry=source_entry,
+            device_id=devices["a"].id,
+            suggested_object_id="motion_restored",
+        )
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": f"{mapping_kind}_mapping"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_ID: str(item_id)}
+        )
+        assert _suggested_values(result)[CONF_MOTION_ENTITY_ID] == restored.entity_id
+    else:
+        assert CONF_MOTION_ENTITY_ID not in saved
+        assert entity_reference_field(CONF_MOTION_ENTITY_ID) not in saved
 
 
 async def test_options_flow_updates_room_sensor_mapping(hass: HomeAssistant) -> None:
