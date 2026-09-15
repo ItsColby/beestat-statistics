@@ -26,7 +26,12 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
-from custom_components.beestat_statistics import async_setup_entry as native_setup_entry
+from custom_components.beestat_statistics import (
+    PLATFORMS,
+)
+from custom_components.beestat_statistics import (
+    async_setup_entry as native_setup_entry,
+)
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.button import BeestatButton
 from custom_components.beestat_statistics.const import (
@@ -69,9 +74,16 @@ async def test_cancelled_setup_releases_resources_and_retries(
     freezer.move_to(now)
     await hass.config.async_update(time_zone="UTC")
     await hass.async_block_till_done()
-    # Load the integration component before adding its entry, so cancellation
-    # reaches the entry's setup task instead of a shielded component loader.
-    assert await async_setup_component(hass, DOMAIN, {})
+    # Initialize shared components before adding the entry: this test cancels
+    # entry-owned platform setup, not Core's cached global component loaders.
+    assert all(
+        await asyncio.gather(
+            *(
+                async_setup_component(hass, domain, {})
+                for domain in (DOMAIN, *PLATFORMS)
+            )
+        )
+    )
     helper_id = "input_datetime.filter_changed"
     hass.states.async_set(helper_id, "2026-07-01")
     entry = MockConfigEntry(
