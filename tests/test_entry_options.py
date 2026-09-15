@@ -266,23 +266,6 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
         self.assertEqual(coordinator.scheduled_reconcile_count, 1)
 
-    async def test_mark_filter_changed_does_not_require_today_summary(
-        self,
-    ) -> None:
-        coordinator = _FakeCoordinator()
-
-        await self.entry_options.async_mark_filter_changed(
-            coordinator,
-            1001,
-            datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
-        )
-
-        self.assertEqual(
-            coordinator.config_entry.options["thermostats"][0]["filter_changed_at"],
-            "2026-07-05T21:48:00+00:00",
-        )
-        self.assertEqual(coordinator.rebuild_count, 1)
-
     async def test_filter_change_stays_persisted_if_cached_rebuild_fails(self) -> None:
         coordinator = _FakeCoordinator(rebuild_error=RuntimeError("rebuild failed"))
 

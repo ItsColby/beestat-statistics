@@ -215,9 +215,10 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertIn("current: PASS", result.stdout)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_all_success_reports_every_lane(self) -> None:
+    def test_all_lanes_overlap_and_finish_before_cleanup(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
         result = self.run_validation("all", "container")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count(": PASS"), 4)
         kinds = [event["kind"] for event in self.events()]
         self.assertCountEqual(
@@ -225,12 +226,6 @@ class ValidationRunnerTests(unittest.TestCase):
         )
         self.assertLess(kinds.index("actionlint"), kinds.index("unit-python"))
         self.assertEqual(len({event["mount"] for event in self.events()}), 1)
-
-    def test_all_lanes_overlap_and_finish_before_cleanup(self) -> None:
-        self.env["VALIDATION_OVERLAP"] = "1"
-        result = self.run_validation("all", "container")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count(": PASS"), 4)
         self.assertEqual(list(self.scratch.iterdir()), [])
         for lane in ("unit", "minimum", "current", "release"):
             self.assertTrue((self.root / (lane + ".done")).exists())

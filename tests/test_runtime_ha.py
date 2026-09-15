@@ -637,11 +637,15 @@ async def test_real_point_timer_projects_schedule_without_io(
     updates: list[str] = []
     coordinator.async_add_listener(lambda: updates.append("updated"))
 
+    fetched_at = coordinator.data.fetched_at
+    assert coordinator.data.thermostat_metadata[1].current_climate_name == "Hold"
+    assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Sleep"
     coordinator._async_schedule_projection_boundary(coordinator.data)
     freezer.move_to(boundary)
     async_fire_time_changed_exact(hass, boundary)
     await hass.async_block_till_done()
 
+    assert coordinator.data.fetched_at == fetched_at
     assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
     assert coordinator.data.thermostat_metadata[1].current_climate_name == "Hold"
     assert coordinator.data.projected_at == boundary

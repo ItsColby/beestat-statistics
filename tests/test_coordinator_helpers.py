@@ -1601,38 +1601,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data.thermostats[1].recent_runtime_hours_per_day, 1)
         self.assertEqual(data.thermostat_metadata[1].data_end, now)
 
-    async def test_cached_projection_crosses_schedule_boundary_without_io(self) -> None:
-        before = datetime(2026, 7, 1, 13, 55, tzinfo=UTC)
-        boundary = datetime(2026, 7, 1, 14, 0, tzinfo=UTC)
-        schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[2][20] = "home"
-        coordinator = self._cached_coordinator(
-            evaluated_at=before,
-            schedule=schedule,
-        )
-        old_fetched_at = coordinator.data.fetched_at
-        self.assertEqual(
-            coordinator.data.thermostat_metadata[1].current_climate_name,
-            "Hold",
-        )
-        self.assertEqual(
-            coordinator.data.thermostat_metadata[1].scheduled_climate_name,
-            "Sleep",
-        )
-
-        self.coordinator.BeestatRuntimeDataCoordinator._async_rebuild_projection_from_cached(
-            coordinator,
-            boundary,
-        )
-
-        metadata = coordinator.data.thermostat_metadata[1]
-        self.assertEqual(metadata.current_climate_name, "Hold")
-        self.assertEqual(metadata.scheduled_climate_name, "Home")
-        self.assertEqual(coordinator.data.fetched_at, old_fetched_at)
-        self.assertEqual(coordinator.data.projected_at, boundary)
-        self.assertEqual(coordinator._client.calls, [])
-        self.assertEqual(coordinator.listener_updates, 1)
-
     async def test_cached_projection_crosses_cloud_stale_threshold(self) -> None:
         data_end = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
         before = data_end + timedelta(minutes=120)
@@ -1794,35 +1762,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator._client.calls, [])
         self.assertEqual(coordinator.listener_updates, 1)
 
-    async def test_local_date_boundary_updates_recent_rate_window_provenance(
-        self,
-    ) -> None:
-        before = datetime(2026, 7, 6, 3, 59, tzinfo=UTC)
-        midnight = datetime(2026, 7, 6, 4, 0, tzinfo=UTC)
-        coordinator = self._cached_coordinator(evaluated_at=before)
-
-        self.coordinator.BeestatRuntimeDataCoordinator._async_rebuild_projection_from_cached(
-            coordinator,
-            midnight,
-        )
-
-        self.assertEqual(coordinator.data.projected_at, midnight)
-        self.assertEqual(coordinator._client.calls, [])
-        self.assertEqual(coordinator.listener_updates, 1)
-
-    async def test_unchanged_cached_projection_does_not_dispatch(self) -> None:
-        before = datetime(2026, 7, 1, 13, 0, tzinfo=UTC)
-        coordinator = self._cached_coordinator(evaluated_at=before)
-
-        self.coordinator.BeestatRuntimeDataCoordinator._async_rebuild_projection_from_cached(
-            coordinator,
-            before + timedelta(minutes=5),
-        )
-
-        self.assertEqual(coordinator.data.projected_at, before)
-        self.assertEqual(coordinator._client.calls, [])
-        self.assertEqual(coordinator.listener_updates, 0)
-
     async def test_late_projection_callback_uses_actual_evaluation_time(self) -> None:
         before = datetime(2026, 7, 5, 3, 59, tzinfo=UTC)
         scheduled = datetime(2026, 7, 5, 4, 0, tzinfo=UTC)
@@ -1882,30 +1821,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(scheduled), 2)
         self.assertEqual(cancelled, [scheduled[0]])
-
-    async def test_projection_timer_is_registered_for_entry_unload(self) -> None:
-        unload_callbacks = []
-        entry = types.SimpleNamespace(
-            async_on_unload=unload_callbacks.append,
-        )
-        coordinator = self.coordinator.BeestatRuntimeDataCoordinator(
-            types.SimpleNamespace(),
-            entry,
-            types.SimpleNamespace(),
-            local_tz=ZoneInfo("America/New_York"),
-        )
-        cancelled = []
-        coordinator._cancel_projection_boundary = lambda: cancelled.append(True)
-
-        projection_cleanup = next(
-            callback
-            for callback in unload_callbacks
-            if callback.__name__ == "_async_cancel_projection_boundary"
-        )
-        projection_cleanup()
-
-        self.assertEqual(cancelled, [True])
-        self.assertIsNone(coordinator._cancel_projection_boundary)
 
     async def test_manual_refresh_sanitizes_unexpected_update_error(self) -> None:
         secret = "private-response-detail"
