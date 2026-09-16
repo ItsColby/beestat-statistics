@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -245,6 +247,217 @@ class ValidationSelectionTests(unittest.TestCase):
                 source.write_text("uncommitted\n")
                 with self.assertRaisesRegex(ValueError, "clean candidate"):
                     planner.changed_paths(before, after, None)
+
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
+    def test_native_identity_survives_replacements_and_refuses_inherited_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "candidate"
+            root.mkdir()
+            env = dict(
+                os.environ,
+                GIT_AUTHOR_NAME="Validation",
+                GIT_COMMITTER_NAME="Validation",
+                GIT_AUTHOR_EMAIL="validation@example.com",
+                GIT_COMMITTER_EMAIL="validation@example.com",
+            )
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-C", str(root), *args], env=env, text=True
+                ).strip()
+
+            git("-c", "init.templateDir=", "init", "-q")
+            (root / "scripts").mkdir()
+            for relative in (
+                planner.PLANNER,
+                "scripts/verify-release-local.ps1",
+                "scripts/verify-release-local.sh",
+            ):
+                shutil.copy2(ROOT / relative, root / relative)
+            (root / "README.md").write_text("before\n")
+            git("add", ".")
+            before = git("commit-tree", git("write-tree"), "-m", "base")
+            git("update-ref", "HEAD", before)
+            (root / "README.md").write_text("after\n")
+            git("add", ".")
+            after = git(
+                "commit-tree", git("write-tree"), "-p", before, "-m", "candidate"
+            )
+            git("update-ref", "HEAD", after)
+            git("replace", before, after)
+            self.assertEqual("", git("diff", "--name-only", before, after))
+            with patch.object(planner, "ROOT", root):
+                self.assertEqual(
+                    ["README.md"], planner.changed_paths(before, after, None)
+                )
+                self.assertEqual(
+                    "before\n", planner._git("show", before + ":README.md")
+                )
+                for overrides in (
+                    {"GIT_DIR": str(root / ".git")},
+                    {
+                        "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "core.worktree",
+                        "GIT_CONFIG_VALUE_0": str(root),
+                    },
+                ):
+                    with (
+                        self.subTest(overrides=tuple(overrides)),
+                        patch.dict(os.environ, overrides),
+                        self.assertRaisesRegex(ValueError, "Inherited local Git"),
+                    ):
+                        planner.changed_paths(before, after, None)
+                with patch.dict(
+                    os.environ,
+                    {
+                        "GIT_CONFIG_KEY_0": "core.worktree",
+                        "GIT_CONFIG_VALUE_0": "unused",
+                    },
+                ):
+                    self.assertEqual(after, planner._git("rev-parse", "HEAD").strip())
+                nested = root / "nested"
+                nested.mkdir()
+                with (
+                    patch.object(planner, "ROOT", nested),
+                    self.assertRaisesRegex(ValueError, "target root"),
+                ):
+                    planner._git("rev-parse", "HEAD")
+
+            cli = [sys.executable, str(root / planner.PLANNER)]
+            if planner.PLANNER.endswith("run_dependency_light_tests.py"):
+                cli.append("--plan")
+            selection = ["--base", before, "--head", after]
+
+            def run(command, overrides=None):
+                return subprocess.run(
+                    command,
+                    env={**env, **(overrides or {})},
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+
+            for adapter in ([], ["--git-directory", str(root / ".git")]):
+                result = run([*cli, *selection, *adapter])
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(["README.md"], json.loads(result.stdout)["paths"])
+            # A snapshot may legitimately use metadata outside its own root.
+            snapshot = Path(directory) / "snapshot"
+            shutil.copytree(root, snapshot, ignore=shutil.ignore_patterns(".git"))
+            snapshot_cli = [*cli]
+            snapshot_cli[1] = str(snapshot / planner.PLANNER)
+            result = run(
+                [*snapshot_cli, *selection, "--git-directory", str(root / ".git")]
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(["README.md"], json.loads(result.stdout)["paths"])
+
+            wrong = Path(directory) / "wrong"
+            subprocess.run(
+                ["git", "-c", "init.templateDir=", "init", "-q", str(wrong)],
+                check=True,
+                env=env,
+            )
+            wrong_env = {"GIT_DIR": str(wrong / ".git"), "GIT_WORK_TREE": str(wrong)}
+            result = run([*cli, *selection], wrong_env)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("Inherited local Git", result.stderr)
+            powershell = shutil.which("pwsh") or shutil.which("powershell")
+            if powershell:
+                wrapper = [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-File",
+                    str(root / "scripts/verify-release-local.ps1"),
+                    "-PlanOnly",
+                    "-Base",
+                    before,
+                    "-Head",
+                    after,
+                ]
+                result = run(wrapper)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(["README.md"], json.loads(result.stdout)["paths"])
+                result = run(wrapper, wrong_env)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Inherited local Git", result.stderr)
+            if os.name == "posix" and shutil.which("bash"):
+                wrapper = [
+                    "bash",
+                    str(root / "scripts/verify-release-local.sh"),
+                    "affected",
+                    "native",
+                    str(root / ".git"),
+                    *selection,
+                    "--plan-only",
+                ]
+                result = run(wrapper, {"VALIDATION_PYTHON": sys.executable})
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(["README.md"], json.loads(result.stdout)["paths"])
+                result = run(
+                    wrapper, {**wrong_env, "VALIDATION_PYTHON": sys.executable}
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("Inherited local Git", result.stderr)
+
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
+    def test_cli_keeps_dependency_comparison_when_base_ref_moves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = dict(
+                os.environ,
+                GIT_AUTHOR_NAME="Validation",
+                GIT_COMMITTER_NAME="Validation",
+                GIT_AUTHOR_EMAIL="validation@example.com",
+                GIT_COMMITTER_EMAIL="validation@example.com",
+            )
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-C", str(root), *args], env=env, text=True
+                ).strip()
+
+            git("-c", "init.templateDir=", "init", "-q")
+            relative = "scripts/verify-release-local.sh"
+            runner = root / relative
+            runner.parent.mkdir()
+            current = (ROOT / relative).read_text()
+            pin = planner.runner_dependencies(current)["minimum"]
+            runner.write_text(current.replace(pin, pin + ".previous"))
+            git("add", ".")
+            before = git("commit-tree", git("write-tree"), "-m", "base")
+            git("update-ref", "HEAD", before)
+            git("update-ref", "refs/heads/moving-base", before)
+            runner.write_text(current)
+            git("add", ".")
+            after = git(
+                "commit-tree", git("write-tree"), "-p", before, "-m", "candidate"
+            )
+            git("update-ref", "HEAD", after)
+            native_changed_paths = planner.changed_paths
+
+            def move_after_diff(*args):
+                paths = native_changed_paths(*args)
+                git("update-ref", "refs/heads/moving-base", after)
+                return paths
+
+            entrypoint = getattr(planner, "plan_main", None) or planner.main
+            output = io.StringIO()
+            with (
+                patch.object(planner, "ROOT", root),
+                patch.object(planner, "changed_paths", side_effect=move_after_diff),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(
+                    0, entrypoint(["--base", "moving-base", "--head", after])
+                )
+            plan = json.loads(output.getvalue())
+            self.assertEqual([relative], plan["paths"])
+            self.assertTrue(plan["jobs"]["minimum"])
+            self.assertFalse(plan["jobs"]["current"])
 
     def test_missing_input_traversal_and_dirty_ref_candidate_fail(self):
         with self.assertRaises(ValueError):

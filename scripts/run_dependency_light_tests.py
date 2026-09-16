@@ -179,12 +179,50 @@ EXTRA_DEPENDENCIES: dict[str, set[str]] = {
 JOBS = ("unit", "minimum", "current", "release", "hacs")
 
 
+def _reject_git_overrides() -> None:
+    """Repository inputs must come from the caller's explicit target."""
+    local_names = {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    }
+    # GIT_CONFIG_KEY/VALUE entries are inert without GIT_CONFIG_COUNT; native
+    # hook cleanup unsets the count and may leave those unused entries behind.
+    inherited = sorted(name for name in os.environ if name in local_names)
+    if inherited:
+        raise ValueError(
+            "Inherited local Git overrides are not supported: " + ", ".join(inherited)
+        )
+
+
 def _git(*args: str, git_directory: str | None = None) -> str:
-    command = ["git", "--no-optional-locks"]
+    _reject_git_overrides()
+    command = ["git", "--no-replace-objects", "--no-optional-locks"]
     if git_directory:
-        command.extend([f"--git-dir={git_directory}", f"--work-tree={ROOT}"])
+        directory = Path(git_directory).resolve(strict=True)
+        if not directory.is_dir():
+            raise ValueError("--git-directory must identify a Git metadata directory")
+        command.extend([f"--git-dir={directory}", f"--work-tree={ROOT}"])
     else:
         command.extend(["-C", str(ROOT)])
+    actual_root = subprocess.check_output(
+        [*command, "rev-parse", "--show-toplevel"], text=True
+    ).strip()
+    if Path(actual_root).resolve() != ROOT.resolve():
+        raise ValueError("Git target root does not match the planner source root")
     return subprocess.check_output([*command, *args], text=True)
 
 
@@ -702,11 +740,29 @@ def plan_main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
+        _reject_git_overrides()
+        # Keep dependency-content reads on the same immutable base as the diff.
+        base_oid = (
+            None
+            if args.full
+            else _git(
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                f"{args.base or 'HEAD'}^{{commit}}",
+                git_directory=args.git_directory,
+            ).strip()
+        )
         plan = build_plan(
             []
             if args.full
-            else changed_paths(args.base, args.head, args.path, args.git_directory),
-            base=args.base or "HEAD",
+            else changed_paths(
+                base_oid if args.base else None,
+                args.head,
+                args.path,
+                args.git_directory,
+            ),
+            base=base_oid or "HEAD",
             git_directory=args.git_directory,
         )
         if args.full:
