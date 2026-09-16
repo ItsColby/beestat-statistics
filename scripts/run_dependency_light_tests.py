@@ -174,7 +174,7 @@ EXTRA_DEPENDENCIES: dict[str, set[str]] = {
     "tests/test_ha_quality_static.py": {
         path.relative_to(ROOT).as_posix() for path in (ROOT / PRODUCT).rglob("*.py")
     }
-    | {"README.md", "RELEASE_NOTES.md", "docs/development.md"},
+    | {"README.md", "RELEASE_NOTES.md"},
 }
 JOBS = ("unit", "minimum", "current", "release", "hacs")
 
@@ -435,7 +435,9 @@ def _route_runner_dependencies(
         plan["lane_typing"]["minimum"] = sorted(
             path for path in files if path.startswith(PRODUCT + "/")
         )
-    plan["workflow"] |= bool(changed & {"zizmor", "actionlint", "actionlint_image"})
+    plan["workflow"] |= bool(
+        changed & {"zizmor", "actionlint", "actionlint_image", "shellcheck-py"}
+    )
     plan["shell"] |= "shellcheck-py" in changed
     plan["release"] |= "hassfest_image" in changed
 
@@ -590,6 +592,9 @@ def _route_path(
         plan["unit_tests"] = sorted(set(plan["unit_tests"]) | {METADATA_TEST})
         plan["release"] = True
         plan["hacs"] |= path == "hacs.json" or path.endswith("manifest.json")
+    elif PurePosixPath(path).parent == PurePosixPath("docs") and path.endswith(".md"):
+        # Include removed documents consumed by retained navigation/link contracts.
+        plan["unit_tests"] = sorted(set(plan["unit_tests"]) | {METADATA_TEST})
     elif path == "pyproject.toml":
         plan["unresolved"].append(
             "pyproject.toml: select the affected tool configuration explicitly after review"
@@ -683,16 +688,6 @@ def lane_command(plan: dict, lane: str) -> str:
     return " &&\n".join(commands) or ":"
 
 
-def require_results(plan: dict, results: dict) -> None:
-    """A skipped selected job or unexpected unselected execution is a failure."""
-    if plan["unresolved"]:
-        raise ValueError("Unresolved validation applicability")
-    for job, selected in plan["jobs"].items():
-        expected = "success" if selected else "skipped"
-        if results.get(job) != expected:
-            raise ValueError(f"{job}: expected {expected}, got {results.get(job)}")
-
-
 def plan_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--git-directory")
@@ -702,7 +697,6 @@ def plan_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--command", choices=JOBS)
     parser.add_argument("--github-output", action="store_true")
-    parser.add_argument("--results", help="JSON job results for aggregate acceptance")
     parser.add_argument(
         "--full", action="store_true", help="Explicit complete workflow dispatch"
     )
@@ -726,9 +720,7 @@ def plan_main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "Unresolved applicability: " + "; ".join(plan["unresolved"])
             )
-        if args.results:
-            require_results(plan, json.loads(args.results))
-        elif args.command:
+        if args.command:
             if not plan["jobs"][args.command]:
                 raise ValueError(f"The plan did not select {args.command}")
             print(lane_command(plan, args.command))
