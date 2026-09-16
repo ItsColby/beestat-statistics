@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -77,6 +79,12 @@ if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "action
         if time.monotonic() > deadline:
             raise SystemExit("The four validation lanes did not overlap")
         time.sleep(0.01)
+    if os.environ.get("VALIDATION_INTERRUPT"):
+        while not (events / "interrupt.sent").exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("The runner was not interrupted")
+            time.sleep(0.01)
+        time.sleep(0.1)
     failure = os.environ.get("VALIDATION_FAIL")
     failed_lane = "unit" if failure == "unit-python" else failure
     if failed_lane in lanes and failed_lane != lane:
@@ -229,6 +237,53 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual(list(self.scratch.iterdir()), [])
         for lane in ("unit", "minimum", "current", "release"):
             self.assertTrue((self.root / (lane + ".done")).exists())
+
+    def test_interrupt_preserves_status_and_waits_before_cleanup(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        self.env["VALIDATION_INTERRUPT"] = "1"
+        lanes = ("unit", "minimum", "current", "release")
+        for interrupt in (signal.SIGINT, signal.SIGTERM):
+            for failure in ("", "minimum"):
+                with self.subTest(interrupt=interrupt, failure=failure):
+                    for marker in self.root.glob("*.started"):
+                        marker.unlink()
+                    for marker in self.root.glob("*.done"):
+                        marker.unlink()
+                    (self.root / "interrupt.sent").unlink(missing_ok=True)
+                    self.env["VALIDATION_FAIL"] = failure
+                    with subprocess.Popen(
+                        [str(BASH), str(self.runner), "all", "container"],
+                        cwd=self.root,
+                        env=self.env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    ) as process:
+                        try:
+                            deadline = time.monotonic() + 10
+                            while not all(
+                                (self.root / f"{lane}.started").exists()
+                                for lane in lanes
+                            ):
+                                if (
+                                    process.poll() is not None
+                                    or time.monotonic() > deadline
+                                ):
+                                    self.fail("The four validation lanes did not start")
+                                time.sleep(0.01)
+                            process.send_signal(interrupt)
+                            (self.root / "interrupt.sent").touch()
+                            stdout, stderr = process.communicate(timeout=30)
+                        finally:
+                            if process.poll() is None:
+                                process.kill()
+                                process.communicate(timeout=10)
+                    for lane in lanes:
+                        self.assertTrue(
+                            (self.root / f"{lane}.done").exists(), stdout + stderr
+                        )
+                    self.assertEqual(process.returncode, 128 + interrupt)
+                    self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_failure_retains_every_lane_result_and_waits_for_all_workers(self) -> None:
         self.env["VALIDATION_OVERLAP"] = "1"

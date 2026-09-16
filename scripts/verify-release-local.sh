@@ -19,7 +19,11 @@ source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$source_root"
 if [[ "$backend" == container ]]; then
   repo_root="$(mktemp -d)"
-  trap 'rm -rf "$repo_root"' EXIT
+  # An interrupted wait can leave lanes using the snapshot. Drain this
+  # runner's jobs before deleting it, and retain the interrupt exit status.
+  trap 'trap "" INT TERM; wait; rm -rf "$repo_root"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   source_git=(git -C "$source_root")
   if [[ -n "$source_git_dir" ]]; then
     source_git=(git --git-dir="$source_git_dir" --work-tree="$source_root")

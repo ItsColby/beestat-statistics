@@ -44,7 +44,9 @@ The container backend validates one read-only snapshot of tracked and nonignored
 new files, including uncommitted edits. Its images and tool versions are pinned
 in the runner. `all` runs independent containers concurrently and returns failure
 if any lane fails. Each Python environment is isolated; the named Podman pip
-volume caches downloads, not validation results.
+volume caches downloads, not validation results. On interruption, the container
+runner waits for active lanes before removing the snapshot and returns the
+interrupt status; this wait has no shutdown deadline.
 
 CI passes `native` as the shell runner's second argument. That backend needs
 Python, Go for actionlint and Docker for Hassfest, and runs its selected lanes
