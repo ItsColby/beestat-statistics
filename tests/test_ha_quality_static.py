@@ -439,6 +439,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     block,
                     r'python -m pip install "pytest-homeassistant-custom-component==[0-9.]+"',
                 )
+                # Model the actual command assembly: installations, then checks.
+                setup = block[block.index("  run_python '") :]
+                checks = block[
+                    block.index("  local checks=") : block.index('  if [[ "$mode"')
+                ]
+                block = setup + checks
                 install = f"python -m pip install --upgrade -r {requirements}"
                 self.assertLess(
                     block.index("pytest-homeassistant-custom-component"),
@@ -1024,7 +1030,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("requirements-ha-current.txt", release_runner)
         self.assertIn("name: Release gate", validate)
         self.assertIn(
-            "needs: [unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]",
+            "needs: [plan, unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]",
             validate,
         )
 
