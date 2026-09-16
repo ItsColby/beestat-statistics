@@ -408,24 +408,33 @@ apt-get() {
     def test_native_actionlint_provisions_shellcheck_and_cleans_failures(self) -> None:
         (self.bin / "shellcheck").unlink()
         for failure, expected in (
+            ("python", ["python"]),
             ("pip", ["python", "pip"]),
             ("go", ["python", "pip", "go"]),
             ("actionlint", ["python", "pip", "go", "actionlint", "shellcheck"]),
+            ("", ["python", "pip", "go", "actionlint", "shellcheck"]),
         ):
             with self.subTest(failure=failure):
                 self.log.unlink(missing_ok=True)
                 self.env["VALIDATION_FAIL"] = failure
                 result = self.run_validation("unit", "native")
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(
+                    result.returncode,
+                    1 if failure else 0,
+                    result.stdout + result.stderr,
+                )
                 events = self.events()
-                self.assertEqual([event["kind"] for event in events], expected)
+                kinds = [event["kind"] for event in events]
+                self.assertEqual(kinds if failure else kinds[:5], expected)
                 self.assertEqual(list(self.scratch.iterdir()), [])
-                if failure == "actionlint":
-                    self.assertEqual(events[-2]["cwd"], str(self.repo))
+                if not failure or failure == "actionlint":
+                    self.assertEqual(events[3]["cwd"], str(self.repo))
                     self.assertEqual(
-                        Path(str(events[-1]["path"])).parent,
-                        Path(str(events[-2]["path"])).parent,
+                        Path(str(events[4]["path"])).parent,
+                        Path(str(events[3]["path"])).parent,
                     )
+                if not failure:
+                    self.assertEqual(sum("environment" in event for event in events), 2)
 
     def test_native_lanes_have_distinct_temporary_environments(self) -> None:
         for lane in ("minimum", "current"):
