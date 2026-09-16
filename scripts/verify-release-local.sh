@@ -82,9 +82,11 @@ run_actionlint() (
     local bin
     bin="$(mktemp -d)"
     trap 'rm -rf "$bin"' EXIT
-    GOBIN="$bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+    python -m venv "$bin"
+    "$bin/bin/python" -m pip install "shellcheck-py==0.11.0.1"
+    GOBIN="$bin/bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
     cd "$repo_root"
-    "$bin/actionlint"
+    PATH="$bin/bin:$PATH" "$bin/bin/actionlint"
   else
     podman run --rm -v "$repo_root:/repo:ro" -w /repo "$actionlint_image"
   fi

@@ -63,9 +63,17 @@ elif name == "python" and args[:2] == ["-m", "venv"]:
     event["environment"] = args[2]
 elif name == "python" and args[:2] == ["-m", "pip"]:
     kind = "pip"
+    if any(arg.startswith("shellcheck-py==") for arg in args):
+        target = Path(sys.argv[0]).parent / "shellcheck"
+        shutil.copyfile(__file__, target)
+        target.chmod(0o755)
 event["kind"] = kind
 with open(os.environ["VALIDATION_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(event) + "\n")
+if name == "actionlint":
+    shellcheck = shutil.which("shellcheck")
+    assert shellcheck == str(Path(sys.argv[0]).parent / "shellcheck")
+    subprocess.run([shellcheck, "--version"], check=True)
 if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "actionlint":
     events = Path(os.environ["VALIDATION_LOG"]).parent
     lane = "unit" if kind == "unit-python" else kind
@@ -397,15 +405,27 @@ apt-get() {
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.events()[0]["kind"], "release")
 
-    def test_native_actionlint_uses_repo_cwd_and_cleans_failure(self) -> None:
-        self.env["VALIDATION_FAIL"] = "actionlint"
-        result = self.run_validation("unit", "native")
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(
-            [event["kind"] for event in self.events()], ["go", "actionlint"]
-        )
-        self.assertEqual(self.events()[-1]["cwd"], str(self.repo))
-        self.assertEqual(list(self.scratch.iterdir()), [])
+    def test_native_actionlint_provisions_shellcheck_and_cleans_failures(self) -> None:
+        (self.bin / "shellcheck").unlink()
+        for failure, expected in (
+            ("pip", ["python", "pip"]),
+            ("go", ["python", "pip", "go"]),
+            ("actionlint", ["python", "pip", "go", "actionlint", "shellcheck"]),
+        ):
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                self.env["VALIDATION_FAIL"] = failure
+                result = self.run_validation("unit", "native")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                events = self.events()
+                self.assertEqual([event["kind"] for event in events], expected)
+                self.assertEqual(list(self.scratch.iterdir()), [])
+                if failure == "actionlint":
+                    self.assertEqual(events[-2]["cwd"], str(self.repo))
+                    self.assertEqual(
+                        Path(str(events[-1]["path"])).parent,
+                        Path(str(events[-2]["path"])).parent,
+                    )
 
     def test_native_lanes_have_distinct_temporary_environments(self) -> None:
         for lane in ("minimum", "current"):

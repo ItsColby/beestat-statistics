@@ -50,8 +50,10 @@ interrupt status; this wait has no shutdown deadline. Only the unit container
 provisions Git; the Home Assistant lanes exclude the Git-dependent unit tests.
 
 CI passes `native` as the shell runner's second argument. That backend needs
-Python, Go for actionlint and Docker for Hassfest, and runs its selected lanes
-sequentially. The PowerShell wrapper resolves WSL paths and the checkout's Git
+Python with pip and venv, Go for actionlint and Docker for Hassfest, and runs its
+selected lanes sequentially in separate temporary Python environments.
+Actionlint provisions the pinned ShellCheck version in its own temporary
+environment. The PowerShell wrapper resolves WSL paths and the checkout's Git
 directory; it is the supported Windows route to the container checks.
 
 For a quick dependency-light check without containers:
