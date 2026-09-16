@@ -327,12 +327,63 @@ class ValidationRunnerTests(unittest.TestCase):
                 "type=volume,source=beestat-statistics-validation-pip,target=/pip-cache",
             )
             self.assertIn("python -m pip install", args[-1])
+            self.assertEqual(
+                args[-2], "true" if event["kind"] == "unit-python" else "false"
+            )
             if event["kind"] in {"minimum", "current"}:
                 self.assertIn("python -m pip check", args[-1])
                 self.assertIn(
                     "python scripts/run_dependency_light_tests.py --home-assistant",
                     args[-1],
                 )
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_container_provisioning_and_payload_failures(self) -> None:
+        result = self.run_validation("all", "container")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = {
+            event["kind"]: event["args"]
+            for event in self.events()
+            if event["kind"] in {"unit-python", "minimum", "current"}
+        }
+        apt_calls = ["apt update -qq", "apt install -y -qq --no-install-recommends git"]
+        for lane, failure, payload_status, expected_status, expected_calls in (
+            ("unit-python", "", 0, 0, [*apt_calls, "payload"]),
+            ("minimum", "", 0, 0, ["payload"]),
+            ("current", "", 0, 0, ["payload"]),
+            ("unit-python", "update", 0, 37, apt_calls[:1]),
+            ("unit-python", "install", 0, 41, apt_calls),
+            ("minimum", "", 43, 43, ["payload"]),
+        ):
+            with self.subTest(
+                lane=lane, failure=failure, payload_status=payload_status
+            ):
+                args = commands[lane]
+                command = args[args.index("bash") :]
+                command[0] = str(BASH)
+                command[2] = r"""
+apt-get() {
+  printf 'apt %s\n' "$*" >&2
+  if [[ "$PROVISION_FAIL" == update && "$1" == update ]]; then return 37; fi
+  if [[ "$PROVISION_FAIL" == install && "$1" == install ]]; then return 41; fi
+  return 0
+}
+""" + command[2]
+                command[-1] = 'printf "payload\\n" >&2; exit "$PAYLOAD_STATUS"'
+                probe = subprocess.run(
+                    command,
+                    env={
+                        **os.environ,
+                        "PROVISION_FAIL": failure,
+                        "PAYLOAD_STATUS": str(payload_status),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertEqual(probe.returncode, expected_status, probe.stderr)
+                self.assertEqual(probe.stderr.splitlines(), expected_calls)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_failed_snapshot_does_not_run_validation(self) -> None:

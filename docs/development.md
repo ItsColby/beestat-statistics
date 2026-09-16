@@ -46,7 +46,8 @@ in the runner. `all` runs independent containers concurrently and returns failur
 if any lane fails. Each Python environment is isolated; the named Podman pip
 volume caches downloads, not validation results. On interruption, the container
 runner waits for active lanes before removing the snapshot and returns the
-interrupt status; this wait has no shutdown deadline.
+interrupt status; this wait has no shutdown deadline. Only the unit container
+provisions Git; the Home Assistant lanes exclude the Git-dependent unit tests.
 
 CI passes `native` as the shell runner's second argument. That backend needs
 Python, Go for actionlint and Docker for Hassfest, and runs its selected lanes

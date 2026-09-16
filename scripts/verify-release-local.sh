@@ -49,6 +49,7 @@ python_image="docker.io/library/python@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde1
 actionlint_image="docker.io/rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
 hassfest_image="ghcr.io/home-assistant/hassfest@sha256:8cd7bdb8f82430c2c13703290b1fc38dcc99957dd76ad3f230035ecee70b672d"
 run_python() (
+  local needs_git="${2:-true}"
   if [[ "$backend" == native ]]; then
     # Keep support lanes isolated, including when running all lanes locally.
     local environment
@@ -68,8 +69,12 @@ run_python() (
       -v "$repo_root:/workspace:ro" -w /workspace \
       --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \
       "$python_image" bash -euc \
-      'apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && bash -euc "$1"' \
-      local-validation "$1"
+      'if [[ "$1" == true ]]; then
+         apt-get update -qq || exit "$?"
+         apt-get install -y -qq --no-install-recommends git >/dev/null || exit "$?"
+       fi
+       bash -euc "$2"' \
+      local-validation "$needs_git" "$1"
   fi
 )
 run_actionlint() (
@@ -116,7 +121,7 @@ run_minimum() {
     python -m pip check
     python -m mypy --strict custom_components/beestat_statistics
     python scripts/run_dependency_light_tests.py --home-assistant
-  '
+  ' false
 }
 run_current() {
   run_python '
@@ -124,7 +129,7 @@ run_current() {
     python -m pip install --upgrade -r requirements-ha-current.txt
     python -m pip check
     python scripts/run_dependency_light_tests.py --home-assistant
-  '
+  ' false
 }
 run_release() {
   if [[ "$backend" == native ]]; then
