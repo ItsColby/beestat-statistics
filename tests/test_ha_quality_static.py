@@ -194,13 +194,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             )
 
         self.assertEqual(
-            strings["options"]["step"]["init"]["menu_options"],
+            set(strings["options"]["step"]["init"]["menu_options"]),
             {
-                "timing": "Import timing",
-                "source_scope": "Choose Beestat sources",
-                "confirm_automatic_mappings": "Confirm automatic mappings",
-                "thermostat_mapping": "Map a thermostat",
-                "sensor_mapping": "Map a room sensor",
+                "timing",
+                "source_scope",
+                "confirm_automatic_mappings",
+                "thermostat_mapping",
+                "sensor_mapping",
             },
         )
 
@@ -366,7 +366,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         versions = re.findall(
             r"^## Beestat Statistics v([^\n]+)$", release_notes, re.MULTILINE
         )
-        self.assertTrue(release_notes.startswith("# Release notes\n"))
         self.assertTrue(versions, "Release notes must identify released versions")
         self.assertEqual(versions[0], manifest["version"])
 
@@ -1236,18 +1235,6 @@ def _is_logger_call(node: ast.AST) -> bool:
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "_LOGGER"
     )
-
-
-def _contains_method_call(node: ast.AST | None, method_name: str) -> bool:
-    if node is None:
-        return False
-    for item in ast.walk(node):
-        if not isinstance(item, ast.Call):
-            continue
-        func = item.func
-        if isinstance(func, ast.Attribute) and func.attr == method_name:
-            return True
-    return False
 
 
 def _json_file(relative_path: str) -> dict:

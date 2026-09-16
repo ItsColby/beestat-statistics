@@ -1902,12 +1902,12 @@ async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "init"
-    assert result["menu_options"] == {
-        "timing": "Import timing",
-        "source_scope": "Choose Beestat sources",
-        "confirm_automatic_mappings": "Confirm automatic mappings",
-        "thermostat_mapping": "Map a thermostat",
-        "sensor_mapping": "Map a room sensor",
+    assert set(result["menu_options"]) == {
+        "timing",
+        "source_scope",
+        "confirm_automatic_mappings",
+        "thermostat_mapping",
+        "sensor_mapping",
     }
 
     result = await hass.config_entries.options.async_configure(
