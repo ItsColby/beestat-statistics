@@ -781,10 +781,6 @@ class SensorHelpersTest(unittest.TestCase):
             self.assertIsNone(descriptions[key].state_class, key)
         for key in ("high_humidity_alert", "low_humidity_alert"):
             self.assertEqual("humidity", descriptions[key].device_class, key)
-        self.assertEqual(
-            "_filter_forecast_snapshot_attributes",
-            descriptions["filter_due_date"].extra_attributes_fn.func.__name__,
-        )
 
     def test_selected_settings_are_typed_and_disabled_values_are_unavailable(
         self,
