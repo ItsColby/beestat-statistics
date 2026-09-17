@@ -886,6 +886,65 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
         self.assertIsNone(self.store.value["series"][ID]["blocked_from"])
 
+    async def test_provisional_tail_preserves_prefix_and_clears_complete_native_suffix(
+        self,
+    ):
+        initial = source((0.25, 0.5, 0.75, 0.5))
+        await self.adopt(initial)
+        await self.writer.async_import((initial,), identity())
+        limited = source((0.25, None))
+        limited = replace(
+            limited,
+            hours=(limited.hours[0], replace(limited.hours[1], reason="provisional")),
+        )
+        await self.writer.async_import((limited,), identity())
+        retained = self.recorder.rows[ID]
+        self.assertEqual(0.25, retained[START].sum)
+        self.assertTrue(
+            all(row.cleared for instant, row in retained.items() if instant > START)
+        )
+        record = self.store.value["series"][ID]
+        self.assertEqual(START.isoformat(), record["checkpoint"]["start"])
+        self.assertEqual((START + HOUR).isoformat(), record["blocked_from"])
+
+        advancing = source((0.25, 0.5, None))
+        advancing = replace(
+            advancing,
+            hours=(
+                *advancing.hours[:2],
+                replace(advancing.hours[2], reason="provisional"),
+            ),
+        )
+        await self.writer.async_import((advancing,), identity())
+        self.assertEqual(0.75, self.recorder.rows[ID][START + HOUR].sum)
+        self.assertIsNone(self.store.value["series"][ID]["blocked_from"])
+        result = self.writer.coverage(start=START, end=START + 3 * HOUR)["series"][ID]
+        self.assertEqual(
+            ["verified", "verified", "provisional"],
+            [hour["coverage"] for hour in result["hours"]],
+        )
+
+    async def test_corrected_prefix_cannot_keep_native_totals_in_provisional_tail(self):
+        initial = source((0.25, 0.5, 0.75))
+        await self.adopt(initial)
+        await self.writer.async_import((initial,), identity())
+        corrected = source((0.5, None))
+        corrected = replace(
+            corrected,
+            hours=(
+                corrected.hours[0],
+                replace(corrected.hours[1], reason="provisional"),
+            ),
+        )
+        await self.writer.async_import((corrected,), identity())
+        self.assertTrue(all(row.cleared for row in self.recorder.rows[ID].values()))
+        self.assertEqual(
+            START.isoformat(), self.store.value["series"][ID]["blocked_from"]
+        )
+        self.assertIsNone(self.store.value["series"][ID]["checkpoint"])
+        result = self.writer.coverage(start=START, end=START + 3 * HOUR)["series"][ID]
+        self.assertEqual(0, result["complete_observed_hours"])
+
     async def test_epoch_without_checkpoint_remains_first_unverified_boundary(self):
         await self.adopt()
         later = source((0.5,), start=START + 24 * HOUR)

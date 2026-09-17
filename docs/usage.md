@@ -163,8 +163,10 @@ statistic's active ID and segment boundary, per-hour values and coverage,
 `complete_observed_hours`, `requested_hours`, `complete`, and
 `observed_hour_average`. The average divides only by complete observed hours;
 it is null when none are verified. Show the observed count when a requested window
-is incomplete. The current open hour is provisional. Pending corrections suppress
-affected values before stale Recorder rows finish clearing.
+is incomplete. The current open hour and trailing hours beyond the observed source
+horizon are provisional. Complete earlier hours can advance while those later
+observations are pending. Pending corrections suppress affected values before
+stale Recorder rows finish clearing.
 
 If a cumulative gap cannot be repaired from observations and saved continuity,
 resumption requires a deliberate new segment. Its ID adds an explicit UTC epoch,

@@ -101,7 +101,12 @@ class HourCoverage:
 
 @dataclass(frozen=True, slots=True)
 class SeriesImportPlan:
-    """Calculated rows and reasons requiring reconciliation before any submission."""
+    """Calculated rows and reasons requiring reconciliation before submission.
+
+    continuity_break is the first uncalculated cumulative hour. A terminal
+    provisional boundary alone does not block a complete prefix, but still
+    identifies any retained native suffix that cannot currently be verified.
+    """
 
     statistic_id: str
     calculated_rows: tuple[HourlyStatisticRow, ...]
@@ -178,8 +183,9 @@ def plan_hourly_import(
     """Reconcile supplied hourly buckets against detached native row projections.
 
     Checkpoints must be supplied explicitly. No legacy seed, invented baseline,
-    automatic reset, deletion or epoch allocation is performed. Cumulative gaps
-    withhold the series' entire batch, including its calculable prefix.
+    automatic reset, deletion or epoch allocation is performed. Observed cumulative
+    gaps withhold the entire batch. A trailing provisional window permits the
+    complete prefix only when no unverified native suffix survives.
     """
 
     ids = [item.statistic_id for item in series]
@@ -375,9 +381,12 @@ def _cumulative_rows(
         return (), _utc_hour(item.hours[0].start)
     state, total = basis
     rows: list[HourlyStatisticRow] = []
-    for hour in item.hours:
+    for index, hour in enumerate(item.hours):
         if hour.reason != "ready" or hour.values is None:
-            reasons.add("cumulative_source_gap")
+            if hour.reason != "provisional" or any(
+                later.reason != "provisional" for later in item.hours[index + 1 :]
+            ):
+                reasons.add("cumulative_source_gap")
             return tuple(rows), _utc_hour(hour.start)
         increment = hour.values.get("increment")
         if not _finite(increment) or increment is None or increment < 0:

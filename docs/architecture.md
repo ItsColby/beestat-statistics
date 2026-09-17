@@ -130,8 +130,15 @@ fabricated zero predecessor. A locally unblocked plan is still only proposed dat
 Use the same adopted ID when actual observations and a trusted exact predecessor
 can reconstruct the complete affected cumulative suffix. Recompute every affected
 retained total; changing only the corrected hour leaves later totals wrong.
-A source gap holds the cumulative batch. When stale values survive, the writer
-records the invalidation boundary and clears the complete affected suffix,
+An observed source gap holds the cumulative batch. A contiguous trailing run of
+provisional hours beyond the observed horizon does not hold its complete prefix:
+the writer can publish that prefix and advance its checkpoint under the same
+epoch. The unobserved tail stays provisional and contributes no values or hours
+to the observed average. A provisional hour followed by a non-provisional hour
+still breaks continuity. The first uncalculated hour also remains the native
+suffix boundary, so previously populated rows within or beyond a provisional tail
+must be reconciled before the prefix can advance. When stale values survive, the
+writer records the invalidation boundary and clears the complete affected suffix,
 including retained rows beyond the fetched source window. It never silently
 truncates that suffix. Measurement corrections invalidate their affected hours.
 

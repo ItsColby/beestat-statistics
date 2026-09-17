@@ -74,6 +74,18 @@ def _snapshot(series, rows=(), *, complete=True):
     return planner.RecorderSnapshot(tuple(rows), dict(series.metadata), complete)
 
 
+def _provisional(series, *indices):
+    return replace(
+        series,
+        hours=tuple(
+            replace(hour, values=None, reason="provisional")
+            if index in indices
+            else hour
+            for index, hour in enumerate(series.hours)
+        ),
+    )
+
+
 def _plan(
     series, *, snapshot=None, epoch=START, verified=START - HOUR, trusted_row=None
 ):
@@ -327,6 +339,58 @@ class HourlyImportPlanTests(unittest.TestCase):
         result = _plan(series, snapshot=_snapshot(series, old))
         self.assertEqual((START + HOUR, START + 2 * HOUR), result.stale_starts)
         self.assertFalse(result.unblocked_rows)
+
+    def test_trailing_provisional_hours_admit_prefix_without_numeric_tail(self):
+        series = _provisional(_series((1.0, None, None)), 1, 2)
+        for retained in ((), (planner.HourlyStatisticRow(START + HOUR),)):
+            with self.subTest(retained=retained):
+                result = _plan(series, snapshot=_snapshot(series, retained))
+                self.assertFalse(result.blocking_reasons)
+                self.assertEqual([1.0], [row.sum for row in result.unblocked_rows])
+                self.assertEqual(START + HOUR, result.continuity_break)
+                self.assertEqual(
+                    ["ready", "provisional", "provisional"],
+                    [hour.reason for hour in result.coverage],
+                )
+
+    def test_provisional_tail_keeps_entire_native_suffix_stale(self):
+        old = tuple(
+            planner.HourlyStatisticRow(
+                START + index * HOUR, state=index + 1.0, sum=index + 1.0
+            )
+            for index in range(4)
+        )
+        for prefix in (1.0, 2.0):
+            with self.subTest(prefix=prefix):
+                series = _provisional(_series((prefix, None)), 1)
+                result = _plan(series, snapshot=_snapshot(series, old))
+                self.assertEqual(("surviving_stale_rows",), result.blocking_reasons)
+                self.assertEqual(
+                    tuple(row.start for row in old[1:]), result.stale_starts
+                )
+                self.assertFalse(result.unblocked_rows)
+
+    def test_provisional_exemption_cannot_skip_an_internal_gap(self):
+        for series in (
+            _provisional(_series((1.0, None, 2.0)), 1),
+            _provisional(_series((1.0, None, None)), 2),
+            _provisional(_series((1.0, None, None)), 1),
+        ):
+            with self.subTest(hours=series.hours):
+                result = _plan(series, snapshot=_snapshot(series))
+                self.assertIn("cumulative_source_gap", result.blocking_reasons)
+                self.assertEqual(START + HOUR, result.continuity_break)
+                self.assertFalse(result.unblocked_rows)
+
+    def test_all_provisional_hours_do_not_invent_rows_or_bypass_basis(self):
+        series = _provisional(_series((None, None)), 0, 1)
+        result = _plan(series, snapshot=_snapshot(series))
+        self.assertFalse(result.blocking_reasons)
+        self.assertFalse(result.calculated_rows)
+        self.assertEqual(START, result.continuity_break)
+        unproven = _plan(series, snapshot=_snapshot(series), epoch=START - HOUR)
+        self.assertIn("unproven_cumulative_basis", unproven.blocking_reasons)
+        self.assertFalse(unproven.unblocked_rows)
 
     def test_inserting_a_previously_missing_hour_also_requires_future_suffix(self):
         series = _series((1.0,))

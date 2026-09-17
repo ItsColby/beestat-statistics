@@ -422,8 +422,8 @@ async def test_readback_requires_json_type_identity(hass, disk_store):
         await hass.async_add_executor_job(store._verify_data, {"revision": 1})
 
 
-def _source_hours(increments):
-    end = START + len(increments) * HOUR
+def _source_hours(increments, *, requested_end=None, evaluated_at=NOW):
+    observed_end = START + len(increments) * HOUR
     rows = [
         {
             "thermostat_id": 1,
@@ -441,9 +441,9 @@ def _source_hours(increments):
         {},
         BeestatConfig((ConfiguredThermostat(1, "writer", "Writer fixture"),), ()),
         start=START,
-        end=end,
-        evaluated_at=NOW,
-        source_end_by_thermostat={1: end - timedelta(minutes=5)},
+        end=observed_end if requested_end is None else requested_end,
+        evaluated_at=evaluated_at,
+        source_end_by_thermostat={1: observed_end - timedelta(minutes=5)},
     )
     return tuple(item for item in series if item.statistic_id == RUNTIME_ID)
 
@@ -541,6 +541,73 @@ async def test_real_manager_restart_gap_invalidation_and_explicit_segment(
         "outside_active_segment",
         "verified",
     ]
+
+
+async def test_real_manager_advances_complete_prefix_across_lagging_refreshes(
+    hass, disk_store, freezer
+):
+    entry, identity = _entry_and_identity(hass)
+    recorder = HourlyRecorder(hass)
+    writer = HourlyImportManager(hass, entry, store=disk_store, recorder=recorder)
+    first_evaluation = START + 2 * HOUR + timedelta(minutes=10)
+    freezer.move_to(first_evaluation)
+    source = _source_hours(
+        (0.25,),
+        requested_end=START + 2 * HOUR,
+        evaluated_at=first_evaluation,
+    )
+    assert [hour.reason for hour in source[0].hours] == ["ready", "provisional"]
+    await _select(writer, source, identity)
+    assert (await writer.async_import(source, identity))["imported_rows"] == 1
+    first = await recorder.async_snapshot(RUNTIME_ID, START)
+    assert first.rows == (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+    saved = (await disk_store.async_load())["series"][RUNTIME_ID]
+    assert saved["checkpoint"]["start"] == START.isoformat()
+    assert saved["checkpoint"]["sum"] == 0.25
+    assert saved["blocked_from"] is None
+    coverage = writer.coverage(start=START, end=START + 2 * HOUR)["series"][RUNTIME_ID]
+    assert [hour["coverage"] for hour in coverage["hours"]] == [
+        "verified",
+        "provisional",
+    ]
+    assert [hour["value"] for hour in coverage["hours"]] == [0.25, None]
+    assert not coverage["complete"] and coverage["complete_observed_hours"] == 1
+    assert coverage["observed_hour_average"] == 0.25
+
+    second_evaluation = START + 3 * HOUR + timedelta(minutes=10)
+    freezer.move_to(second_evaluation)
+    source = _source_hours(
+        (0.25, 0.5),
+        requested_end=START + 3 * HOUR,
+        evaluated_at=second_evaluation,
+    )
+    assert [hour.reason for hour in source[0].hours] == [
+        "ready",
+        "ready",
+        "provisional",
+    ]
+    assert (await writer.async_import(source, identity))["imported_rows"] == 2
+    advanced = await recorder.async_snapshot(RUNTIME_ID, START)
+    assert advanced.rows == (
+        first.rows[0],
+        HourlyStatisticRow(START + HOUR, state=0.75, sum=0.75),
+    )
+    saved = (await disk_store.async_load())["series"][RUNTIME_ID]
+    assert saved["checkpoint"]["start"] == (START + HOUR).isoformat()
+    assert saved["checkpoint"]["sum"] == 0.75
+    assert saved["statistic_id"] == RUNTIME_ID
+    assert saved["epoch_start"] == START.isoformat()
+    assert saved["blocked_from"] is None and saved["closed"] == []
+    assert await recorder.async_known_ids() == {RUNTIME_ID}
+    coverage = writer.coverage(start=START, end=START + 3 * HOUR)["series"][RUNTIME_ID]
+    assert [hour["coverage"] for hour in coverage["hours"]] == [
+        "verified",
+        "verified",
+        "provisional",
+    ]
+    assert [hour["value"] for hour in coverage["hours"]] == [0.25, 0.5, None]
+    assert not coverage["complete"] and coverage["complete_observed_hours"] == 2
+    assert coverage["observed_hour_average"] == 0.375
 
 
 async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(
