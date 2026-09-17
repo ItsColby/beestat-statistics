@@ -13,7 +13,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from math import isfinite
+from math import fsum, isfinite
 from typing import Any
 
 from .hourly_import_plan import (
@@ -1160,6 +1160,14 @@ class HourlyImportManager:
                     }
                 )
                 instant += _HOUR
+            scale = max((abs(value) for value in observed), default=0.0)
+            average = (
+                scale * (fsum(value / scale for value in observed) / len(observed))
+                if scale
+                else 0.0
+                if observed
+                else None
+            )
             output[base] = {
                 "statistic_id": record["statistic_id"],
                 "unit_of_measurement": record["metadata"]["unit_of_measurement"],
@@ -1169,9 +1177,7 @@ class HourlyImportManager:
                 "complete_observed_hours": len(observed),
                 "requested_hours": len(rows),
                 "complete": len(observed) == len(rows),
-                "observed_hour_average": sum(observed) / len(observed)
-                if observed
-                else None,
+                "observed_hour_average": average,
             }
         return {
             "start": _iso(start),

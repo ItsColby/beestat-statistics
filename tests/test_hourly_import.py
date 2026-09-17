@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import math
 import sys
 import types
 import unittest
@@ -621,6 +623,135 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(71, result["observed_hour_average"])
         self.assertEqual(2, result["complete_observed_hours"])
         self.assertEqual("missing_slots", result["hours"][1]["coverage"])
+
+    async def test_real_sensor_builder_coverage_average_is_finite_and_read_only(self):
+        model = sys.modules[f"{PACKAGE}.config_model"]
+        config = model.BeestatConfig(
+            (model.ConfiguredThermostat(1, "zone", "Zone"),),
+            (
+                model.ConfiguredSensor(
+                    10, "room", "Room", 1, "zone", True, False, False, False
+                ),
+            ),
+        )
+        statistic_id = "beestat:room_temperature_hourly_v2"
+        bound = identity(statistic_id)
+        bound["resources"][statistic_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "temperature",
+        }
+        largest = sys.float_info.max
+        cases = (
+            ("largest", (largest, largest), 0, 2, largest),
+            ("largest_with_gap", (largest, None, largest), 0, 3, largest),
+            ("ordinary", (68.0, 74.0), 0, 2, 71.0),
+            ("ordinary_with_gap", (68.0, None, 74.0), 0, 3, 71.0),
+            ("zero", (0.0, 0.0), 0, 2, 0.0),
+            ("sign_cancellation", (-100.0, 100.0), 0, 2, 0.0),
+            ("no_observations", (70.0,), 1, 3, None),
+        )
+        for name, values, query_start, query_end, expected_mean in cases:
+            with self.subTest(case=name):
+                store, recorder = Store(), Recorder()
+                entry = types.SimpleNamespace(entry_id="test-entry", data={})
+                writer = manager.HourlyImportManager(
+                    self.hass, entry, store=store, recorder=recorder
+                )
+                end = START + len(values) * HOUR
+                raw = [
+                    {
+                        "sensor_id": 10,
+                        "timestamp": (
+                            START + hour * HOUR + slot * HOUR / 12
+                        ).isoformat(),
+                        "temperature": value,
+                    }
+                    for hour, value in enumerate(values)
+                    if value is not None
+                    for slot in range(12)
+                ]
+                built = builder.build_hourly_statistics(
+                    {},
+                    {10: raw},
+                    config,
+                    start=START,
+                    end=end,
+                    evaluated_at=end,
+                    source_end_by_thermostat={1: end - HOUR / 12},
+                )
+                item = next(item for item in built if item.statistic_id == statistic_id)
+                self.assertEqual(
+                    [
+                        "ready" if value is not None else "missing_slots"
+                        for value in values
+                    ],
+                    [hour.reason for hour in item.hours],
+                )
+                args = {
+                    "epoch_start": START,
+                    "statistic_ids": (statistic_id,),
+                    "expected_revision": 0,
+                }
+                preview = await writer.async_select((item,), bound, **args)
+                await writer.async_select(
+                    (item,), bound, **args, preview_digest=preview["preview_digest"]
+                )
+                await writer.async_import((item,), bound)
+                saved_state = deepcopy(store.value)
+                saved_rows = deepcopy(recorder.rows)
+                saved_metadata = deepcopy(recorder.metadata)
+                saved_status = deepcopy(writer.status())
+                with (
+                    patch.object(store, "async_load") as load,
+                    patch.object(store, "async_save") as save,
+                    patch.object(recorder, "async_snapshot") as snapshot,
+                    patch.object(recorder, "submit") as submit,
+                ):
+                    response = writer.coverage(
+                        start=START + query_start * HOUR,
+                        end=START + query_end * HOUR,
+                    )
+                    load.assert_not_awaited()
+                    save.assert_not_awaited()
+                    snapshot.assert_not_awaited()
+                    submit.assert_not_called()
+                self.assertEqual(saved_state, store.value)
+                self.assertEqual(saved_rows, recorder.rows)
+                self.assertEqual(saved_metadata, recorder.metadata)
+                self.assertEqual(saved_status, writer.status())
+                result = response["series"][statistic_id]
+                expected_values = [
+                    values[hour] if hour < len(values) else None
+                    for hour in range(query_start, query_end)
+                ]
+                observed_count = sum(value is not None for value in expected_values)
+                self.assertEqual(observed_count, result["complete_observed_hours"])
+                self.assertEqual(query_end - query_start, result["requested_hours"])
+                self.assertEqual(
+                    observed_count == query_end - query_start, result["complete"]
+                )
+                self.assertEqual(
+                    expected_values, [hour["value"] for hour in result["hours"]]
+                )
+                self.assertEqual(
+                    [
+                        "missing"
+                        if hour >= len(values)
+                        else "missing_slots"
+                        if values[hour] is None
+                        else "verified"
+                        for hour in range(query_start, query_end)
+                    ],
+                    [hour["coverage"] for hour in result["hours"]],
+                )
+                self.assertEqual(expected_mean, result["observed_hour_average"])
+                if expected_mean is not None:
+                    self.assertTrue(math.isfinite(result["observed_hour_average"]))
+                    self.assertIsInstance(result["observed_hour_average"], float)
+                self.assertEqual(
+                    response, json.loads(json.dumps(response, allow_nan=False))
+                )
 
     async def test_rolling_measurement_replay_ignores_expired_journal_history(self):
         initial = source((70, 71), cumulative=False)
