@@ -236,6 +236,18 @@ class ValidationSelectionTests(unittest.TestCase):
             planner.workflow_dependencies(
                 "jobs:\n  future_job:\n    uses: unknown/action@ref"
             )
+        workflow = (ROOT / ".github/workflows/validate.yaml").read_text()
+        for job_id in ("future_job", "extra-job", "job2", "FutureJob", "_job-2"):
+            with (
+                self.subTest(job_id=job_id),
+                self.assertRaisesRegex(ValueError, "job dependency mapping"),
+            ):
+                planner.workflow_dependencies(
+                    workflow.rstrip()
+                    + f"\n  {job_id}:\n"
+                    + "    runs-on: ubuntu-24.04\n"
+                    + "    steps:\n      - run: exit 1\n"
+                )
 
     def test_retained_document_contracts_select_their_static_consumer(self):
         self.assertFalse((ROOT / "docs/removed.md").exists())
