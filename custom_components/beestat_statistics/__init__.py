@@ -512,6 +512,7 @@ class PreparedHourlyImport:
     identity: dict[str, Any]
     source_rows: int
     skipped_windows: SkippedWindowEvidence
+    ordinary_start: datetime | None
 
 
 class BeestatStatisticsImporter:
@@ -708,7 +709,11 @@ class BeestatStatisticsImporter:
             rebuild_end=rebuild_end,
             thermostat_id=thermostat_id,
         )
-        imported = await self.hourly.async_import(prepared.series, prepared.identity)
+        imported = await self.hourly.async_import(
+            prepared.series,
+            prepared.identity,
+            ordinary_start=prepared.ordinary_start,
+        )
         status = self.hourly.status()
         coverage_incomplete = bool(status.get("pending")) or any(
             record.get("coverage_incomplete", False)
@@ -770,6 +775,9 @@ class BeestatStatisticsImporter:
                 rebuild_start=rebuild_start,
                 rebuild_end=rebuild_end,
                 epoch_start=epoch_start,
+                bootstrap_start=self.hourly.bootstrap_start(
+                    thermostat_id=thermostat_id
+                ),
             )
             skipped = SkippedWindowEvidence()
             thermostat_rows = await self._async_fetch_thermostat_rows(
@@ -849,6 +857,9 @@ class BeestatStatisticsImporter:
             sum(len(rows) for rows in thermostat_rows.values())
             + sum(len(rows) for rows in sensor_rows.values()),
             skipped,
+            end - timedelta(days=lookback_days)
+            if epoch_start is None and rebuild_start is None
+            else None,
         )
 
     async def async_select_hourly_statistics(
@@ -2888,6 +2899,7 @@ def _hourly_window(
     rebuild_start: dt_date | None,
     rebuild_end: dt_date | None,
     epoch_start: datetime | None,
+    bootstrap_start: datetime | None = None,
 ) -> tuple[datetime, datetime, datetime | None]:
     end = context.evaluated_at.astimezone(UTC).replace(
         minute=0, second=0, microsecond=0
@@ -2898,6 +2910,8 @@ def _hourly_window(
         start = _hourly_utc_hour(_local_midnight(rebuild_start, context.local_tz))
     else:
         start = end - timedelta(days=lookback_days)
+        if bootstrap_start is not None:
+            start = min(start, _hourly_utc_hour(bootstrap_start))
     _validate_hourly_window(start, end)
     measurement_end = None
     if rebuild_end is not None:

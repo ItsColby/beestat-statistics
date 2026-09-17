@@ -125,6 +125,15 @@ a missing or changed predecessor/checkpoint blocks continuation. At a new epoch,
 the first row includes its actual first complete hour's increment, without a
 fabricated zero predecessor. A locally unblocked plan is still only proposed data.
 
+Until a selected cumulative series has a verified checkpoint, ordinary acquisition
+includes its saved epoch even when that epoch precedes the configured lookback.
+This bootstrap remains subject to the 366-day elapsed limit; an older required
+epoch blocks acquisition rather than being clipped or reset. Only the cumulative
+series needing that bootstrap uses the expanded import window. Measurements and
+already checkpointed series keep the ordinary window, and explicit selection or
+rebuild starts retain their requested bounds. After the first verified checkpoint,
+the series returns to the configured rolling lookback.
+
 ### Segments and native recovery
 
 Use the same adopted ID when actual observations and a trusted exact predecessor

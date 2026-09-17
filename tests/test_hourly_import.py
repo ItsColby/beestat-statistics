@@ -218,6 +218,150 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(renamed, self.recorder.rows)
         self.assertEqual(1.5, self.recorder.rows[ID][START + 2 * HOUR].sum)
 
+    async def test_bootstrap_start_tracks_uncheckpointed_cumulative_scope(self):
+        other_id = "beestat:other_fan_runtime_hours_hourly_v2"
+        measurement_id = "beestat:zone_temperature_hourly_v2"
+        items = (
+            source(),
+            source(statistic_id=other_id),
+            source((70, 71), cumulative=False, statistic_id=measurement_id),
+        )
+        bound = identity()
+        bound["resources"].update(
+            {
+                other_id: {
+                    "thermostat_id": 2,
+                    "sensor_id": None,
+                    "quantity": "fan_runtime_hours",
+                },
+                measurement_id: {
+                    "thermostat_id": 3,
+                    "sensor_id": None,
+                    "quantity": "temperature",
+                },
+            }
+        )
+        args = {
+            "epoch_start": START,
+            "statistic_ids": tuple(item.statistic_id for item in items),
+            "expected_revision": 0,
+        }
+        self.assertIsNone(self.writer.bootstrap_start())
+        preview = await self.writer.async_select(items, bound, **args)
+        await self.writer.async_select(
+            items, bound, **args, preview_digest=preview["preview_digest"]
+        )
+        selection = deepcopy(self.store.value["last_selection"])
+        with (
+            patch.object(self.store, "async_load") as load,
+            patch.object(self.recorder, "async_snapshot") as snapshot,
+        ):
+            self.assertEqual(START, self.writer.bootstrap_start())
+            self.assertEqual(START, self.writer.bootstrap_start(thermostat_id=1))
+            self.assertEqual(START, self.writer.bootstrap_start(thermostat_id=2))
+            self.assertIsNone(self.writer.bootstrap_start(thermostat_id=3))
+            self.assertIsNone(self.writer.bootstrap_start(thermostat_id=4))
+            load.assert_not_awaited()
+            snapshot.assert_not_awaited()
+
+        await self.writer.async_import(
+            (items[0],), {**bound, "selected_thermostat_id": 1}
+        )
+        self.assertIsNone(self.writer.bootstrap_start(thermostat_id=1))
+        self.assertEqual(START, self.writer.bootstrap_start())
+        await self.writer.async_import(
+            (items[1],), {**bound, "selected_thermostat_id": 2}
+        )
+        self.assertIsNone(self.writer.bootstrap_start())
+        self.assertIsNone(self.store.value["series"][measurement_id]["checkpoint"])
+        self.assertEqual(selection, self.store.value["last_selection"])
+        self.assertTrue(
+            all(
+                record["epoch_start"] == START.isoformat()
+                for record in self.store.value["series"].values()
+            )
+        )
+
+    async def test_bootstrap_expansion_preserves_other_series_ordinary_window(self):
+        bootstrap_id = "beestat:other_fan_runtime_hours_hourly_v2"
+        measurement_id = "beestat:zone_temperature_hourly_v2"
+        initial = (
+            source(),
+            source(statistic_id=bootstrap_id),
+            source((70, 71), cumulative=False, statistic_id=measurement_id),
+        )
+        bound = identity()
+        bound["resources"].update(
+            {
+                bootstrap_id: {
+                    "thermostat_id": 2,
+                    "sensor_id": None,
+                    "quantity": "fan_runtime_hours",
+                },
+                measurement_id: {
+                    "thermostat_id": 1,
+                    "sensor_id": None,
+                    "quantity": "temperature",
+                },
+            }
+        )
+        args = {
+            "epoch_start": START,
+            "statistic_ids": tuple(item.statistic_id for item in initial),
+            "expected_revision": 0,
+        }
+        preview = await self.writer.async_select(initial, bound, **args)
+        await self.writer.async_select(
+            initial, bound, **args, preview_digest=preview["preview_digest"]
+        )
+        await self.writer.async_import(
+            (initial[0], initial[2]), {**bound, "selected_thermostat_id": 1}
+        )
+        self.assertIsNotNone(self.store.value["series"][ID]["checkpoint"])
+        self.assertIsNone(self.store.value["series"][bootstrap_id]["checkpoint"])
+        self.assertEqual(START, self.writer.bootstrap_start())
+        previous = deepcopy(self.recorder.rows)
+        selected = deepcopy(self.writer.status()["series"])
+        selection = deepcopy(self.store.value["last_selection"])
+
+        renamed = "beestat:renamed_fan_runtime_hours_hourly_v2"
+        refreshed_identity = deepcopy(bound)
+        refreshed_identity["resources"][renamed] = refreshed_identity["resources"].pop(
+            ID
+        )
+        expanded = (
+            source((None, 9, 0.75, 1), statistic_id=renamed),
+            source((0.125, 0.25, 0.375, 0.5), statistic_id=bootstrap_id),
+            source((None, 999, 72, 73), cumulative=False, statistic_id=measurement_id),
+        )
+        result = await self.writer.async_import(
+            expanded, refreshed_identity, ordinary_start=START + 2 * HOUR
+        )
+
+        self.assertEqual(8, result["imported_rows"])
+        for statistic_id in (ID, measurement_id):
+            for instant in (START, START + HOUR):
+                self.assertEqual(
+                    previous[statistic_id][instant],
+                    self.recorder.rows[statistic_id][instant],
+                )
+        self.assertEqual(1.5, self.recorder.rows[ID][START + 2 * HOUR].sum)
+        self.assertEqual(2.5, self.recorder.rows[ID][START + 3 * HOUR].sum)
+        self.assertEqual(
+            [0.125, 0.375, 0.75, 1.25],
+            [row.sum for row in self.recorder.rows[bootstrap_id].values()],
+        )
+        self.assertEqual(72, self.recorder.rows[measurement_id][START + 2 * HOUR].mean)
+        self.assertEqual(73, self.recorder.rows[measurement_id][START + 3 * HOUR].mean)
+        self.assertIsNone(self.writer.bootstrap_start())
+        self.assertNotIn(renamed, self.recorder.rows)
+        self.assertEqual(set(selected), set(self.writer.status()["series"]))
+        self.assertEqual(selection, self.store.value["last_selection"])
+        for base, record in self.writer.status()["series"].items():
+            self.assertEqual(selected[base]["statistic_id"], record["statistic_id"])
+            self.assertEqual(selected[base]["epoch_start"], record["epoch_start"])
+            self.assertEqual([], record["closed"])
+
     async def test_missing_verified_seed_never_selects_new_epoch(self):
         await self.adopt()
         await self.writer.async_import((source(),), identity())

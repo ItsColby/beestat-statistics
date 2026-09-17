@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.file import WriteError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components import beestat_statistics as integration
 from custom_components.beestat_statistics import hourly_recorder
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
@@ -46,6 +47,7 @@ from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
+from tests.test_runtime_ha import _coordinator_data
 
 pytestmark = pytest.mark.asyncio
 HOUR = timedelta(hours=1)
@@ -608,6 +610,109 @@ async def test_real_manager_advances_complete_prefix_across_lagging_refreshes(
     assert [hour["value"] for hour in coverage["hours"]] == [0.25, 0.5, None]
     assert not coverage["complete"] and coverage["complete_observed_hours"] == 2
     assert coverage["observed_hour_average"] == 0.375
+
+
+async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
+    hass, freezer, tmp_path
+):
+    available_end = START + 48 * HOUR
+    evaluation = available_end + timedelta(minutes=10)
+    freezer.move_to(evaluation)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=evaluation)
+    coordinator.async_refresh_runtime = AsyncMock(return_value=coordinator.data)
+    points = [
+        {
+            "thermostat_id": 1,
+            "timestamp": (START + index * timedelta(minutes=5)).isoformat(),
+            "fan": 75,
+        }
+        for index in range(49 * 12)
+    ]
+
+    async def read_source(thermostat_id, start, end):
+        assert thermostat_id == 1
+        lower = datetime.fromisoformat(start).replace(tzinfo=UTC)
+        upper = min(datetime.fromisoformat(end).replace(tzinfo=UTC), available_end)
+        return [
+            row
+            for row in points
+            if lower <= datetime.fromisoformat(row["timestamp"]) < upper
+        ]
+
+    client.async_read_runtime_thermostat = AsyncMock(side_effect=read_source)
+    client.async_read_runtime_sensor = AsyncMock(return_value=[])
+    importer = integration.BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    store = importer.hourly._store
+    native = store._store
+    recorder = importer.hourly._recorder
+    statistic_id = "beestat:zone_a_fan_runtime_hours_hourly_v2"
+    with (
+        patch.object(native, "path", str(tmp_path / "bootstrap-journal.json")),
+        patch.object(native, "_async_write_data", _NATIVE_STORE_WRITE.__get__(native)),
+    ):
+        request = {
+            "epoch_start": START,
+            "statistic_ids": (statistic_id,),
+            "expected_revision": 0,
+        }
+        preview = await importer.async_select_hourly_statistics(**request)
+        selected = await importer.async_select_hourly_statistics(
+            **request, preview_digest=preview["preview_digest"]
+        )
+        assert selected["status"] == "selected"
+        assert (await store.async_load())["series"][statistic_id]["checkpoint"] is None
+        assert await recorder.async_known_ids() == set()
+
+        client.async_read_runtime_thermostat.reset_mock()
+        result = await importer.async_import_statistics(skip_sync=True)
+        client.async_read_runtime_thermostat.assert_awaited_once_with(
+            1,
+            START.strftime("%Y-%m-%d %H:%M:%S"),
+            available_end.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        assert result.summary_mode == "hourly" and result.imported_rows == 48
+        first = await recorder.async_snapshot(statistic_id, START)
+        assert first.rows == tuple(
+            HourlyStatisticRow(
+                START + index * HOUR, state=(index + 1) / 4, sum=(index + 1) / 4
+            )
+            for index in range(48)
+        )
+        saved = (await store.async_load())["series"][statistic_id]
+        assert saved["checkpoint"]["start"] == (available_end - HOUR).isoformat()
+        assert saved["checkpoint"]["sum"] == 12
+
+        available_end += HOUR
+        freezer.move_to(available_end + timedelta(minutes=10))
+        client.async_read_runtime_thermostat.reset_mock()
+        result = await importer.async_import_statistics(skip_sync=True)
+        client.async_read_runtime_thermostat.assert_awaited_once_with(
+            1,
+            (available_end - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
+            available_end.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        assert result.summary_mode == "hourly" and result.imported_rows == 24
+        advanced = await recorder.async_snapshot(statistic_id, START)
+        assert advanced.rows == (
+            *first.rows,
+            HourlyStatisticRow(available_end - HOUR, state=12.25, sum=12.25),
+        )
+        saved = (await store.async_load())["series"][statistic_id]
+        assert saved["checkpoint"]["start"] == (available_end - HOUR).isoformat()
+        assert saved["checkpoint"]["sum"] == 12.25
+        assert saved["statistic_id"] == statistic_id
+        assert saved["epoch_start"] == START.isoformat()
+        assert saved["blocked_from"] is None and saved["closed"] == []
+        assert await recorder.async_known_ids() == {statistic_id}
+        coverage = await importer.async_get_hourly_coverage(
+            start=START, end=available_end
+        )
+        assert coverage["series"][statistic_id]["complete"]
+        assert coverage["series"][statistic_id]["complete_observed_hours"] == 49
+        assert coverage["series"][statistic_id]["observed_hour_average"] == 0.25
+    await entry._async_process_on_unload(hass)
 
 
 async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(

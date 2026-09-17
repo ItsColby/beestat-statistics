@@ -348,6 +348,13 @@ stops future legacy statistics writes for the entire entry.
    identifies an exact retry. Subsequent imports and coverage readback establish
    which selected hours are verified.
 
+The first ordinary cumulative import includes the selected epoch even if it is
+older than the configured lookback. Once a checkpoint is verified, subsequent
+imports use the normal lookback. The first acquisition still cannot exceed 366
+elapsed days; if the epoch ages beyond that bound before initialization, import
+stops for explicit reconciliation rather than moving the epoch. An explicitly
+bounded rebuild retains its requested start.
+
 Illustrative preview only; substitute the actual entry, IDs, epoch and revision:
 
 ```yaml

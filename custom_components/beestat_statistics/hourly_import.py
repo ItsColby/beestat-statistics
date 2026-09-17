@@ -290,6 +290,20 @@ class HourlyImportManager:
     def base_statistic_ids(self) -> tuple[str, ...]:
         return tuple((self._state or {}).get("series", {}))
 
+    def bootstrap_start(self, *, thermostat_id: int | None = None) -> datetime | None:
+        """Include an explicit cumulative epoch until its first verified checkpoint."""
+        epochs = [
+            _time(record["epoch_start"])
+            for record in (self._state or {}).get("series", {}).values()
+            if record["metadata"].get("has_sum")
+            and record["checkpoint"] is None
+            and (
+                thermostat_id is None
+                or record["resource"]["thermostat_id"] == thermostat_id
+            )
+        ]
+        return min(epochs, default=None)
+
     def status(self) -> dict[str, Any]:
         """Return a detached cached status; never fetch provider or Recorder data."""
         state = self._state or {}
@@ -341,7 +355,10 @@ class HourlyImportManager:
                 raise HourlyImportError("Adopted account identity changed")
 
     def _bound_series(
-        self, series: tuple[HourlySeries, ...], identity: dict[str, Any]
+        self,
+        series: tuple[HourlySeries, ...],
+        identity: dict[str, Any],
+        ordinary_start: datetime | None,
     ) -> dict[str, HourlySeries]:
         self._identity(identity)
         by_resource: dict[tuple[Any, ...], HourlySeries] = {}
@@ -367,10 +384,15 @@ class HourlyImportManager:
                 self._error = "source_quantity_changed"
                 raise HourlyImportError("Adopted quantity or unit contract changed")
             epoch = _time(record["epoch_start"])
+            start = epoch
+            if ordinary_start is not None and not (
+                record["metadata"].get("has_sum") and record["checkpoint"] is None
+            ):
+                start = max(start, _time(ordinary_start))
             result[base] = replace(
                 item,
                 metadata=metadata,
-                hours=tuple(hour for hour in item.hours if hour.start >= epoch),
+                hours=tuple(hour for hour in item.hours if hour.start >= start),
             )
         return result
 
@@ -472,14 +494,18 @@ class HourlyImportManager:
         await self.async_reconcile()
 
     async def async_import(
-        self, series: tuple[HourlySeries, ...], identity: dict[str, Any]
+        self,
+        series: tuple[HourlySeries, ...],
+        identity: dict[str, Any],
+        *,
+        ordinary_start: datetime | None = None,
     ) -> dict[str, Any]:
         if await self.async_mode() != "hourly":
             raise HourlyImportError(
                 "Hourly statistics have not been explicitly adopted"
             )
         await self.async_reconcile()
-        bound = self._bound_series(series, identity)
+        bound = self._bound_series(series, identity, ordinary_start)
         self._error = None
         imported_rows = imported_series = 0
         latest = {}

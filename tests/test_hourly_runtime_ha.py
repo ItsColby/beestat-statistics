@@ -65,6 +65,7 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
         ),
         async_select=AsyncMock(return_value={"preview_digest": "reviewed-selection"}),
         base_statistic_ids=Mock(return_value=()),
+        bootstrap_start=Mock(return_value=None),
         status=Mock(return_value={"mode": mode, "revision": 0, "series": {}}),
         coverage=Mock(return_value={"series": {}, "revision": 0}),
     )
@@ -137,8 +138,9 @@ async def test_hourly_route_reconciles_before_source_and_writes_under_entry_lock
         order.append("source")
         return coordinator.data
 
-    async def write(series, identity):
+    async def write(series, identity, *, ordinary_start):
         assert importer._lock.locked()
+        assert ordinary_start == END - timedelta(days=1)
         order.append("verified_write")
         fan = next(item for item in series if item.statistic_id == FAN_ID)
         assert fan.hours[-1].start == START
@@ -280,6 +282,33 @@ async def test_hourly_window_bounds_preserve_local_dates_and_elapsed_limit():
             rebuild_start=date(2026, 11, 1),
             rebuild_end=None,
             epoch_start=None,
+        )
+
+
+async def test_bootstrap_window_preserves_explicit_bounds_and_366_day_limit():
+    context = TemporalContext(NOW, ZoneInfo("UTC"), 0)
+    older = END - timedelta(days=2)
+    options = {
+        "lookback_days": 1,
+        "rebuild_start": None,
+        "rebuild_end": None,
+        "epoch_start": None,
+        "bootstrap_start": older,
+    }
+    assert integration._hourly_window(context, **options) == (older, END, None)
+    explicit_epoch = END - timedelta(hours=6)
+    assert (
+        integration._hourly_window(
+            context, **{**options, "epoch_start": explicit_epoch}
+        )[0]
+        == explicit_epoch
+    )
+    assert integration._hourly_window(
+        context, **{**options, "rebuild_start": date(2026, 9, 10)}
+    )[0] == datetime(2026, 9, 10, tzinfo=UTC)
+    with pytest.raises(ValueError, match="at most 366"):
+        integration._hourly_window(
+            context, **{**options, "bootstrap_start": END - timedelta(days=367)}
         )
 
 
