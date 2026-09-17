@@ -510,8 +510,13 @@ class HourlyImportManager:
         record = self._document["series"][base]
         start = item.hours[0].start - _HOUR
         checkpoint = record["checkpoint"]
-        if checkpoint is not None:
-            start = min(start, _time(checkpoint["start"]))
+        if item.metadata.get("has_sum"):
+            if checkpoint is not None:
+                start = min(start, _time(checkpoint["start"]))
+            else:
+                start = min(start, _time(record["epoch_start"]) - _HOUR)
+            if record["blocked_from"] is not None:
+                start = min(start, _time(record["blocked_from"]) - _HOUR)
         snapshot = await self._recorder.async_snapshot(record["statistic_id"], start)
         if not snapshot.complete or (
             snapshot.metadata is not None
@@ -592,18 +597,15 @@ class HourlyImportManager:
         suppress = None
         rows = plan.calculated_rows
         if cumulative and (blocked or plan.stale_starts):
-            suppress = min([plan.continuity_break or item.hours[0].start, *changed])
+            suppress = self._invalidation_boundary(record, item, plan, changed)
             rows = tuple(
                 HourlyStatisticRow(row.start)
                 for row in snapshot.rows
                 if row.start >= suppress and not row.cleared
             )
             after_record["blocked_from"] = _iso(suppress)
-            saved_prior = coverage.get(_iso(suppress - _HOUR), {}).get("row")
-            after_record["checkpoint"] = (
-                saved_prior
-                if saved_prior == _row(existing.get(suppress - _HOUR))
-                else None
+            after_record["checkpoint"] = self._boundary_checkpoint(
+                record, existing, suppress
             )
         elif not cumulative:
             if blocked:
@@ -624,12 +626,7 @@ class HourlyImportManager:
                 *(HourlyStatisticRow(instant) for instant in sorted(stale)),
             )
         else:
-            after_record["blocked_from"] = None
-            if rows and (
-                record["checkpoint"] is None
-                or rows[-1].start >= _time(record["checkpoint"]["start"])
-            ):
-                after_record["checkpoint"] = _row(rows[-1])
+            self._advance_checkpoint(after_record, rows, calculated)
         published = {row.start: row for row in rows if not row.cleared}
         for hour in item.hours:
             verified_row = published.get(hour.start)
@@ -663,6 +660,63 @@ class HourlyImportManager:
                     )
         after_record["coverage"] = dict(sorted(coverage.items())[-(_MAX_HOURS + 1) :])
         return rows, after_record, suppress, published
+
+    def _boundary_checkpoint(
+        self,
+        record: dict[str, Any],
+        existing: dict[datetime, HourlyStatisticRow],
+        boundary: datetime,
+    ) -> dict[str, Any] | None:
+        """Retain only the saved, native-verified row immediately before a gap."""
+        prior = boundary - _HOUR
+        saved: dict[str, Any] | None = (
+            record["coverage"].get(_iso(prior), {}).get("row")
+        )
+        checkpoint = record["checkpoint"]
+        if (
+            saved is None
+            and checkpoint is not None
+            and _time(checkpoint["start"]) == prior
+        ):
+            saved = checkpoint
+        return saved if saved == _row(existing.get(prior)) else None
+
+    def _advance_checkpoint(
+        self,
+        record: dict[str, Any],
+        rows: tuple[HourlyStatisticRow, ...],
+        calculated: dict[datetime, HourlyStatisticRow],
+    ) -> None:
+        """Clear a prior gap only when this verified calculation includes it."""
+        boundary = record["blocked_from"]
+        if boundary is None or _time(boundary) in calculated:
+            record["blocked_from"] = None
+        if rows and (
+            record["checkpoint"] is None
+            or rows[-1].start >= _time(record["checkpoint"]["start"])
+        ):
+            record["checkpoint"] = _row(rows[-1])
+
+    def _invalidation_boundary(
+        self,
+        record: dict[str, Any],
+        item: HourlySeries,
+        plan: SeriesImportPlan,
+        changed: list[datetime],
+    ) -> datetime:
+        """Rolling source windows cannot move an unresolved boundary forward."""
+        boundaries = [plan.continuity_break or item.hours[0].start, *changed]
+        if record["blocked_from"] is not None:
+            boundaries.append(_time(record["blocked_from"]))
+        checkpoint = record["checkpoint"]
+        next_unverified = (
+            _time(record["epoch_start"])
+            if checkpoint is None
+            else _time(checkpoint["start"]) + _HOUR
+        )
+        if next_unverified < item.hours[0].start:
+            boundaries.append(next_unverified)
+        return min(boundaries)
 
     async def async_select(
         self,
@@ -754,8 +808,13 @@ class HourlyImportManager:
         for base, snapshot in snapshots.items():
             old = self._document["series"][base]
             boundary = _time(old["blocked_from"])
-            if not snapshot.complete or _metadata(snapshot.metadata) != _metadata(
-                old["metadata"]
+            if (
+                not snapshot.complete
+                or (snapshot.metadata is None and snapshot.rows)
+                or (
+                    snapshot.metadata is not None
+                    and _metadata(snapshot.metadata) != _metadata(old["metadata"])
+                )
             ):
                 raise HourlyImportError(
                     "Old segment snapshot is incomplete or incompatible"

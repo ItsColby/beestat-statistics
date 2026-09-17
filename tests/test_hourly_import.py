@@ -10,6 +10,7 @@ import unittest
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_hourly_writer_test"
@@ -407,6 +408,39 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(71, result["observed_hour_average"])
         self.assertEqual(2, result["complete_observed_hours"])
         self.assertEqual("missing_slots", result["hours"][1]["coverage"])
+
+    async def test_rolling_measurement_replay_ignores_expired_journal_history(self):
+        initial = source((70, 71), cumulative=False)
+        recent = source((72, 73), start=START + 2 * HOUR, cumulative=False)
+        # Exercise normal journal eviction with a small retention window.
+        with patch.object(manager, "_MAX_HOURS", 2):
+            await self.adopt(initial)
+            await self.writer.async_import((initial,), identity())
+            await self.writer.async_import((recent,), identity())
+            record = self.store.value["series"][ID]
+            self.assertIsNone(record["checkpoint"])
+            self.assertNotIn(START.isoformat(), record["coverage"])
+            self.assertEqual(70, self.recorder.rows[ID][START].mean)
+            retained_rows = deepcopy(self.recorder.rows[ID])
+            submissions = len(self.recorder.submissions)
+
+            replacement = self.fresh()
+            with patch.object(
+                self.recorder,
+                "async_snapshot",
+                wraps=self.recorder.async_snapshot,
+            ) as snapshot:
+                await replacement.async_import((recent,), identity())
+
+            snapshot.assert_awaited_once_with(ID, START + HOUR)
+            self.assertEqual(retained_rows, self.recorder.rows[ID])
+            self.assertEqual(submissions, len(self.recorder.submissions))
+            self.assertIsNone(self.store.value["series"][ID]["checkpoint"])
+            coverage = replacement.coverage(
+                start=START + 2 * HOUR, end=START + 4 * HOUR
+            )["series"][ID]
+            self.assertEqual(2, coverage["complete_observed_hours"])
+            self.assertEqual(72.5, coverage["observed_hour_average"])
 
     async def test_identity_and_unit_drift_block_without_changing_saved_intent(self):
         await self.adopt()
@@ -826,6 +860,71 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
             replacement.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
                 "complete_observed_hours"
             ],
+        )
+
+    async def test_rolling_window_preserves_earliest_unresolved_boundary(self):
+        await self.adopt(source((0.25, 0.5, 0.75)))
+        await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
+        await self.writer.async_import((source((0.25, None, 0.75)),), identity())
+        checkpoint = deepcopy(self.store.value["series"][ID]["checkpoint"])
+        await self.writer.async_import(
+            (source((0.5,), start=START + 24 * HOUR),), identity()
+        )
+        self.assertEqual(
+            (START + HOUR).isoformat(), self.store.value["series"][ID]["blocked_from"]
+        )
+        self.assertEqual(checkpoint, self.store.value["series"][ID]["checkpoint"])
+
+    async def test_short_replay_before_unresolved_gap_does_not_clear_boundary(self):
+        await self.adopt(source((0.25, 0.5, 0.75)))
+        await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
+        await self.writer.async_import((source((0.25, None, 0.75)),), identity())
+        await self.writer.async_import((source((0.25,)),), identity())
+        self.assertEqual(
+            (START + HOUR).isoformat(), self.store.value["series"][ID]["blocked_from"]
+        )
+        await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
+        self.assertIsNone(self.store.value["series"][ID]["blocked_from"])
+
+    async def test_epoch_without_checkpoint_remains_first_unverified_boundary(self):
+        await self.adopt()
+        later = source((0.5,), start=START + 24 * HOUR)
+        await self.writer.async_import((later,), identity())
+        self.assertEqual(
+            START.isoformat(), self.store.value["series"][ID]["blocked_from"]
+        )
+        self.assertIsNone(self.store.value["series"][ID]["checkpoint"])
+        args = {
+            "epoch_start": START + 24 * HOUR,
+            "statistic_ids": (ID,),
+            "expected_revision": self.writer.status()["revision"],
+        }
+        preview = await self.writer.async_select((later,), identity(), **args)
+        await self.writer.async_select(
+            (later,), identity(), **args, preview_digest=preview["preview_digest"]
+        )
+        await self.writer.async_import((later,), identity())
+        target = planner.segment_id(ID, START + 24 * HOUR)
+        self.assertEqual(0.5, self.recorder.rows[target][START + 24 * HOUR].sum)
+        self.assertNotIn(ID, self.recorder.metadata)
+
+    async def test_exact_checkpoint_survives_coverage_eviction_during_hold(self):
+        await self.adopt(source((0.25, 0.5)))
+        await self.writer.async_import((source((0.25, 0.5)),), identity())
+        await self.writer.async_import((source((0.25, None)),), identity())
+        checkpoint = deepcopy(self.store.value["series"][ID]["checkpoint"])
+        self.store.value["series"][ID]["coverage"].pop(START.isoformat())
+        payload = {
+            key: value for key, value in self.store.value.items() if key != "integrity"
+        }
+        self.store.value["integrity"] = manager._digest(payload)
+        replacement = self.fresh()
+        await replacement.async_import(
+            (source((0.5,), start=START + 24 * HOUR),), identity()
+        )
+        self.assertEqual(checkpoint, self.store.value["series"][ID]["checkpoint"])
+        self.assertEqual(
+            (START + HOUR).isoformat(), self.store.value["series"][ID]["blocked_from"]
         )
 
 
