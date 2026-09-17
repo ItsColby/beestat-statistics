@@ -97,7 +97,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             ROOT / "custom_components/beestat_statistics/sensor.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("summary_window=not force_full_summary", init_text)
+        self.assertIn(
+            'summary_window=mode == "hourly" or not force_full_summary', init_text
+        )
         self.assertIn("async def _async_full_summary_rows", init_text)
         self.assertNotIn("full_rows = list(runtime_data.summary_rows)", init_text)
         self.assertIn("summary_window: bool = False", coordinator_text)
@@ -266,6 +268,10 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
     def test_runtime_data_is_config_entry_owned(self) -> None:
         for path in (ROOT / "custom_components/beestat_statistics").glob("*.py"):
+            if path.name == "hourly_import.py":
+                # A completion-task handoff survives entry cancellation. Runtime
+                # data/coverage remain entry-owned; the Store remains the ledger.
+                continue
             self.assertNotIn("hass.data", path.read_text(encoding="utf-8"))
 
         runtime_text = (
@@ -745,6 +751,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "invalid_rebuild_date_range",
                 "unknown_thermostat_id",
                 "statistics_import_failed",
+                "hourly_statistics_failed",
             },
         )
         self.assertTrue(exception_keys <= set(strings["exceptions"]))

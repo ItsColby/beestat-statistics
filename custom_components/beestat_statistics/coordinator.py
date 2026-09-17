@@ -669,6 +669,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_overlap_days: int | None,
         summary_fallback_reason: str | None,
         cumulative_seed_count: int,
+        coverage_incomplete: bool = False,
     ) -> None:
         """Record the latest Recorder import metrics for diagnostic sensors."""
 
@@ -678,7 +679,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_imported_series = imported_series
         self.last_imported_rows = imported_rows
         self.last_import_source_rows = source_rows
-        self.last_import_partial = skipped_windows > 0
+        self.last_import_partial = skipped_windows > 0 or coverage_incomplete
         self.last_import_skipped_windows = skipped_windows
         self.last_import_skipped_runtime_thermostat_windows = (
             skipped_runtime_thermostat_windows

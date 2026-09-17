@@ -6,6 +6,7 @@ successful query or an empty result. This module supplies no write authority.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,10 @@ from typing import Any
 from .hourly_statistics import HourlySeries
 
 _HOUR = timedelta(hours=1)
+_HOURLY_ID = re.compile(
+    r"(?P<base>beestat:[a-z0-9]+(?:_[a-z0-9]+)*_hourly_v2)"
+    r"(?:_e(?P<epoch>[0-9]{8}t[0-9]{6}z))?"
+)
 _METADATA_FIELDS = (
     "statistic_id",
     "source",
@@ -72,10 +77,14 @@ class CumulativeCheckpoint:
     Activation must persist these values after verified native readback, never
     derive a replacement epoch from the oldest currently fetchable raw timestamp.
     None is valid for last_verified_hour only before the epoch's first import.
+    When supplied, trusted_row must be the exact saved predecessor for this
+    window and match the native row. It may precede last_verified_hour when
+    replaying a wider window of previously verified hours.
     """
 
     epoch_start: datetime
     last_verified_hour: datetime | None = None
+    trusted_row: HourlyStatisticRow | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +116,57 @@ class SeriesImportPlan:
     def legacy_statistic_id(self) -> str:
         """Identify the preserved legacy series without querying or changing it."""
 
-        return self.statistic_id.removesuffix("_hourly_v2")
+        return hourly_base_id(self.statistic_id).removesuffix("_hourly_v2")
 
     @property
     def unblocked_rows(self) -> tuple[HourlyStatisticRow, ...]:
         """Return locally reconciled rows, not authorized or native-verified writes."""
 
         return () if self.blocking_reasons else self.calculated_rows
+
+
+def hourly_base_id(statistic_id: str) -> str:
+    """Validate an explicit hourly ID and return its initial successor ID."""
+
+    return _parse_hourly_id(statistic_id)[0]
+
+
+def segment_id(base: str, epoch: datetime) -> str:
+    """Name a deliberately selected segment without allocating or adopting it."""
+
+    initial, existing_epoch = _parse_hourly_id(base)
+    if existing_epoch is not None:
+        raise ValueError("A segment must be named from its initial hourly base ID")
+    normalized = _utc_hour(epoch)
+    return (
+        f"{initial}_e{normalized.year:04d}{normalized.month:02d}"
+        f"{normalized.day:02d}t{normalized.hour:02d}0000z"
+    )
+
+
+def _parse_hourly_id(statistic_id: str) -> tuple[str, datetime | None]:
+    if (
+        not isinstance(statistic_id, str)
+        or (match := _HOURLY_ID.fullmatch(statistic_id)) is None
+    ):
+        raise ValueError("Only explicit hourly successor IDs may be planned")
+    stamp = match.group("epoch")
+    if stamp is None:
+        return match.group("base"), None
+    try:
+        epoch = datetime(
+            int(stamp[:4]),
+            int(stamp[4:6]),
+            int(stamp[6:8]),
+            int(stamp[9:11]),
+            int(stamp[11:13]),
+            int(stamp[13:15]),
+            tzinfo=UTC,
+        )
+        epoch = _utc_hour(epoch)
+    except ValueError as err:
+        raise ValueError("Hourly segment IDs require a valid whole UTC hour") from err
+    return match.group("base"), epoch
 
 
 def plan_hourly_import(
@@ -143,10 +196,7 @@ def _plan_series(
     snapshot: RecorderSnapshot | None,
     checkpoints: Mapping[str, CumulativeCheckpoint],
 ) -> SeriesImportPlan:
-    if not item.statistic_id.startswith("beestat:") or not item.statistic_id.endswith(
-        "_hourly_v2"
-    ):
-        raise ValueError("Only explicit hourly successor IDs may be planned")
+    hourly_base_id(item.statistic_id)
     starts = [_utc_hour(hour.start) for hour in item.hours]
     if any(right != left + _HOUR for left, right in pairwise(starts)):
         raise ValueError("Coverage must contain every requested hour in order")
@@ -286,7 +336,19 @@ def _cumulative_basis(
     if checkpoint is None:
         return None
     epoch = _utc_hour(checkpoint.epoch_start)
+    segment_epoch = _parse_hourly_id(item.statistic_id)[1]
+    if segment_epoch is not None and epoch != segment_epoch:
+        return None
     if epoch > first:
+        return None
+    trusted = checkpoint.trusted_row
+    if trusted is not None and (
+        _utc_hour(trusted.start) != first - _HOUR
+        or checkpoint.last_verified_hour is None
+        or _utc_hour(checkpoint.last_verified_hour) < _utc_hour(trusted.start)
+        or not _valid_row(trusted, True)
+        or existing.get(first - _HOUR) != trusted
+    ):
         return None
     if epoch == first:
         # An epoch cannot silently replace a known earlier cumulative segment.
@@ -312,7 +374,7 @@ def _cumulative_rows(
         reasons.add("unproven_cumulative_basis")
         return (), _utc_hour(item.hours[0].start)
     state, total = basis
-    rows = []
+    rows: list[HourlyStatisticRow] = []
     for hour in item.hours:
         if hour.reason != "ready" or hour.values is None:
             reasons.add("cumulative_source_gap")

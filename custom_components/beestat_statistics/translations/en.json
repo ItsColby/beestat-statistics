@@ -304,6 +304,9 @@
     "statistics_import_failed": {
       "message": "The statistics import did not finish. Check the integration status and Home Assistant logs before trying again."
     },
+    "hourly_statistics_failed": {
+      "message": "The hourly statistics action did not finish. Read the current hourly status and coverage, then review the selection and revision before retrying."
+    },
     "filter_change_boundary_conflict": {
       "message": "The saved filter cycle differs from the expected values. Read the current saved filter state and review it before submitting again."
     },
@@ -337,9 +340,57 @@
     }
   },
   "services": {
+    "select_hourly_statistics": {
+      "name": "Select hourly Beestat statistics",
+      "description": "Preview explicitly selected hourly statistics or a recovery segment. To apply, repeat the same selection with its returned preview digest and expected revision. Reads Beestat history; applying updates retained selection and Recorder statistics.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics entry to select."
+        },
+        "epoch_start": {
+          "name": "First hour",
+          "description": "Whole UTC hour with an explicit offset, within the past 366 days."
+        },
+        "statistic_ids": {
+          "name": "Statistic IDs",
+          "description": "Explicit hourly base statistic IDs to select; no automatic selection."
+        },
+        "expected_revision": {
+          "name": "Expected revision",
+          "description": "Current hourly statistics revision from Get Beestat configuration."
+        },
+        "preview_digest": {
+          "name": "Preview digest",
+          "description": "Omit for a preview. Supply the returned digest to apply that exact selection."
+        }
+      }
+    },
+    "get_hourly_coverage": {
+      "name": "Get hourly Beestat coverage",
+      "description": "Read cached hourly coverage and selected identities without contacting Beestat, importing statistics, or changing retained state.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics entry to inspect."
+        },
+        "start": {
+          "name": "Start hour",
+          "description": "Inclusive whole UTC hour with an explicit offset."
+        },
+        "end": {
+          "name": "End hour",
+          "description": "Exclusive whole UTC hour, at most 366 elapsed days after start."
+        },
+        "statistic_ids": {
+          "name": "Statistic IDs",
+          "description": "Omit to inspect all selected hourly series."
+        }
+      }
+    },
     "get_configuration": {
       "name": "Get Beestat configuration",
-      "description": "Read saved settings, effective mappings, filter state, and source details without contacting Beestat or changing state. Credentials are omitted; private identifiers and household details are included.",
+      "description": "Read saved settings, effective mappings, filter state, hourly status, and source details without contacting Beestat or changing state. Credentials are omitted; private identifiers and household details are included.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",
@@ -349,7 +400,7 @@
     },
     "import_statistics": {
       "name": "Import Beestat statistics",
-      "description": "Refresh Beestat runtime and metadata, update integration entities, and import daily history into Home Assistant's long-term statistics.",
+      "description": "Refresh Beestat runtime and metadata, update integration entities, and import history using the entry's selected daily or hourly statistics mode.",
       "fields": {
         "point_lookback_days": {
           "name": "Point lookback days",
@@ -363,7 +414,7 @@
     },
     "rebuild_statistics": {
       "name": "Rebuild Beestat statistics",
-      "description": "Reimport historical Beestat statistics. Cumulative totals are rebuilt from the start date through the latest source day; measurement series use the selected date range.",
+      "description": "Reimport historical Beestat statistics. Cumulative totals are rebuilt from the start date through the latest available source interval; measurement series use the selected date range.",
       "fields": {
         "thermostat_id": {
           "name": "Thermostat ID",
@@ -371,11 +422,11 @@
         },
         "start_date": {
           "name": "Start date",
-          "description": "First local date to update in Recorder. Earlier summary history is read to calculate cumulative totals. Omit for all available summaries and the configured point-history lookback."
+          "description": "First local date to update in Recorder. Daily mode uses summary history; hourly mode requires raw observations and verified continuity, within 366 elapsed days. Omit to use the configured history lookback for hourly data."
         },
         "end_date": {
           "name": "End date",
-          "description": "Last local date to update for measurements. Cumulative totals are updated through the latest source day. Omit to read point history through now."
+          "description": "Last local date to update for measurements. Cumulative totals are updated through the latest available source interval. Omit to read point history through now."
         },
         "skip_sync": {
           "name": "Skip Beestat sync",

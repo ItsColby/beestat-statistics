@@ -77,6 +77,8 @@ MIN_SCAN_INTERVAL_SECONDS = 300
 
 SERVICE_IMPORT_STATISTICS = "import_statistics"
 SERVICE_GET_CONFIGURATION = "get_configuration"
+SERVICE_GET_HOURLY_COVERAGE = "get_hourly_coverage"
+SERVICE_SELECT_HOURLY_STATISTICS = "select_hourly_statistics"
 SERVICE_REBUILD_STATISTICS = "rebuild_statistics"
 SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY = "repair_filter_change_boundary"
 SERVICE_RECORD_FILTER_CHANGE = "record_filter_change"
@@ -89,6 +91,12 @@ ATTR_REQUEST_ID = "request_id"
 ATTR_END_DATE = "end_date"
 ATTR_SKIP_SYNC = "skip_sync"
 ATTR_START_DATE = "start_date"
+ATTR_EPOCH_START = "epoch_start"
+ATTR_EXPECTED_REVISION = "expected_revision"
+ATTR_PREVIEW_DIGEST = "preview_digest"
+ATTR_STATISTIC_IDS = "statistic_ids"
+ATTR_START = "start"
+ATTR_END = "end"
 
 
 def thermostat_entity_unique_id(thermostat_id: int, suffix: str) -> str:

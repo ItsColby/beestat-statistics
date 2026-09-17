@@ -1,5 +1,11 @@
 {
   "services": {
+    "select_hourly_statistics": {
+      "service": "mdi:chart-timeline-variant"
+    },
+    "get_hourly_coverage": {
+      "service": "mdi:chart-box-outline"
+    },
     "get_configuration": {
       "service": "mdi:code-json"
     },

@@ -13,7 +13,7 @@ The normal flow is:
 1. The client requests Beestat synchronization, then reads thermostat, sensor, and summary resources. An optional `ecobee_thermostat` read supplies allowlisted settings; its failure leaves that projection unavailable without discarding primary runtime data.
 2. The coordinator normalizes resource identities and builds one `BeestatRuntimeData` snapshot containing effective configuration, source rows, runtime observations, metadata, settings, and room-temperature spread.
 3. Entity platforms project that snapshot. Registry and mapped-state events can rebuild relevant cached projections; entity property reads perform no network requests.
-4. The importer obtains recent point history, builds daily statistics, and submits them through Home Assistant's external-statistics API. Recorder remains the history owner.
+4. The importer resolves the entry's statistics mode under its existing lock. Entries without an hourly selection retain daily imports. Explicitly adopted entries reconcile any pending hourly batch before acquiring new point history, then build and verify hourly statistics through Home Assistant's external-statistics API. Recorder remains the history owner.
 
 Runtime refreshes and imports have separate locks. Scheduled import requests coalesce to one running pass plus one pending follow-up through [`task_coalescer.py`](../custom_components/beestat_statistics/task_coalescer.py). This bounds repeated timer/helper events without dropping the need to reconcile current state. Entry-owned background tasks, listeners, and timers stop on unload; retained coordinator/importer references reject new work. The startup import reuses the initial refresh by skipping another sync request.
 
@@ -27,7 +27,7 @@ The config flow allows one entry. An authenticated thermostat read supplies hash
 
 Awaited validation and preview steps cannot assume their initial entry snapshot still owns the save. Connection flows check the saved data again; account replacement checks both data and options. Same-account connection edits preserve intervening options updates. Mapping/source-scope previews are checked against current discovery and configuration before committing. A changed owner aborts or regenerates the relevant preview rather than overwriting a winning update. These races are exercised in [`test_config_flow_ha.py`](../tests/test_config_flow_ha.py).
 
-Native entity unique IDs use numeric Beestat resource IDs plus a semantic suffix. Display names and suggested entity IDs can change without changing that identity. External Recorder statistic IDs are different: they use the effective slug under the `beestat:` source. Changing a slug therefore changes the statistic identity; stable entity IDs do not imply automatic historical-series migration.
+Native entity unique IDs use numeric Beestat resource IDs plus a semantic suffix. Display names and suggested entity IDs can change without changing that identity. Legacy external Recorder statistic IDs use the effective slug under the `beestat:` source, so changing a slug changes their statistic identity. Explicit hourly adoption binds the initial statistic ID to the source resource and quantity; later display-name or slug changes retain that adopted ID. Neither path automatically migrates legacy history.
 
 ### Mapping and physical proof
 
@@ -60,8 +60,10 @@ Room-temperature spread combines mapped readings for identity-qualified members 
 This production format has an interval limitation: Home Assistant's external
 statistics import is hourly, so it represents these daily aggregates as one-hour
 rows. Daily cumulative differences can still be meaningful, but hourly queries
-cannot recover the day's missing intervals. The preparation described below does
-not activate a repair or change the existing importer. [Core import contract](https://github.com/home-assistant/core/blob/2026.9.2/homeassistant/components/recorder/statistics.py#L2670).
+cannot recover the day's missing intervals. The explicit hourly mode described
+below supplies actual hourly rows without rewriting those legacy IDs. Installing
+this source does not select an epoch or migrate an existing entry.
+[Core import contract](https://github.com/home-assistant/core/blob/2026.9.2/homeassistant/components/recorder/statistics.py#L2670).
 
 Known-unit absolute temperatures share the lower-bound check in [`temperature.py`](../custom_components/beestat_statistics/temperature.py). Historical outdoor, setpoint and room-sensor values are checked after source scaling and before aggregation; summary means and each supplied extremum are checked independently. Their qualified upstream tenths-Fahrenheit representation permits a `0.05 °F` half-step allowance in addition to floating-point roundoff, preserving the rounded absolute-zero value `−459.7 °F` while rejecting `−460 °F`. This source allowance does not apply to precise local HA readings. The pinned Beestat [runtime scaling](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_sensor.php#L113) and [summary rounding](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_thermostat_summary.php#L345) show this representation; the [API inventory](beestat-api-surface.json) records their source identities. Invalid means omit that day's measurement, while an invalid extremum omits only that extremum. Valid negative Celsius/Fahrenheit readings and finite high temperatures remain supported.
 
@@ -73,184 +75,198 @@ Point requests are divided into bounded windows. Recoverable failures, including
 
 Identity normalization removes duplicate source rows before aggregation; the last metadata/summary row wins, including deletion. An omitted optional counter contributes zero; an explicitly invalid counter stops its affected cumulative series. Numeric parsing and accumulation reject negative counters, non-finite or unrepresentable values, including overflow after conversion or seeding. A cumulative series also stops when its running total can no longer be represented instead of publishing a corrupted continuation. See [`test_statistics_builder.py`](../tests/test_statistics_builder.py), [`test_import_evidence.py`](../tests/test_import_evidence.py), and the real Recorder rebuild/seed coverage in [`test_filter_actions_ha.py`](../tests/test_filter_actions_ha.py).
 
-### Hourly repair preparation
+### Explicit hourly imports
 
-[`hourly_statistics.py`](../custom_components/beestat_statistics/hourly_statistics.py)
-and [`hourly_import_plan.py`](../custom_components/beestat_statistics/hourly_import_plan.py)
-are pure preparation modules. Production setup, services, imports, configuration
-and legacy writes do not call them. The proposed successor identity appends
-`_hourly_v2` to the existing statistic suffix; legacy IDs are never renamed or
-mutated by these modules. This naming contract remains subject to the separate
-activation and consumer-migration decision.
+The existing config-entry importer owns
+[`HourlyImportManager`](../custom_components/beestat_statistics/hourly_import.py).
+It calls the pure
+[hourly builder](../custom_components/beestat_statistics/hourly_statistics.py) and
+[planner](../custom_components/beestat_statistics/hourly_import_plan.py), the
+[Recorder adapter](../custom_components/beestat_statistics/hourly_recorder.py), and
+the [versioned journal](../custom_components/beestat_statistics/hourly_storage.py).
+Scheduled imports, manual imports, rebuilds and explicit selections share the
+importer's existing lock. There is no second scheduled writer.
+
+An entry stays in legacy daily mode until an explicit
+`select_hourly_statistics` selection is applied. Selection stops all legacy
+statistics writes for that entry and admits only its selected hourly quantities.
+It does not rename, rewrite or remove legacy history. New resources and newly
+available quantities require another deliberate selection; routine refresh does
+not adopt them. Daily summaries remain available to the filter engine and other
+explicitly daily uses.
 
 The builder uses actual thermostat and sensor five-minute points for all declared
-families, including the quantities currently imported from daily summaries. It
-normalizes UTC instants before duplicate resolution and hour grouping, keeps the
-last row at a repeated instant including deletion/invalidity, and retains coverage
-for every requested hour. The conservative eligibility rule requires twelve
-distinct valid slots, a closed hour and an admitted source horizon. This is an
-explicit product-design tradeoff, not a native Recorder completeness guarantee.
-Missing or invalid slots are never zero-filled. Malformed timestamps remain
-visible as rejected source rows; the planner withholds their affected series
-because their position cannot be established.
+families, including quantities previously imported from daily summaries. The
+hourly acquisition path preserves source order and tombstones through duplicate
+resolution: the last normalized resource/UTC-instant row wins, including deletion
+or invalidity. Every requested hour retains coverage evidence. An eligible hour
+has twelve distinct valid slots, is closed, and falls within the admitted observed
+source horizon. Missing or invalid slots are never zero-filled. Malformed
+timestamps remain rejected source rows and hold their affected series because
+their position cannot be established.
 
-Measurement means remain arithmetic means of interval-start samples, distinct
-from Recorder's time-weighted held values. Runtime increments retain Beestat's
+Measurement means are arithmetic means of interval-start samples, distinct from
+Recorder's time-weighted held values. Runtime increments retain Beestat's
 exclusive-stage and fan semantics and convert seconds to hours. Degree-day
 increments use the source's 65°F base and fixed five-minute fraction of a 24-hour
-day; they do not normalize DST or missing samples. The source already normalizes
-AQI to percent. VOC's trusted-unit successor is held pending authoritative unit
-evidence; the existing declaration alone is insufficient. Daily summaries remain
-available to the filter engine and for their explicitly daily uses.
+day; they do not normalize DST or missing samples. AQI is already normalized to
+percent. Humidity and AQI require values in 0–100, and CO2 cannot be negative.
+VOC hourly adoption remains blocked pending authoritative unit evidence; the
+legacy unit declaration alone is insufficient.
 
-The read-only planner requires an explicit cumulative checkpoint and a complete
-supplied Recorder snapshot, including successor metadata and every row from the
-preceding hour through the latest retained row. An empty query alone does not
-prove completeness. Only an exact preceding successor-hour seed can continue an
-existing cumulative epoch. The checkpoint carries the epoch origin and last
-verified continuous hour independently of the rolling raw-history window. An
-expired raw prefix does not invalidate a trusted exact predecessor; a missing
-seed cannot silently move the epoch forward. At a new epoch, the first row includes
-its actual first complete hour's increment, without a fabricated zero predecessor.
-The caller must establish snapshot coverage, preserve
-identity/unit compatibility, serialize with the writer and revalidate before any
-later effect; the pure planner neither acquires data nor proves those conditions.
-Its detached results expose proposed rows, every hour's coverage, continuity
-breaks, blocking reasons and surviving stale row starts. `unblocked_rows` means
-only that the supplied plan has no local blocker; it grants no authority and is
-not proof of a completed import.
+The planner requires a complete supplied Recorder snapshot: compatible metadata,
+all supported numeric fields, and every retained row from the exact preceding
+hour through the latest retained tail. An authoritative empty result is distinct
+from missing metadata, an incomplete query, a populated row and a cleared row.
+The adapter fences queued Recorder work before reading. A cumulative continuation
+requires the exact saved predecessor row to match Recorder, plus the independently
+saved last verified checkpoint. An expired raw prefix does not move the epoch;
+a missing or changed predecessor/checkpoint blocks continuation. At a new epoch,
+the first row includes its actual first complete hour's increment, without a
+fabricated zero predecessor. A locally unblocked plan is still only proposed data.
 
-A cumulative gap withholds the affected series' entire proposed batch. A changed
-increment requires recalculating every affected retained successor total. If a
-correction or deletion invalidates a previously published hour, the plan identifies
-the stale measurement or cumulative suffix that an omitted upsert would leave
-behind. Stopping new writes does not repair those rows. Before activation, a
-separate native recovery contract must cover backup and restore, stale-row
-correction/removal, raw-history loss, metadata drift, partial submissions,
-Recorder completion/readback, versioned cutover and deliberate downgrade. No
-automatic resets, gap bridges or new epochs are selected here. An unrecoverable
-gap can therefore stall a cumulative series; that limitation must be resolved
-explicitly before consumer adoption.
+### Segments and native recovery
 
-### Recovery and persistence contract
+Use the same adopted ID when actual observations and a trusted exact predecessor
+can reconstruct the complete affected cumulative suffix. Recompute every affected
+retained total; changing only the corrected hour leaves later totals wrong.
+A source gap holds the cumulative batch. When stale values survive, the writer
+records the invalidation boundary and clears the complete affected suffix,
+including retained rows beyond the fetched source window. It never silently
+truncates that suffix. Measurement corrections invalidate their affected hours.
 
-Use the same successor ID when actual observations and a trusted exact predecessor
-can reconstruct the complete affected cumulative suffix. Recompute those totals;
-an upsert of only the corrected hour leaves later totals wrong. A missing raw
-prefix is acceptable only when its exact predecessor remains independently
-verified. Source expiry cannot move the epoch, and a row's presence alone is not
-continuity proof. These rules apply separately to each quantity.
+An unrecoverable gap can stop a cumulative segment. Resumption requires an
+explicit later complete epoch and a distinct segment ID. The initial ID appends
+`_hourly_v2` to the legacy suffix; later IDs append
+`_eYYYYMMDDtHHMMSSz` to that adopted base, with UTC minutes and seconds both zero.
+The saved selection binds the exact ID, epoch, account anchors, source resource
+and quantity/unit contract. Renamed slugs cannot allocate a second owner for the
+same adopted quantity. Matching unowned Recorder metadata is still an identity
+collision and blocks selection.
 
-An unrecoverable gap stops that cumulative segment. The recovery choice is an
-explicitly selected new segment with its own immutable ID and epoch, preserving
-the old segment. Routine refresh never allocates another ID. A missing hour is
-first a recoverable hold; expiry or a failed request alone does not approve a
-segment transition. Preview must identify the first incomplete hour, the proposed
-complete starting hour, retained rows to invalidate and affected consumers before
-the separate activation decision. Repeated permanent gaps require a new deliberate
-decision rather than an automatic chain of IDs.
+A selection preview identifies target IDs, the observed first hour, units,
+resource bindings, closed boundaries, surviving stale rows and unselected
+quantities. Applying requires that exact preview digest and revision. The old
+segment's stale suffix must be reconciled before its new segment is admitted;
+the valid old prefix and closed-segment boundary remain. Routine imports never
+allocate epochs or bridge gaps.
 
-Bind a selected segment once to the existing adopted series identity, source
-account/resource identity, quantity/unit contract and whole UTC start. A future
-segment ID uses the adopted base ID plus `_eYYYYMMDDtHHMMSSz`; persisted selection
-owns this exact ID across retries, reloads and display-name changes. A conflicting
-existing ID or metadata blocks adoption. The initial `_hourly_v2` IDs remain the
-first segment; the preparation builder and planner do not allocate or route later
-segment IDs. That integration remains a subsequent source change.
+The first row of every segment contains its observed increment. Native hour/day
+changes within that segment cover only its observations, including a partial first
+day; a daily timestamp does not establish a complete day. Consumers must retain
+segment boundaries and must not splice segments into an apparently continuous
+total. Measurement series can resume under the same ID after missing hours, but
+native daily means likewise cover only the remaining observations.
 
-The first row of each new segment contains the first observed hour's increment.
-There is no synthetic preceding zero row. Native hour/day changes within that
-segment describe its covered observations, including a partial first day; a daily
-timestamp does not establish a complete day. Consumers must select the active
-segment explicitly and retain its coverage boundary. They must not splice segments
-into an apparently continuous total or describe their sum across a gap as complete
-runtime. Measurement series can resume under the same ID after missing hours, but
-their native daily means likewise describe only the remaining observations.
+Start-only upserts invalidate native numeric values while preserving statistic
+identity. Fully null rows are cleared, distinct from partially populated malformed
+rows; they cannot seed a counter or restore coverage. Native nulls are not a
+general missing-duration marker: a same-ID counter resumed after a null can yield
+different changes depending on the query's start. Carry-forward, resetting
+`sum`/`state`, or adding `last_reset` cannot establish truthful continuity across
+that gap. These counterexamples remain part of the
+[native Recorder contract tests](../tests/test_hourly_recorder_ha.py).
 
-Start-only upserts provide the native path to invalidate stale numeric
-values without removing a statistic's identity. A measurement correction targets
-its invalid hour; a cumulative correction targets every stale row from the first
-invalid hour through the retained end. The complete snapshot must include all
-metadata-supported numeric fields and every retained row in that suffix. The pure
-planner recognizes
-fully null rows as cleared, distinct from partially populated malformed rows.
-Cleared rows are never cumulative seeds and do not restore source coverage. Native
-nulls are not a general missing-duration marker: a same-ID counter resumed after a
-null can yield different changes depending on the query's start. Carry-forward,
-resetting `sum`/`state`, or adding `last_reset` therefore cannot establish a truthful
-continuous recovery contract.
+### Durable intent and entry lifecycle
 
-At activation, the existing config-entry importer owns one versioned Home
-Assistant `Store` document, keyed by the entry and hourly-import contract. No
-parallel options fields, helper entities or external ledger are needed. Persist:
+Each entry owns one versioned `HourlyStore` journal at the native Store path
+`.storage/beestat_statistics.<entry_id>.hourly_import`. It records adopted
+identities and segments, bounded per-hour verified coverage, exact continuity
+checkpoints, unresolved boundaries, a revision, and at most one pending series
+batch. That batch captures expected prior rows or absence, intended rows or
+clearing operations, metadata, the predecessor and retained tail, and a digest
+of the detached intent.
 
-- the adopted account/resource and quantity/unit identities, immutable segment
-  IDs/epochs, selected active segment and closed-segment boundaries;
-- the last native-verified continuous hour and its exact state/sum, independently
-  of fetch-window bounds, plus the earliest unresolved invalidation boundary;
-- a revision and at most one pending series batch containing detached expected
-  prior values/absence, intended values or clearing operations, compatible metadata,
-  predecessor, target range and a deterministic digest of that complete intent.
+`HourlyStore` uses native atomic Store writes and then reads its exact owned path
+through the uncached native JSON reader. Native `Store.async_save` can log and
+swallow a `WriteError`; a normal return, cached load or pending in-memory value
+does not prove durability. The adapter checks the envelope's key and versions,
+then compares the disk contents with the exact intended journal. Missing files,
+corrupt contents and unsupported versions remain distinct failures.
 
-Serialize preparation, Store updates, Recorder submission and reconciliation under
-the config-entry writer. Close admission on unload; a replacement runtime first
-drains/reconciles pending work. Recorder and Store do not form a shared transaction:
+Entry data contains one `hourly_import_contract` marker with contract version and
+adoption token. It establishes adoption authority; it does not mirror epochs,
+coverage or checkpoints into options or entry data. Initial selection saves its
+prepared journal, updates the marker through native `async_update_entry`, then
+saves the selected state. The entry update uses Home Assistant's delayed native
+persistence, so marker and journal writes are not one transaction. Any mismatch
+blocks routine hourly and legacy writes. An exact explicit selection retry can
+complete an interrupted selection or restore its missing marker; a different
+selection cannot silently take over.
 
-1. Acquire and verify the native snapshot and identity against the saved revision.
-   On discovering an invalid historical hour, durably lower trusted continuity and
-   record the invalidation boundary before any clearing or further import. Persist
-   the exact pending intent before enqueueing its first native effect. Failure to
-   save means no submission.
-2. Submit the captured batch. Return from submission proves queue acceptance only.
-   Do not advance continuity or report completed repair until the Recorder barrier
-   and exact native readback succeed. Later source corrections cannot mutate the
-   pending payload.
-3. After cancellation, restart or uncertain completion, drain surviving Recorder
-   work and compare each target plus metadata/predecessor with its expected states.
-   Exact intended rows are already applied; exact prior rows/absence may be retried
-   with the identical intent after that reconciliation. Any third state is a
-   conflict and stops the batch. A mixed result is not permission to recompute from
-   newer source data or overwrite an unknown writer.
-4. When all intended rows and required continuity are verified, advance the
-   checkpoint and remove the pending intent in one Store save. A crash before that
-   save is recovered by the same readback, without a new epoch or additive total.
-   Close an old segment only after its stale suffix is reconciled; adopt its explicit
-   successor only with the selected consumer transition.
+A present marker with a missing journal blocks continuation. A journal without
+its matching marker also blocks routine continuation. If both owners are missing,
+absence cannot prove that hourly adoption never happened. Restore a consistent
+backup or reconcile the prior selection and Recorder state manually before
+resuming; neither a fresh epoch nor the latest native row reconstructs that
+authority. Installing this implementation performs no automatic migration or
+existing-user epoch selection.
 
-The existing 366-day calculation bound also bounds one pending series batch.
-Oversized repairs require a separately specified bounded recovery plan; they cannot
-silently truncate the snapshot or stale suffix. Missing, corrupt, future-version or
-independently restored Store state blocks continuation until identities, epochs,
-native rows and pending effects are reconciled. Never infer replacement state from
-the oldest fetchable point or latest Recorder row. Deliberate downgrade must retain
-this state and prevent the old daily writer from targeting hourly successor IDs.
-This section specifies future persistence and writer behavior; neither is activated
-by the pure modules or the isolated native tests.
+Recorder and the journal have their own failure boundaries:
 
-An hourly runtime consumer needs the verified active statistic/segment, UTC hour
-starts, values in hours, and per-hour coverage for its requested window. A rolling
-24-hour chart can prioritize fan runtime, scale its hours axis to the plotted
-values, and show an average across the observed complete hours with that count
-explicit. Missing or invalid hours cannot become zeros, and a planned row cannot
-stand in for a verified import. The open current hour is expected latency; warnings
-should identify an actual missing, invalid, stale or incompatible source affecting
-the chart. A pending invalidation must suppress the affected display before stale
-native rows finish clearing. Segment boundaries and incomplete window coverage
-remain visible context without presenting every normal refresh as a warning.
-The activation phase must provide this coverage projection; native statistic rows
-alone do not carry it.
+1. Verify the saved identity/revision and complete native snapshot. Publish
+   suppression as soon as invalidation is known, then persist and verify the exact
+   intent before enqueueing any native effect. A failed or uncertain intent save
+   permits no submission.
+2. Submit the captured batch. Queue acceptance is not completed repair. Fence
+   Recorder, then compare complete metadata, predecessor, target rows and retained
+   tail with the journal's expected-before and intended-after states.
+3. Reconcile a pending batch before acquiring fresh provider data. Exact intended
+   rows are already applied; exact prior rows or absence may be retried with the
+   identical payload. Partial application does not permit recomputation from
+   newer source data. A metadata mismatch or any third row state stops the whole
+   batch, retains its intent and suppresses unverified consumer values.
+4. After complete native readback, save the new checkpoint/coverage and remove the
+   pending intent together. Only that verified save counts imported rows as
+   complete. A failed checkpoint save leaves the same batch recoverable through
+   readback, without allocating another epoch or adding increments twice.
 
-The focused tests in [`test_hourly_statistics.py`](../tests/test_hourly_statistics.py)
-and [`test_hourly_import_plan.py`](../tests/test_hourly_import_plan.py) exercise
-the proposed calculation and reconciliation behavior without Home Assistant.
-[`test_hourly_recorder_ha.py`](../tests/test_hourly_recorder_ha.py) exercises the
-same builder/planner through real external imports and native hour/day readback in
-disposable synthetic Recorder instances. Its cases cover first-hour increments,
-partial days, cleared rows, gap/reset counterexamples, segment boundaries, queued
-completion/replay, trusted native seeds and corrected suffixes. These checks prove
-the tested Recorder contracts. The future Store writer, persistence failure/restart
-paths, consumer adoption, historical repair and rollout still need their own
-implementation and validation.
+Unload closes admission immediately. A cancelled native save can continue, so
+`hass.data` holds only outstanding per-entry save-completion tasks to drain before
+a replacement generation loads its journal. Runtime, history and coverage stay
+with the typed entry runtime and journal; this handoff is not a second runtime
+registry. Recorder fencing handles effects that survived their cancelled waiter.
+Source identity loss, incompatible units, saved-state failures and native
+conflicts hold further effects and suppress unverified coverage.
+
+One series batch and each source/coverage window are bounded to 366 elapsed days.
+Oversized reconciliation requires a separately specified recovery plan; bounds
+cannot conceal retained rows. Deliberate downgrade must preserve the journal and
+marker and reconcile their effect before returning to a legacy writer.
+
+### Consumer coverage and delivery boundaries
+
+`get_configuration` exposes cached hourly mode, revision, pending/error state,
+selected IDs and segment boundaries. `get_hourly_coverage` projects an explicit
+whole-UTC-hour window without provider reads, imports or journal writes. Its
+cached read can return while a writer is waiting for Recorder so that pending
+invalidation suppresses affected values before the native rows finish clearing.
+
+Each selected series returns its active ID, units and epoch, closed boundaries,
+per-hour value/coverage and available slot counts, requested-hour count,
+`complete_observed_hours`, `complete`, and `observed_hour_average`. Runtime
+values are observed hourly increments in hours. The average divides the sum of
+verified values by complete observed hours; missing hours do not enter the
+denominator or become zeros. With no verified hours, the average is null. The
+open current hour is provisional, and hours outside the active segment remain
+outside its coverage. A query cannot combine closed and active segments into a
+continuous total.
+
+These are wired source capabilities, including current import status and
+coverage responses. External dashboards still need to select the adopted
+identities, use this coverage contract and represent missing hours and segment
+boundaries. Source implementation does not establish deployment, adoption by an
+existing installation or repair of its historical data. Actual provider history,
+repair horizon, source/native reconciliation, backup/restore readiness and the
+consumer transition remain prerequisites for a particular installation's repair.
+
+Focused tests in [the builder suite](../tests/test_hourly_statistics.py),
+[the planner suite](../tests/test_hourly_import_plan.py) and
+[the writer suite](../tests/test_hourly_import.py) cover calculation, identities,
+recovery and persistence failure paths. The
+[native Recorder suite](../tests/test_hourly_recorder_ha.py) retains synthetic
+hour/day, null, gap/reset, segment and suffix counterexamples. Those disposable
+contracts do not constitute proof of an actual installation or historical repair.
 
 ## Filter observation and action contracts
 

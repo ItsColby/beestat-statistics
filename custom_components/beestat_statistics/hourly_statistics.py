@@ -26,6 +26,8 @@ from .const import (
     SUMMARY_MEAN_STATISTICS,
     SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
+    SummaryMeanStatistic,
+    ThermostatPointStatistic,
 )
 from .temperature import absolute_temperature_value
 
@@ -286,6 +288,10 @@ def _thermostat_quantities(
         )
         for spec in SUMMARY_SUM_STATISTICS
     )
+    measurement_specs: tuple[SummaryMeanStatistic | ThermostatPointStatistic, ...] = (
+        *SUMMARY_MEAN_STATISTICS,
+        *THERMOSTAT_POINT_STATISTICS,
+    )
     quantities.extend(
         _Quantity(
             f"{slug}_{spec.statistic_suffix}",
@@ -294,7 +300,7 @@ def _thermostat_quantities(
             spec.unit_class,
             (spec.field.removeprefix("avg_"),),
         )
-        for spec in (*SUMMARY_MEAN_STATISTICS, *THERMOSTAT_POINT_STATISTICS)
+        for spec in measurement_specs
     )
     return tuple(quantities)
 

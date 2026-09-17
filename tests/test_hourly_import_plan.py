@@ -7,7 +7,7 @@ import sys
 import types
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
@@ -74,7 +74,9 @@ def _snapshot(series, rows=(), *, complete=True):
     return planner.RecorderSnapshot(tuple(rows), dict(series.metadata), complete)
 
 
-def _plan(series, *, snapshot=None, epoch=START, verified=START - HOUR):
+def _plan(
+    series, *, snapshot=None, epoch=START, verified=START - HOUR, trusted_row=None
+):
     return planner.plan_hourly_import(
         (series,),
         snapshots={} if snapshot is None else {series.statistic_id: snapshot},
@@ -84,12 +86,159 @@ def _plan(series, *, snapshot=None, epoch=START, verified=START - HOUR):
             series.statistic_id: planner.CumulativeCheckpoint(
                 epoch,
                 None if epoch == START else verified,
+                trusted_row,
             )
         },
     )[0]
 
 
 class HourlyImportPlanTests(unittest.TestCase):
+    def test_segment_identity_is_deterministic_and_preserves_initial_and_legacy_ids(
+        self,
+    ):
+        initial = _series().statistic_id
+        segment = planner.segment_id(initial, START)
+        self.assertEqual(f"{initial}_e20260910t040000z", segment)
+        self.assertEqual(initial, planner.hourly_base_id(initial))
+        self.assertEqual(initial, planner.hourly_base_id(segment))
+        offset_epoch = START.astimezone(timezone(timedelta(hours=-4)))
+        self.assertEqual(segment, planner.segment_id(initial, offset_epoch))
+        series = _series()
+        series = replace(series, metadata={**series.metadata, "statistic_id": segment})
+        result = _plan(series, snapshot=_snapshot(series))
+        self.assertEqual([1, 3], [row.sum for row in result.unblocked_rows])
+        self.assertEqual("beestat:zone_fan_runtime_hours", result.legacy_statistic_id)
+
+    def test_malformed_successor_and_segment_ids_are_rejected(self):
+        initial = _series().statistic_id
+        for invalid in (
+            "beestat:legacy",
+            "other:zone_hourly_v2",
+            "beestat:_hourly_v2",
+            "beestat:Zone_hourly_v2",
+            "beestat:zone__fan_hourly_v2",
+            initial + "_e20260910t040000Z",
+            initial + "_e20260910T040000z",
+            initial + "_e20260910t043000z",
+            initial + "_e20260910t040001z",
+            initial + "_e20260230t040000z",
+            initial + "_e20261310t040000z",
+            initial + "_e20260910t240000z",
+            initial + "_e20260910t040000z_extra",
+            initial + "_e20260910t040000z_e20260911t040000z",
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    planner.hourly_base_id(invalid)
+                series = _series()
+                series = replace(
+                    series, metadata={**series.metadata, "statistic_id": invalid}
+                )
+                with self.assertRaises(ValueError):
+                    _plan(series)
+
+    def test_segment_naming_requires_initial_id_and_aware_whole_hour(self):
+        initial = _series().statistic_id
+        with self.assertRaises(ValueError):
+            planner.segment_id(planner.segment_id(initial, START), START)
+        for epoch in (
+            START.replace(tzinfo=None),
+            START + timedelta(minutes=1),
+            START + timedelta(seconds=1),
+            START + timedelta(microseconds=1),
+        ):
+            with self.subTest(epoch=epoch), self.assertRaises(ValueError):
+                planner.segment_id(initial, epoch)
+
+    def test_segment_epoch_must_match_checkpoint_before_initial_or_continued_import(
+        self,
+    ):
+        series = _series()
+        segment = planner.segment_id(series.statistic_id, START - 5 * HOUR)
+        series = replace(series, metadata={**series.metadata, "statistic_id": segment})
+        seed = planner.HourlyStatisticRow(START - HOUR, state=12, sum=30)
+        result = _plan(series, snapshot=_snapshot(series))
+        self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+        self.assertFalse(result.calculated_rows)
+        for epoch in (START, START - 6 * HOUR):
+            with self.subTest(epoch=epoch):
+                result = _plan(series, snapshot=_snapshot(series, (seed,)), epoch=epoch)
+                self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+                self.assertFalse(result.calculated_rows)
+        result = _plan(
+            series, snapshot=_snapshot(series, (seed,)), epoch=START - 5 * HOUR
+        )
+        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+
+    def test_saved_exact_predecessor_must_match_native_values(self):
+        series = _series()
+        trusted = planner.HourlyStatisticRow(START - HOUR, state=12, sum=30)
+        result = _plan(
+            series,
+            snapshot=_snapshot(series, (trusted,)),
+            epoch=START - 5 * HOUR,
+            trusted_row=trusted,
+        )
+        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        for actual in (
+            replace(trusted, state=11),
+            replace(trusted, sum=29),
+            planner.HourlyStatisticRow(trusted.start),
+        ):
+            with self.subTest(actual=actual):
+                result = _plan(
+                    series,
+                    snapshot=_snapshot(series, (actual,)),
+                    epoch=START - 5 * HOUR,
+                    trusted_row=trusted,
+                )
+                self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+                self.assertFalse(result.unblocked_rows)
+
+    def test_saved_predecessor_does_not_supply_missing_native_row(self):
+        series = _series()
+        trusted = planner.HourlyStatisticRow(START - HOUR, state=12, sum=30)
+        result = _plan(
+            series,
+            snapshot=_snapshot(series),
+            epoch=START - 5 * HOUR,
+            trusted_row=trusted,
+        )
+        self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+        self.assertFalse(result.unblocked_rows)
+
+    def test_saved_predecessor_can_precede_last_verified_hour_for_wider_replay(self):
+        series = _series()
+        trusted = planner.HourlyStatisticRow(START - HOUR, state=12, sum=30)
+        result = _plan(
+            series,
+            snapshot=_snapshot(series, (trusted,)),
+            epoch=START - 5 * HOUR,
+            verified=START + HOUR,
+            trusted_row=trusted,
+        )
+        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+
+    def test_saved_predecessor_must_match_window_and_be_verified(self):
+        series = _series()
+        seed = planner.HourlyStatisticRow(START - HOUR, state=12, sum=30)
+        for trusted, verified in (
+            (replace(seed, start=START - 2 * HOUR), START - HOUR),
+            (seed, START - 2 * HOUR),
+            (seed, None),
+            (replace(seed, sum=None), START - HOUR),
+        ):
+            with self.subTest(trusted=trusted, verified=verified):
+                result = _plan(
+                    series,
+                    snapshot=_snapshot(series, (seed,)),
+                    epoch=START - 5 * HOUR,
+                    verified=verified,
+                    trusted_row=trusted,
+                )
+                self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+                self.assertFalse(result.unblocked_rows)
+
     def test_explicit_epoch_and_verified_empty_snapshot_start_new_counter(self):
         series = _series()
         result = _plan(series, snapshot=_snapshot(series))
