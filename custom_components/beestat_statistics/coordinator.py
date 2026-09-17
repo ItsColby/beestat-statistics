@@ -59,6 +59,7 @@ from .filter_runtime import (
     observed_threshold_date,
 )
 from .profile import ScheduleProfile, schedule_profiles_by_ref
+from .temperature import absolute_temperature_value
 from .thermostat_settings import (
     ThermostatSettingsSnapshot,
     build_thermostat_settings_snapshots,
@@ -242,6 +243,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days: int | None = None
         self.last_import_summary_fallback_reason: str | None = None
         self.last_import_cumulative_seed_count: int | None = None
+        self.last_import_writers: dict[str, int | str | None] | None = None
         self.last_filter_alert_dismiss_attempt_at: datetime | None = None
         self.last_filter_alert_dismiss_thermostat_id: int | None = None
         self.last_filter_alert_dismiss_matched: int | None = None
@@ -668,6 +670,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_overlap_days: int | None,
         summary_fallback_reason: str | None,
         cumulative_seed_count: int,
+        coverage_incomplete: bool = False,
+        writer_result: dict[str, int | str | None] | None = None,
     ) -> None:
         """Record the latest Recorder import metrics for diagnostic sensors."""
 
@@ -677,7 +681,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_imported_series = imported_series
         self.last_imported_rows = imported_rows
         self.last_import_source_rows = source_rows
-        self.last_import_partial = skipped_windows > 0
+        self.last_import_partial = skipped_windows > 0 or coverage_incomplete
         self.last_import_skipped_windows = skipped_windows
         self.last_import_skipped_runtime_thermostat_windows = (
             skipped_runtime_thermostat_windows
@@ -690,6 +694,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = summary_overlap_days
         self.last_import_summary_fallback_reason = summary_fallback_reason
         self.last_import_cumulative_seed_count = cumulative_seed_count
+        self.last_import_writers = (
+            dict(writer_result) if writer_result is not None else None
+        )
         self.async_update_listeners()
 
     @callback
@@ -702,6 +709,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = None
         self.last_import_summary_fallback_reason = "import_failed"
         self.last_import_cumulative_seed_count = None
+        self.last_import_writers = None
         self._async_record_error(err)
 
     async def _async_fetch_runtime_data(
@@ -775,12 +783,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             summary_window_start = None
             summary_window_end = None
             if summary_window:
-                config = build_beestat_config(
-                    self.hass,
-                    thermostat_rows_tuple,
-                    sensor_rows_tuple,
-                    entry_runtime_config_data(_typed_config_entry(self)),
-                )
                 for _attempt in range(_SUMMARY_TEMPORAL_CONTEXT_ATTEMPTS):
                     query_context = self.capture_temporal_context()
                     query_day = query_context.evaluated_at.astimezone(
@@ -1569,10 +1571,16 @@ def _temperature_state_value(
         return None
     value = _finite_float(getattr(state, "state", None))
     attributes = getattr(state, "attributes", None)
-    source_unit = _canonical_temperature_unit(
-        attributes.get("unit_of_measurement") if isinstance(attributes, dict) else None
-    )
-    if value is None or source_unit is None:
+    if (
+        not isinstance(attributes, dict)
+        or attributes.get("device_class", "temperature") != "temperature"
+    ):
+        return None
+    source_unit = _canonical_temperature_unit(attributes.get("unit_of_measurement"))
+    if source_unit is None:
+        return None
+    value = absolute_temperature_value(value, source_unit)
+    if value is None:
         return None
     destination = target_unit or source_unit
     converted = _convert_temperature(value, source_unit, destination)

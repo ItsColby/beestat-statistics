@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-mode="${1:-all}"
+mode="${1:-affected}"
 backend="${2:-container}"
 source_git_dir="${3:-}"
-if (( $# > 3 )); then
-  echo "Usage: $0 [all|unit|minimum|current|release] [container|native] [git-directory]" >&2
+if [[ "$mode" != affected ]] && (( $# > 3 )); then
+  echo "Usage: $0 [affected|all|unit|minimum|current|release] [container|native] [git-directory]" >&2
   exit 2
 fi
 case "$mode" in
-  all|unit|minimum|current|release) ;;
+  all|unit|minimum|current|release|affected) ;;
   *) echo "Unknown mode: $mode" >&2; exit 2 ;;
 esac
 case "$backend" in
@@ -17,13 +17,77 @@ case "$backend" in
 esac
 source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$source_root"
+# Refuse inherited repository selection before planning or snapshot reads.
+for variable in GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_INDEX_FILE GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM; do
+  if [[ -v "$variable" ]]; then
+    echo "Inherited local Git overrides are not supported: $variable" >&2
+    exit 2
+  fi
+done
+export GIT_NO_REPLACE_OBJECTS=1
+source_git=(git --no-replace-objects -C "$source_root")
+if [[ -n "$source_git_dir" ]]; then
+  if [[ ! -d "$source_git_dir" ]]; then
+    echo "The explicit Git directory must be an existing metadata directory." >&2; exit 2
+  fi
+  source_git=(git --no-replace-objects --git-dir="$source_git_dir" --work-tree="$source_root")
+fi
+actual_root="$("${source_git[@]}" rev-parse --show-toplevel)"
+if [[ "$(cd "$actual_root" && pwd -P)" != "$(cd "$source_root" && pwd -P)" ]]; then
+  echo "Git target root does not match the wrapper source root." >&2; exit 2
+fi
+validation_python="${VALIDATION_PYTHON:-}"
+if [[ "$mode" == affected && -z "$validation_python" ]]; then
+  if command -v python3.14 >/dev/null 2>&1; then
+    validation_python="$(command -v python3.14)"
+  elif command -v uv >/dev/null 2>&1; then
+    validation_python="$(uv python find 3.14 --no-python-downloads)"
+  elif [[ -x "$HOME/.local/bin/uv" ]]; then
+    validation_python="$("$HOME/.local/bin/uv" python find 3.14 --no-python-downloads)"
+  else
+    echo "Affected planning requires Python 3.14; set VALIDATION_PYTHON to an existing interpreter." >&2
+    exit 2
+  fi
+fi
+affected_args=()
+affected_only=""
+affected_plan=""
+if [[ "$mode" == affected ]]; then
+  if (( $# >= 3 )); then shift 3; else shift "$#"; fi
+  plan_only=false
+  while (( $# )); do
+    case "$1" in
+      --only) affected_only="${2:?Missing lane}"; shift 2 ;;
+      --plan-only) plan_only=true; shift ;;
+      --base|--head)
+        # Reuse immutable input for initial planning and every later lane command.
+        oid="$("${source_git[@]}" rev-parse --verify --end-of-options "${2:?Missing revision}^{commit}")"
+        affected_args+=("$1" "$oid"); shift 2 ;;
+      *) affected_args+=("$1"); shift ;;
+    esac
+  done
+  if [[ -n "$source_git_dir" ]]; then affected_args+=(--git-directory "$source_git_dir"); fi
+  affected_plan="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}")"
+
+  if [[ -n "$affected_only" && "$affected_only" != unit && "$affected_only" != minimum && "$affected_only" != current && "$affected_only" != release ]]; then
+    echo "Unknown affected lane: $affected_only" >&2; exit 2
+  fi
+  if [[ -n "$affected_only" && "$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["jobs"][sys.argv[1]]).lower())' "$affected_only")" != true ]]; then
+    echo "Plan did not select $affected_only" >&2; exit 2
+  fi
+  if [[ "$plan_only" == true ]]; then printf '%s\n' "$affected_plan"; exit 0; fi
+  if [[ "$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(any(json.load(sys.stdin)["jobs"].values()))')" == False ]]; then
+    echo "No validation jobs apply to the verified empty comparison."; exit 0
+  fi
+fi
+
 if [[ "$backend" == container ]]; then
   repo_root="$(mktemp -d)"
-  trap 'rm -rf "$repo_root"' EXIT
-  source_git=(git -C "$source_root")
-  if [[ -n "$source_git_dir" ]]; then
-    source_git=(git --git-dir="$source_git_dir" --work-tree="$source_root")
-  fi
+  # An interrupted wait can leave lanes using the snapshot. Drain this
+  # runner's jobs before deleting it, and retain the interrupt exit status.
+  trap 'trap "" INT TERM; wait; rm -rf "$repo_root"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   "${source_git[@]}" ls-files --cached --others --exclude-standard -z |
     while IFS= read -r -d '' path; do
       if [[ -e "$source_root/$path" || -L "$source_root/$path" ]]; then
@@ -45,6 +109,7 @@ python_image="docker.io/library/python@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde1
 actionlint_image="docker.io/rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
 hassfest_image="ghcr.io/home-assistant/hassfest@sha256:8cd7bdb8f82430c2c13703290b1fc38dcc99957dd76ad3f230035ecee70b672d"
 run_python() (
+  local needs_git="${2:-true}"
   if [[ "$backend" == native ]]; then
     # Keep support lanes isolated, including when running all lanes locally.
     local environment
@@ -64,8 +129,12 @@ run_python() (
       -v "$repo_root:/workspace:ro" -w /workspace \
       --mount type=volume,source=beestat-statistics-validation-pip,target=/pip-cache \
       "$python_image" bash -euc \
-      'apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null && bash -euc "$1"' \
-      local-validation "$1"
+      'if [[ "$1" == true ]]; then
+         apt-get update -qq || exit "$?"
+         apt-get install -y -qq --no-install-recommends git >/dev/null || exit "$?"
+       fi
+       bash -euc "$2"' \
+      local-validation "$needs_git" "$1"
   fi
 )
 run_actionlint() (
@@ -73,9 +142,11 @@ run_actionlint() (
     local bin
     bin="$(mktemp -d)"
     trap 'rm -rf "$bin"' EXIT
-    GOBIN="$bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+    python -m venv "$bin"
+    "$bin/bin/python" -m pip install "shellcheck-py==0.11.0.1"
+    GOBIN="$bin/bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
     cd "$repo_root"
-    "$bin/actionlint"
+    PATH="$bin/bin:$PATH" "$bin/bin/actionlint"
   else
     podman run --rm -v "$repo_root:/repo:ro" -w /repo "$actionlint_image"
   fi
@@ -105,22 +176,28 @@ PY
   '
 }
 run_minimum() {
-  run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.354"
-    python -m pip install --upgrade -r requirements-ha-test.txt
-    python -m pip install "mypy==2.3.0"
+  local checks='    python -m pip install "mypy==2.3.0"
     python -m pip check
     python -m mypy --strict custom_components/beestat_statistics
-    python scripts/run_dependency_light_tests.py --home-assistant
-  '
+    python scripts/run_dependency_light_tests.py --home-assistant'
+  if [[ "$mode" == affected ]]; then
+    checks="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command minimum)"
+  fi
+  run_python '
+    python -m pip install "pytest-homeassistant-custom-component==0.13.354" || exit "$?"
+    python -m pip install --upgrade -r requirements-ha-test.txt || exit "$?"
+'"$checks" false
 }
 run_current() {
+  local checks='    python -m pip check
+    python scripts/run_dependency_light_tests.py --home-assistant'
+  if [[ "$mode" == affected ]]; then
+    checks="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command current)"
+  fi
   run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.364"
-    python -m pip install --upgrade -r requirements-ha-current.txt
-    python -m pip check
-    python scripts/run_dependency_light_tests.py --home-assistant
-  '
+    python -m pip install "pytest-homeassistant-custom-component==0.13.365" || exit "$?"
+    python -m pip install --upgrade -r requirements-ha-current.txt || exit "$?"
+'"$checks" false
 }
 run_release() {
   if [[ "$backend" == native ]]; then
@@ -153,6 +230,33 @@ run_lane() {
   fi
   return "$lane_status"
 }
+
+
+run_affected() {
+  local lane selected command
+  for lane in unit minimum current release; do
+    [[ -z "$affected_only" || "$lane" == "$affected_only" ]] || continue
+    selected="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["jobs"][sys.argv[1]]).lower())' "$lane")"
+    if [[ "$selected" != true ]]; then
+      if [[ -n "$affected_only" ]]; then echo "Plan did not select $lane" >&2; return 2; fi
+      continue
+    fi
+    case "$lane" in
+      unit)
+        if [[ "$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["workflow"]).lower())')" == true ]]; then
+          run_actionlint
+        fi
+        command="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command unit)"
+        run_python "$command"
+        ;;
+      minimum) run_minimum ;;
+      current) run_current ;;
+      release) run_release ;;
+    esac
+  done
+}
+
+if [[ "$mode" == affected ]]; then run_affected; exit 0; fi
 
 lanes=("$mode")
 if [[ "$mode" == all ]]; then

@@ -45,6 +45,7 @@ from .filter_forecast import (
 from .profile import schedule_profile_payload
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .thermostat_settings import (
+    absolute_temperature_fahrenheit,
     audio_integer_setting,
     date_setting,
     integer_setting,
@@ -140,7 +141,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "hot_temperature_alert",
         "Hot temperature alert threshold",
         "hotTempAlert",
-        "temperature",
+        "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
     ),
@@ -148,7 +149,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "cold_temperature_alert",
         "Cold temperature alert threshold",
         "coldTempAlert",
-        "temperature",
+        "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
         UnitOfTemperature.FAHRENHEIT,
     ),
@@ -364,6 +365,7 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "last_import_summary_overlap_days",
             "last_import_summary_fallback_reason",
             "last_import_cumulative_seed_count",
+            "last_import_writers",
             "last_filter_alert_dismiss_attempt_at",
             "last_filter_alert_dismiss_matched",
             "last_filter_alert_dismissed",
@@ -503,6 +505,11 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             ),
             "last_import_cumulative_seed_count": (
                 self.coordinator.last_import_cumulative_seed_count
+            ),
+            "last_import_writers": (
+                dict(self.coordinator.last_import_writers)
+                if self.coordinator.last_import_writers is not None
+                else None
             ),
             "last_filter_alert_dismiss_attempt_at": _isoformat(
                 self.coordinator.last_filter_alert_dismiss_attempt_at
@@ -682,13 +689,13 @@ def _thermostat_sensor_descriptions(
                 _thermostat_setting_available,
                 thermostat_id=thermostat_id,
                 key="compressorProtectionMinTemp",
-                value_type="temperature",
+                value_type="absolute_temperature",
             ),
             value_fn=partial(
                 _thermostat_setting_value,
                 thermostat_id=thermostat_id,
                 key="compressorProtectionMinTemp",
-                value_type="temperature",
+                value_type="absolute_temperature",
             ),
         ),
         BeestatSensorEntityDescription(
@@ -1124,6 +1131,8 @@ def _thermostat_setting_value(
         or (snapshot := data.thermostat_settings.get(thermostat_id)) is None
     ):
         return None
+    if value_type == "absolute_temperature":
+        return absolute_temperature_fahrenheit(snapshot, key)
     if value_type == "temperature":
         return temperature_fahrenheit(snapshot, key)
     if value_type == "integer":

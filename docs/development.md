@@ -6,13 +6,57 @@ schemas and English help live beside it. Keep user operations in the
 [user guide](usage.md), and describe release-specific behavior in
 [release notes](../RELEASE_NOTES.md).
 
+## Select validation for the change
+
+The default runner mode is `affected`. Preview an exact candidate comparison
+before running it:
+
+```powershell
+.\scripts\verify-release-local.ps1 -Base <base-commit> -Head HEAD -PlanOnly
+.\scripts\verify-release-local.ps1 -Base <base-commit> -Head HEAD
+```
+
+For a working edit, use `-ChangedPath scripts/verify-release-local.sh` instead of
+refs. On Linux, use `bash scripts/verify-release-local.sh affected container ""`
+with `--base <base-commit> --head HEAD`, or repeated `--path <relative-path>`;
+add `--plan-only` to inspect the JSON plan without snapshots or installations.
+Planning uses an existing host Python 3.14 (`python3.14`, an installed uv runtime,
+or `VALIDATION_PYTHON`) to parse source without importing the integration. It
+does not download a runtime; HA execution keeps its isolated Python 3.14 lane.
+Explicit paths describe the complete change being accepted. The refs mode
+requires the checked-out candidate as its head; it does not include uncommitted
+edits. An empty verified comparison selects no jobs. Missing comparison input
+and unmapped changes fail with an unresolved applicability message.
+
+The product-owned planner traces local Python imports and reviewed direct-file
+consumers. Changed tests run in their native collector; runtime changes include
+the affected success, failure, and recovery consumers in both maintained HA
+environments. A support requirements change selects that environment, without
+invalidating the unchanged sibling lane. Runner and workflow dependency declarations
+are compared against the supplied base, or HEAD for working-path selections;
+changed harness, Python image, action, and tool pins select their actual consumers.
+An unavailable dependency comparison remains unresolved. The Bash runner remains
+the owner of exact local tool versions. Tooling, workflow, public-content and
+metadata checks are selected independently of product tests. Configuration
+changes without a reviewed tool-specific mapping need explicit review, rather
+than an automatic complete run.
+
+Pull requests and main pushes use this same selection. The stable Release gate
+requires the planning job and every selected job to succeed, and accepts skipped
+jobs only when the plan excludes them. Manual workflow dispatch explicitly runs
+the complete lanes. `all`, `unit`, `minimum`, `current`, and `release` remain
+explicit complete-lane requests. Reuse evidence whose source and environment
+have not changed; a merge alone does not invalidate it. Local checks do not
+replace HACS, authorize publication, or establish live behavior.
+
+
 ## Run the checks
 
 The maintained runner executes the same validation lanes used by CI. On Windows,
 install Ubuntu 24.04 under WSL2 with rootless Podman, then run from the checkout:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1 -Mode all
 ```
 
 On Linux with Podman:
@@ -34,8 +78,8 @@ name instead of `all` in the shell command.
 The minimum is Core `2026.8.0` in
 [`requirements-ha-test.txt`](../requirements-ha-test.txt), paired with harness
 `pytest-homeassistant-custom-component==0.13.354`. The current target is Core
-`2026.9.1` in [`requirements-ha-current.txt`](../requirements-ha-current.txt),
-paired with harness `0.13.364`. Each lane installs Core after its matching
+`2026.9.2` in [`requirements-ha-current.txt`](../requirements-ha-current.txt),
+paired with harness `0.13.365`. Each lane installs Core after its matching
 harness and runs `python -m pip check` after the final dependency installation.
 The HA environments require Linux and Python 3.14.2 or later; native Windows
 Python cannot replace them. Hosted jobs select Python 3.14.
@@ -44,11 +88,16 @@ The container backend validates one read-only snapshot of tracked and nonignored
 new files, including uncommitted edits. Its images and tool versions are pinned
 in the runner. `all` runs independent containers concurrently and returns failure
 if any lane fails. Each Python environment is isolated; the named Podman pip
-volume caches downloads, not validation results.
+volume caches downloads, not validation results. On interruption, the container
+runner waits for active lanes before removing the snapshot and returns the
+interrupt status; this wait has no shutdown deadline. Only the unit container
+provisions Git; the Home Assistant lanes exclude the Git-dependent unit tests.
 
 CI passes `native` as the shell runner's second argument. That backend needs
-Python, Go for actionlint and Docker for Hassfest, and runs its selected lanes
-sequentially. The PowerShell wrapper resolves WSL paths and the checkout's Git
+Python with pip and venv, Go for actionlint and Docker for Hassfest, and runs its
+selected lanes sequentially in separate temporary Python environments.
+Actionlint provisions the pinned ShellCheck version in its own temporary
+environment. The PowerShell wrapper resolves WSL paths and the checkout's Git
 directory; it is the supported Windows route to the container checks.
 
 For a quick dependency-light check without containers:
@@ -69,8 +118,8 @@ unavailable checks separately from passes.
 
 ## Keep source contracts verifiable
 
-The [Validate workflow](../.github/workflows/validate.yaml) runs the four lanes
-above and a separate hosted HACS check. Its **Release gate** requires all five
+The [Validate workflow](../.github/workflows/validate.yaml) selects applicable lanes
+and the separate hosted HACS check. A manual full dispatch requires all five
 to succeed. The [quality inventory](../custom_components/beestat_statistics/quality_scale.yaml)
 records claimed HA rules; it is not an official certification or an obligation
 to implement every unlisted rule.
@@ -102,9 +151,10 @@ monthly workflow runs this check without changing the integration's API scope.
 ## Prepare a release
 
 Keep the manifest version and newest release-note version aligned. Validate the
-candidate, then require the protected pull request's unit, both HA, Hassfest,
-HACS and aggregate checks, together with the configured CodeQL checks. Merge
-through branch protection and require Validate and CodeQL on the resulting
+candidate, then require the protected pull request's plan, selected validation
+jobs and aggregate check, together with the configured CodeQL checks. Confirm
+that excluded jobs have applicable retained evidence where the release needs it.
+Merge through branch protection and require Validate and CodeQL on the resulting
 `main` commit. Inspect complete logs and code-scanning findings; a successful
 analysis job is not proof that it found no issues.
 

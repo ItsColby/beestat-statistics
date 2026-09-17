@@ -375,6 +375,87 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_raw_point_receipts_preserve_mapping_order_and_retry_evidence(
+        self,
+    ) -> None:
+        rows = {"second": {"deleted": True}, "first": {"temperature": 72}}
+        session = _FakeSession(
+            [_FakeResponse({}, status=429), {"data": rows, "has_more": True}]
+        )
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=2
+        )
+        with patch.object(self.api.asyncio, "sleep", new=AsyncMock()):
+            result = await client.async_read_runtime_sensor(
+                10, "start", "end", raw_response=True
+            )
+        self.assertEqual(result.data, rows)
+        self.assertEqual(list(result.data), ["second", "first"])
+        self.assertNotIn("id", result.data["first"])
+        self.assertEqual(
+            [item.outcome for item in result.attempts], ["provider_failure", "success"]
+        )
+        self.assertEqual([item.http_status for item in result.attempts], [429, 200])
+        self.assertTrue(result.pagination_indicated)
+        self.assertGreater(result.response_bytes, 0)
+        self.assertEqual(session.requests[0]["resource"], "runtime_sensor")
+        self.assertEqual(session.requests[0]["method"], "read")
+
+    async def test_per_call_raw_limit_does_not_change_shared_client_default(
+        self,
+    ) -> None:
+        payload = {"data": [{"temperature": "x" * 60}]}
+        session = _FakeSession([payload, payload])
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=3
+        )
+        with self.assertRaises(self.api.BeestatRawReadError) as error:
+            await client.async_read_runtime_thermostat(
+                1, "start", "end", raw_response=True, max_response_bytes=32
+            )
+        self.assertEqual(len(error.exception.attempts), 1)
+        self.assertEqual(error.exception.attempts[0].outcome, "non_retryable_failure")
+        self.assertEqual(
+            await client.async_read_runtime_thermostat(1, "start", "end"),
+            payload["data"],
+        )
+        self.assertEqual(session.call_count, 2)
+
+    async def test_raw_auth_failure_keeps_safe_receipt_without_remote_body(
+        self,
+    ) -> None:
+        session = _FakeSession([_FakeResponse({"error": "secret-token"}, status=401)])
+        client = self.api.BeestatClient(session, "secret-token", "https://api.test/")
+        with self.assertRaises(self.api.BeestatRawReadError) as error:
+            await client.async_read_runtime_thermostat(
+                1, "start", "end", raw_response=True
+            )
+        self.assertEqual(error.exception.attempts[0].outcome, "authentication_failed")
+        self.assertNotIn("secret-token", str(error.exception))
+        self.assertNotIn("api.test", str(error.exception))
+
+    async def test_raw_envelope_requires_data_without_changing_default_or_unwrapped_reads(
+        self,
+    ) -> None:
+        payload = {"success": True, "message": "No data included"}
+        point = {"timestamp": "2026-09-01T00:00:00Z", "fan": 30}
+        keyed = {"second": {"fan": 20}, "first": {"deleted": True}}
+        session = _FakeSession([payload, payload, point, keyed, [point]])
+        client = self.api.BeestatClient(session, "secret-token", "https://api.test/")
+        with self.assertRaisesRegex(self.api.BeestatRawReadError, "without data"):
+            await client.async_read_runtime_thermostat(
+                1, "start", "end", raw_response=True
+            )
+        self.assertEqual(
+            await client.async_read_runtime_thermostat(1, "start", "end"), [payload]
+        )
+        for expected in (point, keyed, [point]):
+            result = await client.async_read_runtime_thermostat(
+                1, "start", "end", raw_response=True
+            )
+            self.assertEqual(result.data, expected)
+        self.assertEqual(session.call_count, 5)
+
 
 class _FakeResponse:
     def __init__(
@@ -426,10 +507,12 @@ class _FakeSession:
         self._payloads = iter(payloads)
         self.call_count = 0
         self.allow_redirects: list[bool] = []
+        self.requests: list[dict[str, str]] = []
 
     def get(self, _url, *, params, allow_redirects: bool):
         self.call_count += 1
         self.allow_redirects.append(allow_redirects)
+        self.requests.append(dict(params))
         response = next(self._payloads)
         return (
             response if isinstance(response, _FakeResponse) else _FakeResponse(response)

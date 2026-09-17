@@ -19,10 +19,12 @@ from .const import (
     STATISTIC_MEAN_TYPE_NONE,
     STATISTIC_SOURCE,
     STATISTIC_UNIT_CLASS_DURATION,
+    STATISTIC_UNIT_CLASS_TEMPERATURE,
     SUMMARY_MEAN_STATISTICS,
     SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
 )
+from .temperature import absolute_temperature_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,7 +323,9 @@ def build_summary_mean_statistics(
         for spec in SUMMARY_MEAN_STATISTICS:
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
-                value = _as_float(row.get(spec.field))
+                value = _measurement_value(
+                    _as_float(row.get(spec.field)), spec.unit_class, spec.unit
+                )
                 if value is None:
                     continue
                 item = {
@@ -330,12 +334,26 @@ def build_summary_mean_statistics(
                 }
                 if (
                     spec.min_field is not None
-                    and (min_value := _as_float(row.get(spec.min_field))) is not None
+                    and (
+                        min_value := _measurement_value(
+                            _as_float(row.get(spec.min_field)),
+                            spec.unit_class,
+                            spec.unit,
+                        )
+                    )
+                    is not None
                 ):
                     item["min"] = round(min_value, 2)
                 if (
                     spec.max_field is not None
-                    and (max_value := _as_float(row.get(spec.max_field))) is not None
+                    and (
+                        max_value := _measurement_value(
+                            _as_float(row.get(spec.max_field)),
+                            spec.unit_class,
+                            spec.unit,
+                        )
+                    )
+                    is not None
                 ):
                     item["max"] = round(max_value, 2)
                 stats.append(item)
@@ -375,7 +393,9 @@ def build_thermostat_point_statistics(
             grouped: dict[date, list[float]] = {}
             source_count = 0
             for row in rows:
-                value = _as_float(row.get(spec.field))
+                value = _measurement_value(
+                    _as_float(row.get(spec.field)), spec.unit_class, spec.unit
+                )
                 local_day = _parse_timestamp_day(row.get("timestamp"), local_tz)
                 if value is None or local_day is None:
                     continue
@@ -417,7 +437,11 @@ def build_sensor_statistics(
         grouped: dict[date, list[float]] = {}
         source_count = 0
         for row in sensor_rows_by_id.get(spec.sensor_id, []):
-            value = _sensor_statistic_value(row.get(spec.field), spec.scale)
+            value = _measurement_value(
+                _sensor_statistic_value(row.get(spec.field), spec.scale),
+                spec.unit_class,
+                spec.unit,
+            )
             local_day = _parse_timestamp_day(row.get("timestamp"), local_tz)
             if value is None or local_day is None:
                 continue
@@ -443,6 +467,16 @@ def build_sensor_statistics(
             )
         )
     return series
+
+
+def _measurement_value(
+    value: float | None, unit_class: str | None, unit: str
+) -> float | None:
+    """Validate scaled absolute temperatures without changing other quantities."""
+
+    if unit_class == STATISTIC_UNIT_CLASS_TEMPERATURE:
+        return absolute_temperature_value(value, unit, tenth_fahrenheit_source=True)
+    return value
 
 
 def _daily_point_statistics(

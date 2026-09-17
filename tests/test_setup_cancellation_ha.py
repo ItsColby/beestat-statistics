@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -15,16 +16,24 @@ if str(ROOT) not in sys.path:
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
+from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import EntityPlatform, PlatformData
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed_exact,
 )
 
+from custom_components.beestat_statistics import (
+    PLATFORMS,
+)
+from custom_components.beestat_statistics import (
+    async_setup_entry as native_setup_entry,
+)
 from custom_components.beestat_statistics.api import BeestatClient
+from custom_components.beestat_statistics.button import BeestatButton
 from custom_components.beestat_statistics.const import (
     API_BASE,
     CONF_API_BASE,
@@ -44,9 +53,20 @@ pytestmark = [
 ]
 
 
-@pytest.mark.parametrize("cancel_at", ["initial_refresh", "platform_forwarding"])
+@pytest.mark.parametrize(
+    ("cancel_at", "rollback_error"),
+    [
+        ("initial_refresh", None),
+        ("platform_forwarding", None),
+        ("platform_forwarding", RuntimeError("rollback failed")),
+        ("platform_forwarding", asyncio.CancelledError("rollback cancelled")),
+    ],
+)
 async def test_cancelled_setup_releases_resources_and_retries(
-    hass: HomeAssistant, freezer: Any, cancel_at: str
+    hass: HomeAssistant,
+    freezer: Any,
+    cancel_at: str,
+    rollback_error: BaseException | None,
 ) -> None:
     """Cancel the actual setup task, then use HA's reload path for a clean retry."""
 
@@ -54,9 +74,16 @@ async def test_cancelled_setup_releases_resources_and_retries(
     freezer.move_to(now)
     await hass.config.async_update(time_zone="UTC")
     await hass.async_block_till_done()
-    # Load the integration component before adding its entry, so cancellation
-    # reaches the entry's setup task instead of a shielded component loader.
-    assert await async_setup_component(hass, DOMAIN, {})
+    # Initialize shared components before adding the entry: this test cancels
+    # entry-owned platform setup, not Core's cached global component loaders.
+    assert all(
+        await asyncio.gather(
+            *(
+                async_setup_component(hass, domain, {})
+                for domain in (DOMAIN, *PLATFORMS)
+            )
+        )
+    )
     helper_id = "input_datetime.filter_changed"
     hass.states.async_set(helper_id, "2026-07-01")
     entry = MockConfigEntry(
@@ -92,15 +119,37 @@ async def test_cancelled_setup_releases_resources_and_retries(
         acquisition_started.set()
         await release.wait()
 
+    native_unload = hass.config_entries.async_unload_platforms
     native_forward = hass.config_entries.async_forward_entry_setups
+    forward_cancellations: list[asyncio.CancelledError] = []
+    setup_cancellations: list[asyncio.CancelledError] = []
+    native_platform_setup = EntityPlatform.async_setup_entry
+    native_translations = PlatformData.async_load_translations
+    button_loaded = asyncio.Event()
 
-    async def blocked_forward(*args: Any, **kwargs: Any) -> None:
-        # Hold the awaited forwarding boundary while the real timers and
-        # listeners acquired before it remain active.
-        forwarding_started.set()
-        await release.wait()
-        await native_forward(*args, **kwargs)
+    async def rollback(*args: Any) -> bool:
+        return await _unload_then_fail(native_unload, rollback_error, *args)
 
+    async def track_platform(platform, config_entry) -> bool:
+        result = await native_platform_setup(platform, config_entry)
+        if platform.platform_name == DOMAIN and platform.domain == Platform.BUTTON:
+            button_loaded.set()
+        return result
+
+    date_task: asyncio.Task[Any] | None = None
+
+    async def blocked_translations(platform_data: PlatformData) -> None:
+        nonlocal date_task
+        if (
+            platform_data.platform_name == DOMAIN
+            and platform_data.domain == Platform.DATE
+        ):
+            date_task = asyncio.current_task()
+            forwarding_started.set()
+            await release.wait()
+        await native_translations(platform_data)
+
+    old_entities = {}
     setup_task: asyncio.Task[bool] | None = None
     with (
         patch(
@@ -111,12 +160,28 @@ async def test_cancelled_setup_releases_resources_and_retries(
         ) as recorder_write,
     ):
         try:
-            if cancel_at == "initial_refresh":
-                client.async_sync_runtime.side_effect = blocked_sync
-            with patch.object(
-                hass.config_entries,
-                "async_forward_entry_setups",
-                new=blocked_forward,
+            client.async_sync_runtime.side_effect = (
+                blocked_sync if cancel_at == "initial_refresh" else None
+            )
+            with (
+                patch(
+                    "custom_components.beestat_statistics.async_setup_entry",
+                    partial(
+                        _record_cancellation, native_setup_entry, setup_cancellations
+                    ),
+                ),
+                patch.object(
+                    hass.config_entries,
+                    "async_forward_entry_setups",
+                    partial(
+                        _record_cancellation, native_forward, forward_cancellations
+                    ),
+                ),
+                patch.object(hass.config_entries, "async_unload_platforms", rollback),
+                patch.object(EntityPlatform, "async_setup_entry", track_platform),
+                patch.object(
+                    PlatformData, "async_load_translations", blocked_translations
+                ),
             ):
                 async with asyncio.timeout(10):
                     setup_task = asyncio.create_task(
@@ -124,6 +189,16 @@ async def test_cancelled_setup_releases_resources_and_retries(
                     )
                     if cancel_at == "platform_forwarding":
                         await forwarding_started.wait()
+                        await button_loaded.wait()
+                        assert (
+                            entry.entry_id
+                            in hass.data["entity_components"]["date"]._platforms
+                        )
+                        component = hass.data["entity_components"]["button"]
+                        old_platform = component._platforms[entry.entry_id]
+                        old_entities = dict(old_platform.entities)
+                        assert old_entities
+                        assert all(hass.states.get(key) for key in old_entities)
                         client.async_sync_runtime.side_effect = blocked_sync
                         # An import can already be running while platform setup
                         # awaits. Exercise its real entry-owned task as well.
@@ -134,11 +209,23 @@ async def test_cancelled_setup_releases_resources_and_retries(
                         async_fire_time_changed_exact(hass, import_at)
                     await acquisition_started.wait()
                     old_runtime = entry.runtime_data
-                    setup_task.cancel()
+                    setup_task.cancel("setup cancelled")
                     with pytest.raises(asyncio.CancelledError):
                         await setup_task
 
             assert entry.state is ConfigEntryState.SETUP_ERROR
+            assert len(setup_cancellations) == 1
+            assert setup_cancellations[0] is not rollback_error
+            if cancel_at == "platform_forwarding":
+                assert len(forward_cancellations) == 1
+                assert setup_cancellations[0] is forward_cancellations[0]
+                assert date_task is not None and date_task.cancelled()
+                assert all(
+                    entry.entry_id not in entity_component._platforms
+                    for entity_component in hass.data["entity_components"].values()
+                )
+                assert not old_platform.entities
+                assert all(component.get_entity(key) is None for key in old_entities)
             assert old_runtime.coordinator.is_closed
             assert acquisition_task is not None and acquisition_task.cancelled()
             assert entry.options is saved_options
@@ -171,6 +258,7 @@ async def test_cancelled_setup_releases_resources_and_retries(
             new_runtime = entry.runtime_data
             assert new_runtime is not old_runtime
             assert not new_runtime.coordinator.is_closed
+            _assert_replacement_buttons(hass, old_entities, new_runtime)
             assert new_runtime.coordinator.local_tz.key == "America/New_York"
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
@@ -190,3 +278,40 @@ async def test_cancelled_setup_releases_resources_and_retries(
             release.set()
             if entry.state.recoverable:
                 assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _assert_replacement_buttons(
+    hass: HomeAssistant, old_entities: dict, runtime: Any
+) -> None:
+    """Native retry keeps IDs while replacing every failed runtime owner."""
+    component = hass.data["entity_components"]["button"] if old_entities else None
+    for entity_id, old_entity in old_entities.items():
+        entity = component.get_entity(entity_id)
+        assert entity is not None and entity is not old_entity
+        if isinstance(entity, BeestatButton):
+            assert entity._coordinator is runtime.coordinator
+            assert entity._importer is runtime.importer
+        else:
+            assert entity.coordinator is runtime.coordinator
+        assert hass.states.get(entity_id) is not None
+
+
+async def _unload_then_fail(
+    unload: Any, error: BaseException | None, *args: Any
+) -> bool:
+    """Inject rollback failure after real platform cleanup has completed."""
+    result = await unload(*args)
+    if error is not None:
+        raise error
+    return result
+
+
+async def _record_cancellation(
+    call: Any, observed: list[asyncio.CancelledError], *args: Any
+) -> Any:
+    """Observe the same native call's exception before Core can replace its message."""
+    try:
+        return await call(*args)
+    except asyncio.CancelledError as err:
+        observed.append(err)
+        raise

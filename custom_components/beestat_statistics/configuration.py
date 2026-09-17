@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import date
 from math import isfinite
 from typing import Any
@@ -30,10 +31,11 @@ def configuration_response(
     thermostat_rows: tuple[dict[str, Any], ...] = (),
     thermostat_settings: Mapping[int, ThermostatSettingsSnapshot] | None = None,
     runtime_quality: Mapping[int, dict[str, object]] | None = None,
+    hourly_statistics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the complete non-secret saved and effective configuration."""
 
-    return {
+    result = {
         "config_entry_id": entry_id,
         "timing": {
             "point_lookback_days": point_lookback_days,
@@ -76,6 +78,9 @@ def configuration_response(
             ),
         },
     }
+    if hourly_statistics is not None:
+        result["hourly_statistics"] = deepcopy(dict(hourly_statistics))
+    return result
 
 
 def _thermostat_source_details(

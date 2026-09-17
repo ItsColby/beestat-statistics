@@ -171,13 +171,6 @@ FILTER_NOTICE_SELECTOR = NumberSelector(
 )
 BOOLEAN_SELECTOR = BooleanSelector()
 
-DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_KEY): API_KEY_SELECTOR,
-        vol.Optional(CONF_API_BASE, default=API_BASE): API_BASE_SELECTOR,
-    }
-)
-
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional(
@@ -274,7 +267,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if data is None or options is None:
                     return self.async_show_form(
                         step_id="user",
-                        data_schema=DATA_SCHEMA,
+                        data_schema=_connection_data_schema(
+                            user_input or {}, allow_blank_api_key=False
+                        ),
                         errors=errors,
                     )
                 try:
@@ -305,7 +300,9 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=DATA_SCHEMA,
+            data_schema=_connection_data_schema(
+                user_input or {}, allow_blank_api_key=False
+            ),
             errors=errors,
         )
 
@@ -527,7 +524,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_show_form(
                         step_id=step_id,
                         data_schema=_connection_data_schema(
-                            entry.data,
+                            {**entry.data, **(user_input or {})},
                             allow_blank_api_key=not require_api_key,
                         ),
                         errors=errors,
@@ -562,7 +559,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=step_id,
             data_schema=_connection_data_schema(
-                entry.data,
+                {**entry.data, **(user_input or {})},
                 allow_blank_api_key=not require_api_key,
             ),
             errors=errors,
@@ -579,7 +576,12 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Stage an account replacement or save a same-account connection."""
 
-        if _wrong_account(data_snapshot, account_fingerprint):
+        if _wrong_account(data_snapshot, account_fingerprint) or (
+            not _same_connection_data(data_snapshot, data_updates)
+            and not _validated_connection_change_is_safe(
+                data_snapshot, account_fingerprint
+            )
+        ):
             if _entry_owner_changed(
                 entry,
                 data_snapshot=data_snapshot,
@@ -631,6 +633,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
     _thermostat_id: int | None = None
     _sensor_id: int | None = None
+    _displayed_mapping_fields: tuple[str, ...] = ()
     _source_scope_form_signature: _SourceScopeSignature | None = None
     _pending_scope_selection: tuple[frozenset[int], frozenset[int]] | None = None
     _pending_scope_signature: _SourceScopeSignature | None = None
@@ -874,12 +877,34 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._thermostat_id is None:
             return await self.async_step_thermostat_mapping()
 
+        defaults = _override_defaults(
+            self.config_entry,
+            self._thermostat_id,
+            er.async_get(self.hass),
+            thermostats=True,
+        )
+        if user_input is None:
+            self._displayed_mapping_fields = tuple(
+                field
+                for field in (
+                    *THERMOSTAT_STABLE_ENTITY_FIELDS,
+                    CONF_FILTER_CHANGED_ENTITY_ID,
+                    CONF_FILTER_LIFETIME_RUNTIME_HOURS,
+                    CONF_FILTER_MAX_AGE_DAYS,
+                    CONF_FILTER_NOTICE_DAYS,
+                )
+                if field in defaults
+            )
+
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
                 updates = mapping_updates_with_entity_references(
                     er.async_get(self.hass),
-                    user_input,
+                    {
+                        **dict.fromkeys(self._displayed_mapping_fields),
+                        **user_input,
+                    },
                     THERMOSTAT_STABLE_ENTITY_FIELDS,
                 )
             except ValueError:
@@ -902,12 +927,6 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 else:
                     return self.async_create_entry(data=candidate_options)
 
-        defaults = _override_defaults(
-            self.config_entry,
-            self._thermostat_id,
-            er.async_get(self.hass),
-            thermostats=True,
-        )
         defaults = {
             CONF_FILTER_LIFETIME_RUNTIME_HOURS: DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
             CONF_FILTER_MAX_AGE_DAYS: DEFAULT_FILTER_MAX_AGE_DAYS,
@@ -943,7 +962,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                         vol.Optional(CONF_FILTER_NOTICE_DAYS): FILTER_NOTICE_SELECTOR,
                     }
                 ),
-                defaults,
+                user_input if user_input is not None else defaults,
             ),
             errors=errors,
         )
@@ -978,12 +997,28 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         if self._sensor_id is None:
             return await self.async_step_sensor_mapping()
 
+        defaults = _override_defaults(
+            self.config_entry,
+            self._sensor_id,
+            er.async_get(self.hass),
+            thermostats=False,
+        )
+        if user_input is None:
+            self._displayed_mapping_fields = tuple(
+                field
+                for field in (*SENSOR_STABLE_ENTITY_FIELDS, CONF_THERMOSTAT_ID)
+                if field in defaults
+            )
+
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
                 updates = mapping_updates_with_entity_references(
                     er.async_get(self.hass),
-                    user_input,
+                    {
+                        **dict.fromkeys(self._displayed_mapping_fields),
+                        **user_input,
+                    },
                     SENSOR_STABLE_ENTITY_FIELDS,
                 )
             except ValueError:
@@ -1006,12 +1041,6 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 else:
                     return self.async_create_entry(data=candidate_options)
 
-        defaults = _override_defaults(
-            self.config_entry,
-            self._sensor_id,
-            er.async_get(self.hass),
-            thermostats=False,
-        )
         return self.async_show_form(
             step_id="sensor_mapping_detail",
             description_placeholders=_sensor_placeholders(
@@ -1038,7 +1067,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                         vol.Optional(CONF_INCLUDE_VOC): BOOLEAN_SELECTOR,
                     }
                 ),
-                defaults,
+                user_input if user_input is not None else defaults,
             ),
             errors=errors,
         )
@@ -1210,7 +1239,7 @@ def _connection_data_schema(
     *,
     allow_blank_api_key: bool,
 ) -> vol.Schema:
-    """Return a schema for updating required Beestat connection data."""
+    """Return connection fields without prefilling an API key."""
 
     api_key_field = (
         vol.Required(CONF_API_KEY, default="")

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -61,9 +63,17 @@ elif name == "python" and args[:2] == ["-m", "venv"]:
     event["environment"] = args[2]
 elif name == "python" and args[:2] == ["-m", "pip"]:
     kind = "pip"
+    if any(arg.startswith("shellcheck-py==") for arg in args):
+        target = Path(sys.argv[0]).parent / "shellcheck"
+        shutil.copyfile(__file__, target)
+        target.chmod(0o755)
 event["kind"] = kind
 with open(os.environ["VALIDATION_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(event) + "\n")
+if name == "actionlint":
+    shellcheck = shutil.which("shellcheck")
+    assert shellcheck == str(Path(sys.argv[0]).parent / "shellcheck")
+    subprocess.run([shellcheck, "--version"], check=True)
 if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "actionlint":
     events = Path(os.environ["VALIDATION_LOG"]).parent
     lane = "unit" if kind == "unit-python" else kind
@@ -77,6 +87,12 @@ if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "action
         if time.monotonic() > deadline:
             raise SystemExit("The four validation lanes did not overlap")
         time.sleep(0.01)
+    if os.environ.get("VALIDATION_INTERRUPT"):
+        while not (events / "interrupt.sent").exists():
+            if time.monotonic() > deadline:
+                raise SystemExit("The runner was not interrupted")
+            time.sleep(0.01)
+        time.sleep(0.1)
     failure = os.environ.get("VALIDATION_FAIL")
     failed_lane = "unit" if failure == "unit-python" else failure
     if failed_lane in lanes and failed_lane != lane:
@@ -230,6 +246,53 @@ class ValidationRunnerTests(unittest.TestCase):
         for lane in ("unit", "minimum", "current", "release"):
             self.assertTrue((self.root / (lane + ".done")).exists())
 
+    def test_interrupt_preserves_status_and_waits_before_cleanup(self) -> None:
+        self.env["VALIDATION_OVERLAP"] = "1"
+        self.env["VALIDATION_INTERRUPT"] = "1"
+        lanes = ("unit", "minimum", "current", "release")
+        for interrupt in (signal.SIGINT, signal.SIGTERM):
+            for failure in ("", "minimum"):
+                with self.subTest(interrupt=interrupt, failure=failure):
+                    for marker in self.root.glob("*.started"):
+                        marker.unlink()
+                    for marker in self.root.glob("*.done"):
+                        marker.unlink()
+                    (self.root / "interrupt.sent").unlink(missing_ok=True)
+                    self.env["VALIDATION_FAIL"] = failure
+                    with subprocess.Popen(
+                        [str(BASH), str(self.runner), "all", "container"],
+                        cwd=self.root,
+                        env=self.env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    ) as process:
+                        try:
+                            deadline = time.monotonic() + 10
+                            while not all(
+                                (self.root / f"{lane}.started").exists()
+                                for lane in lanes
+                            ):
+                                if (
+                                    process.poll() is not None
+                                    or time.monotonic() > deadline
+                                ):
+                                    self.fail("The four validation lanes did not start")
+                                time.sleep(0.01)
+                            process.send_signal(interrupt)
+                            (self.root / "interrupt.sent").touch()
+                            stdout, stderr = process.communicate(timeout=30)
+                        finally:
+                            if process.poll() is None:
+                                process.kill()
+                                process.communicate(timeout=10)
+                    for lane in lanes:
+                        self.assertTrue(
+                            (self.root / f"{lane}.done").exists(), stdout + stderr
+                        )
+                    self.assertEqual(process.returncode, 128 + interrupt)
+                    self.assertEqual(list(self.scratch.iterdir()), [])
+
     def test_failure_retains_every_lane_result_and_waits_for_all_workers(self) -> None:
         self.env["VALIDATION_OVERLAP"] = "1"
         for failure in ("minimum", "current", "both", "unit-python", "release"):
@@ -272,12 +335,63 @@ class ValidationRunnerTests(unittest.TestCase):
                 "type=volume,source=beestat-statistics-validation-pip,target=/pip-cache",
             )
             self.assertIn("python -m pip install", args[-1])
+            self.assertEqual(
+                args[-2], "true" if event["kind"] == "unit-python" else "false"
+            )
             if event["kind"] in {"minimum", "current"}:
                 self.assertIn("python -m pip check", args[-1])
                 self.assertIn(
                     "python scripts/run_dependency_light_tests.py --home-assistant",
                     args[-1],
                 )
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_container_provisioning_and_payload_failures(self) -> None:
+        result = self.run_validation("all", "container")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = {
+            event["kind"]: event["args"]
+            for event in self.events()
+            if event["kind"] in {"unit-python", "minimum", "current"}
+        }
+        apt_calls = ["apt update -qq", "apt install -y -qq --no-install-recommends git"]
+        for lane, failure, payload_status, expected_status, expected_calls in (
+            ("unit-python", "", 0, 0, [*apt_calls, "payload"]),
+            ("minimum", "", 0, 0, ["payload"]),
+            ("current", "", 0, 0, ["payload"]),
+            ("unit-python", "update", 0, 37, apt_calls[:1]),
+            ("unit-python", "install", 0, 41, apt_calls),
+            ("minimum", "", 43, 43, ["payload"]),
+        ):
+            with self.subTest(
+                lane=lane, failure=failure, payload_status=payload_status
+            ):
+                args = commands[lane]
+                command = args[args.index("bash") :]
+                command[0] = str(BASH)
+                command[2] = r"""
+apt-get() {
+  printf 'apt %s\n' "$*" >&2
+  if [[ "$PROVISION_FAIL" == update && "$1" == update ]]; then return 37; fi
+  if [[ "$PROVISION_FAIL" == install && "$1" == install ]]; then return 41; fi
+  return 0
+}
+""" + command[2]
+                command[-1] = 'printf "payload\\n" >&2; exit "$PAYLOAD_STATUS"'
+                probe = subprocess.run(
+                    command,
+                    env={
+                        **os.environ,
+                        "PROVISION_FAIL": failure,
+                        "PAYLOAD_STATUS": str(payload_status),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertEqual(probe.returncode, expected_status, probe.stderr)
+                self.assertEqual(probe.stderr.splitlines(), expected_calls)
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_failed_snapshot_does_not_run_validation(self) -> None:
@@ -291,15 +405,36 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.events()[0]["kind"], "release")
 
-    def test_native_actionlint_uses_repo_cwd_and_cleans_failure(self) -> None:
-        self.env["VALIDATION_FAIL"] = "actionlint"
-        result = self.run_validation("unit", "native")
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(
-            [event["kind"] for event in self.events()], ["go", "actionlint"]
-        )
-        self.assertEqual(self.events()[-1]["cwd"], str(self.repo))
-        self.assertEqual(list(self.scratch.iterdir()), [])
+    def test_native_actionlint_provisions_shellcheck_and_cleans_failures(self) -> None:
+        (self.bin / "shellcheck").unlink()
+        for failure, expected in (
+            ("python", ["python"]),
+            ("pip", ["python", "pip"]),
+            ("go", ["python", "pip", "go"]),
+            ("actionlint", ["python", "pip", "go", "actionlint", "shellcheck"]),
+            ("", ["python", "pip", "go", "actionlint", "shellcheck"]),
+        ):
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                self.env["VALIDATION_FAIL"] = failure
+                result = self.run_validation("unit", "native")
+                self.assertEqual(
+                    result.returncode,
+                    1 if failure else 0,
+                    result.stdout + result.stderr,
+                )
+                events = self.events()
+                kinds = [event["kind"] for event in events]
+                self.assertEqual(kinds if failure else kinds[:5], expected)
+                self.assertEqual(list(self.scratch.iterdir()), [])
+                if not failure or failure == "actionlint":
+                    self.assertEqual(events[3]["cwd"], str(self.repo))
+                    self.assertEqual(
+                        Path(str(events[4]["path"])).parent,
+                        Path(str(events[3]["path"])).parent,
+                    )
+                if not failure:
+                    self.assertEqual(sum("environment" in event for event in events), 2)
 
     def test_native_lanes_have_distinct_temporary_environments(self) -> None:
         for lane in ("minimum", "current"):
@@ -356,11 +491,19 @@ function global:wsl.exe {
 }
 function global:git {
     $global:LASTEXITCODE = 0
-    if ($env:VALIDATION_FAIL -eq "git") {
-        $global:LASTEXITCODE = 23
-        return
+    switch ($args[-1]) {
+        '--show-toplevel' {
+            Split-Path (Split-Path $env:VALIDATION_SCRIPT -Parent) -Parent
+        }
+        '--git-dir' {
+            if ($env:VALIDATION_FAIL -eq "git") {
+                $global:LASTEXITCODE = 23
+                return
+            }
+            "C:" + "\source with spaces\.git"
+        }
+        default { throw "Unexpected Git query: $args" }
     }
-    "C:" + "\source with spaces\.git"
 }
 try {
     & $env:VALIDATION_SCRIPT -Mode current

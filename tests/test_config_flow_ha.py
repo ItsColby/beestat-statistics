@@ -70,6 +70,9 @@ from custom_components.beestat_statistics.const import (
     CONF_CLIMATE_ENTITY_REF,
     CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
     CONF_FILTER_CHANGED_DATE,
+    CONF_FILTER_CHANGED_ENTITY_ID,
+    CONF_FILTER_LIFETIME_RUNTIME_HOURS,
+    CONF_FILTER_MAX_AGE_DAYS,
     CONF_FILTER_NOTICE_DAYS,
     CONF_ID,
     CONF_INCLUDE_TEMPERATURE,
@@ -80,11 +83,15 @@ from custom_components.beestat_statistics.const import (
     CONF_SENSORS,
     CONF_TEMPERATURE_ENTITY_ID,
     CONF_TEMPERATURE_ENTITY_REF,
+    CONF_THERMOSTAT_ID,
     CONF_THERMOSTATS,
     CONFIG_ENTRY_MINOR_VERSION,
     CONFIG_ENTRY_UNIQUE_ID,
     CONFIG_ENTRY_VERSION,
     CONFIG_TITLE,
+    DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
+    DEFAULT_FILTER_MAX_AGE_DAYS,
+    DEFAULT_FILTER_NOTICE_DAYS,
     DEFAULT_POINT_LOOKBACK_DAYS,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
@@ -717,6 +724,107 @@ async def test_user_flow_normalizes_copy_paste_whitespace(
     assert result["data"][CONF_API_BASE] == API_BASE
 
 
+@pytest.mark.parametrize(
+    ("source", "failure"),
+    [
+        (source, failure)
+        for source in (SOURCE_USER, SOURCE_RECONFIGURE, SOURCE_REAUTH)
+        for failure in ("invalid_api_base", "cannot_connect", "invalid_auth")
+    ]
+    + [(source, "api_key_required") for source in (SOURCE_USER, SOURCE_REAUTH)],
+)
+async def test_connection_retry_preserves_endpoint_without_prefilling_key(
+    hass: HomeAssistant, source: str, failure: str
+) -> None:
+    """Retry the attempted endpoint while keeping stored credentials out of forms."""
+
+    entry = None if source == SOURCE_USER else _add_mock_entry(hass)
+    original_data = dict(entry.data) if entry is not None else None
+    context = {"source": source}
+    if entry is not None:
+        context["entry_id"] = entry.entry_id
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context=context, data=entry.data if source == SOURCE_REAUTH else None
+    )
+    attempted_endpoint = (
+        "http://attempted.example.test/"
+        if failure == "invalid_api_base"
+        else "https://attempted.example.test/"
+    )
+    attempted_key = "" if failure == "api_key_required" else "attempted-test-key"
+    error = (
+        BeestatAuthError("rejected")
+        if failure == "invalid_auth"
+        else BeestatApiError("offline")
+    )
+    with (
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload,
+        _mock_validate_input(side_effect=error) as validate,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: attempted_key, CONF_API_BASE: attempted_endpoint},
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.FORM
+        error_field = (
+            CONF_API_BASE
+            if failure == "invalid_api_base"
+            else CONF_API_KEY
+            if failure == "api_key_required"
+            else "base"
+        )
+        assert result["errors"] == {error_field: failure}
+        if failure in ("invalid_api_base", "api_key_required"):
+            validate.assert_not_awaited()
+        else:
+            validate.assert_awaited_once()
+        reload.assert_not_awaited()
+
+    fields = {field.schema: field for field in result["data_schema"].schema}
+    assert fields[CONF_API_BASE].default() == attempted_endpoint
+    assert CONF_API_KEY not in _suggested_values(result)
+    assert (
+        fields[CONF_API_KEY].default() == ""
+        if source == SOURCE_RECONFIGURE
+        else fields[CONF_API_KEY].default is vol.UNDEFINED
+    )
+    if entry is not None:
+        assert entry.data == original_data
+    else:
+        assert not hass.config_entries.async_entries(DOMAIN)
+
+    corrected_endpoint = fields[CONF_API_BASE].default().replace("http://", "https://")
+    corrected_key = "" if source == SOURCE_RECONFIGURE else "corrected-test-key"
+    with (
+        patch(
+            "custom_components.beestat_statistics.async_setup_entry", return_value=True
+        ),
+        patch.object(hass.config_entries, "async_reload", return_value=True),
+        _mock_validate_input() as validate,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: corrected_key, CONF_API_BASE: corrected_endpoint},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is (
+        FlowResultType.CREATE_ENTRY if source == SOURCE_USER else FlowResultType.ABORT
+    )
+    expected_key = (
+        original_data[CONF_API_KEY]
+        if source == SOURCE_RECONFIGURE and original_data is not None
+        else corrected_key
+    )
+    validate.assert_awaited_once()
+    assert validate.await_args.args[1][CONF_API_BASE] == corrected_endpoint
+    assert validate.await_args.args[1][CONF_API_KEY] == expected_key
+    saved_data = result["data"] if entry is None else entry.data
+    assert saved_data[CONF_API_BASE] == corrected_endpoint
+    assert saved_data[CONF_API_KEY] == expected_key
+
+
 async def test_user_flow_requires_identifiable_account_anchor(
     hass: HomeAssistant,
 ) -> None:
@@ -735,56 +843,6 @@ async def test_user_flow_requires_identifiable_account_anchor(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "account_identity_unavailable"}
     assert not hass.config_entries.async_entries(DOMAIN)
-
-
-async def test_user_flow_rejects_insecure_api_base_before_validation(
-    hass: HomeAssistant,
-) -> None:
-    """Test an API key cannot be validated against a plaintext endpoint."""
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_USER},
-    )
-    with _mock_validate_input() as validate:
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "test-api-key",
-                CONF_API_BASE: "http://api.example.test/",
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_API_BASE: "invalid_api_base"}
-    validate.assert_not_awaited()
-
-
-async def test_user_flow_recovers_from_auth_error(hass: HomeAssistant) -> None:
-    """Test the user can recover after Beestat rejects a key."""
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_USER},
-    )
-
-    with _mock_validate_input(side_effect=BeestatAuthError("invalid key")):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            USER_INPUT,
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "invalid_auth"}
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            USER_INPUT | {CONF_API_KEY: "fixed-key"},
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_API_KEY] == "fixed-key"
 
 
 async def test_user_flow_recovers_from_unexpected_error(
@@ -819,25 +877,6 @@ async def test_user_flow_recovers_from_unexpected_error(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_API_KEY] == "fixed-key"
-
-
-async def test_user_flow_rejects_blank_api_key(hass: HomeAssistant) -> None:
-    """Test blank credentials fail before network validation."""
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_USER},
-    )
-
-    with _mock_validate_input() as validate:
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            USER_INPUT | {CONF_API_KEY: ""},
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_API_KEY: "api_key_required"}
-    validate.assert_not_awaited()
 
 
 async def test_reauth_preserves_entry_when_account_identity_is_unavailable(
@@ -1372,42 +1411,6 @@ async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
-async def test_reauth_flow_confirms_different_account(
-    hass: HomeAssistant,
-) -> None:
-    """Test reauth requires explicit confirmation before switching accounts."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-        data=entry.data,
-    )
-
-    with _mock_validate_input(return_value=ACCOUNT_B):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "different-account-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
-    assert entry.data[CONF_API_KEY] == "old-key"
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {},
-    )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_API_KEY] == "different-account-key"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
-
-
 async def test_reauth_flow_recovers_from_unexpected_error(
     hass: HomeAssistant,
 ) -> None:
@@ -1444,30 +1447,6 @@ async def test_reauth_flow_recovers_from_unexpected_error(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_KEY] == "replacement-key"
-
-
-async def test_reauth_flow_rejects_blank_api_key(hass: HomeAssistant) -> None:
-    """Test reauth requires a replacement key."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-        data=entry.data,
-    )
-
-    with _mock_validate_input() as validate:
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_API_KEY: "api_key_required"}
-    validate.assert_not_awaited()
 
 
 async def test_reconfigure_flow_allows_blank_key_to_keep_current(
@@ -1540,69 +1519,147 @@ async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(
     assert dict(entry.data) == original_data
 
 
-async def test_reconfigure_flow_confirms_different_account(
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+@pytest.mark.parametrize(
+    ("legacy", "changed_field"),
+    [
+        (False, CONF_API_KEY),
+        (False, CONF_API_BASE),
+        (False, None),
+        (True, CONF_API_KEY),
+        (True, CONF_API_BASE),
+    ],
+    ids=[
+        "anchored-key",
+        "anchored-endpoint",
+        "anchored-same",
+        "legacy-key",
+        "legacy-endpoint",
+    ],
+)
+async def test_connection_flow_confirms_unproven_account_continuity(
     hass: HomeAssistant,
+    source: str,
+    legacy: bool,
+    changed_field: str | None,
 ) -> None:
-    """Test reconfigure requires explicit confirmation before account replacement."""
+    """Test connection replacement stages a scoped reset until confirmation."""
 
-    entry = _add_mock_entry(
-        hass,
-        data={
-            CONF_API_KEY: "old-key",
-            CONF_API_BASE: API_BASE,
-            CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A,
-            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
-            "future_data": {"preserve": True},
-        },
-        options={
-            CONF_POINT_LOOKBACK_DAYS: 30,
-            CONF_SCAN_INTERVAL_SECONDS: 900,
-            CONF_SENSORS: [
-                {
-                    CONF_ID: 2001,
-                    CONF_TEMPERATURE_ENTITY_ID: ("sensor.room_sensor_a_temperature"),
-                }
-            ],
-            "future_option": {"preserve": True},
-        },
-    )
+    entry = _add_source_mapping_entry(hass, legacy=legacy)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    connection = {CONF_API_KEY: "old-key", CONF_API_BASE: API_BASE}
+    if changed_field is not None:
+        connection[changed_field] = (
+            "different-account-key"
+            if changed_field == CONF_API_KEY
+            else "https://api.example.test/"
+        )
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
     )
 
-    with _mock_validate_input(return_value=ACCOUNT_B):
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {
-                CONF_API_KEY: "different-account-key",
-                CONF_API_BASE: API_BASE,
-            },
+            connection,
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
-    assert entry.data[CONF_API_KEY] == "old-key"
-    assert CONF_THERMOSTATS in entry.data
-    assert CONF_SENSORS in entry.options
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
+        assert dict(entry.data) == original_data
+        assert dict(entry.options) == original_options
+        reload.assert_not_called()
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {},
-    )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {},
+        )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_API_KEY] == "different-account-key"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_B
-    assert entry.data["future_data"] == {"preserve": True}
-    assert CONF_THERMOSTATS not in entry.data
-    assert CONF_SENSORS not in entry.options
-    assert entry.options == {
+    assert result["reason"] == f"{source}_successful"
+    assert dict(entry.data) == {
+        **connection,
+        CONF_ACCOUNT_FINGERPRINT: ACCOUNT_B,
+        "future_data": {"preserve": True},
+    }
+    assert dict(entry.options) == {
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
         "future_option": {"preserve": True},
     }
+    reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+async def test_connection_flow_backfills_unchanged_legacy_connection(
+    hass: HomeAssistant,
+    source: str,
+) -> None:
+    """Test validating the same legacy connection retains all source settings."""
+
+    entry = _add_source_mapping_entry(hass, legacy=True)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
+    )
+    with (
+        _mock_validate_input(return_value=ACCOUNT_A),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_API_KEY: "old-key" if source == SOURCE_REAUTH else "",
+                CONF_API_BASE: API_BASE,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == f"{source}_successful"
+    assert dict(entry.data) == {**original_data, CONF_ACCOUNT_FINGERPRINT: ACCOUNT_A}
+    assert dict(entry.options) == original_options
+    reload.assert_called_once_with(entry.entry_id)
+
+
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+async def test_connection_flow_abandonment_preserves_legacy_entry(
+    hass: HomeAssistant,
+    source: str,
+) -> None:
+    """Test leaving account confirmation preserves every existing entry setting."""
+
+    entry = _add_source_mapping_entry(hass, legacy=True)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
+    )
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_API_KEY: "different-account-key", CONF_API_BASE: API_BASE},
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
+        hass.config_entries.flow.async_abort(result["flow_id"])
+
+    assert dict(entry.data) == original_data
+    assert dict(entry.options) == original_options
+    reload.assert_not_called()
 
 
 async def test_reconfigure_second_flow_wins_during_awaited_validation(
@@ -1749,30 +1806,27 @@ async def test_reconfigure_reconciles_concurrent_options_update(
     reload.assert_called_once_with(entry.entry_id)
 
 
+@pytest.mark.parametrize("source", [SOURCE_REAUTH, SOURCE_RECONFIGURE])
+@pytest.mark.parametrize("legacy", [False, True], ids=["anchored", "legacy"])
+@pytest.mark.parametrize("changed_owner", ["data", "options"])
 async def test_account_change_confirmation_preserves_intervening_entry_update(
     hass: HomeAssistant,
+    source: str,
+    legacy: bool,
+    changed_owner: str,
 ) -> None:
     """Test account replacement aborts when its data or options snapshot drifts."""
 
-    entry = _add_mock_entry(
-        hass,
-        data={
-            **_add_mock_entry_data(),
-            CONF_THERMOSTATS: [{CONF_ID: 1001, "slug": "zone_a"}],
-            "future_data": {"v": 1},
-        },
-        options={
-            CONF_POINT_LOOKBACK_DAYS: 30,
-            CONF_SCAN_INTERVAL_SECONDS: 900,
-            CONF_SENSORS: [{CONF_ID: 2001}],
-            "future_option": {"v": 1},
-        },
-    )
+    entry = _add_source_mapping_entry(hass, legacy=legacy)
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+        context={"source": source, "entry_id": entry.entry_id},
+        data=entry.data if source == SOURCE_REAUTH else None,
     )
-    with _mock_validate_input(return_value=ACCOUNT_B):
+    with (
+        _mock_validate_input(return_value=ACCOUNT_B),
+        patch.object(hass.config_entries, "async_schedule_reload") as reload,
+    ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -1780,12 +1834,18 @@ async def test_account_change_confirmation_preserves_intervening_entry_update(
                 CONF_API_BASE: API_BASE,
             },
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "account_change_confirm"
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "account_change_confirm"
 
-    external_options = {**dict(entry.options), "future_option": {"v": 2}}
-    hass.config_entries.async_update_entry(entry, options=external_options)
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        external_data = dict(entry.data)
+        external_options = dict(entry.options)
+        if changed_owner == "data":
+            external_data[CONF_API_KEY] = "external-key"
+        else:
+            external_options["future_option"] = {"external": True}
+        hass.config_entries.async_update_entry(
+            entry, data=external_data, options=external_options
+        )
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {},
@@ -1793,8 +1853,7 @@ async def test_account_change_confirmation_preserves_intervening_entry_update(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "configuration_changed"
-    assert entry.data[CONF_API_KEY] == "old-key"
-    assert entry.data["future_data"] == {"v": 1}
+    assert dict(entry.data) == external_data
     assert dict(entry.options) == external_options
     reload.assert_not_called()
 
@@ -1950,36 +2009,36 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
             result["flow_id"],
             {"next_step_id": "confirm_automatic_mappings"},
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "confirm_automatic_mappings"
-    assert {
-        key: value
-        for key, value in result["description_placeholders"].items()
-        if key != "mapping_details"
-    } == {
-        "thermostat_count": "1",
-        "sensor_count": "1",
-        "entity_count": "7",
-    }
-    mapping_details = result["description_placeholders"]["mapping_details"]
-    assert "Zone A" in mapping_details
-    assert sources[("climate", "zone-a-climate")].entity_id in mapping_details
-    assert "Room B" in mapping_details
-    assert sources[("sensor", "room-b-temperature")].entity_id in mapping_details
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "confirm_automatic_mappings"
+        assert {
+            key: value
+            for key, value in result["description_placeholders"].items()
+            if key != "mapping_details"
+        } == {
+            "thermostat_count": "1",
+            "sensor_count": "1",
+            "entity_count": "7",
+        }
+        mapping_details = result["description_placeholders"]["mapping_details"]
+        assert "Zone A" in mapping_details
+        assert sources[("climate", "zone-a-climate")].entity_id in mapping_details
+        assert "Room B" in mapping_details
+        assert sources[("sensor", "room-b-temperature")].entity_id in mapping_details
 
-    hass.config_entries.async_update_entry(
-        entry,
-        options={
-            **dict(entry.options),
-            "concurrent_after_preview": {"preserve": True},
-        },
-    )
-
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                **dict(entry.options),
+                "concurrent_after_preview": {"preserve": True},
+            },
         )
+
+        with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {},
+            )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     reload.assert_called_once_with(entry.entry_id)
@@ -3110,6 +3169,146 @@ async def test_options_flow_rejects_duplicate_explicit_device_claim(
     ]
 
 
+@pytest.mark.parametrize("mapping_kind", ["thermostat", "sensor"])
+@pytest.mark.parametrize("saved_mapping_missing", [False, True])
+@pytest.mark.parametrize(
+    "error", ["mapping_source_unavailable", "mapping_device_conflict"]
+)
+async def test_options_flow_preserves_rejected_mapping_input(
+    hass: HomeAssistant, mapping_kind: str, error: str, saved_mapping_missing: bool
+) -> None:
+    """Keep attempted selections and cleared fields through correction and save."""
+
+    source_entry = MockConfigEntry(domain="homekit_controller")
+    source_entry.add_to_hass(hass)
+    devices = {
+        name: dr.async_get(hass).async_get_or_create(
+            config_entry_id=source_entry.entry_id,
+            identifiers={("homekit_controller", f"source-device-{name}")},
+        )
+        for name in ("a", "b")
+    }
+    sources = {
+        name: er.async_get(hass).async_get_or_create(
+            domain,
+            "homekit_controller",
+            name,
+            config_entry=source_entry,
+            device_id=devices[device].id,
+            suggested_object_id=name,
+        )
+        for name, domain, device in (
+            ("temperature_a", "sensor", "a"),
+            ("temperature_b", "sensor", "b"),
+            ("occupancy_a", "binary_sensor", "a"),
+            ("motion_a", "binary_sensor", "a"),
+        )
+    }
+    thermostat = mapping_kind == "thermostat"
+    item_id = 1001 if thermostat else 2002
+    section = CONF_THERMOSTATS if thermostat else CONF_SENSORS
+    setting = CONF_FILTER_NOTICE_DAYS if thermostat else CONF_INCLUDE_TEMPERATURE
+    cleared_field = CONF_FILTER_CHANGED_ENTITY_ID if thermostat else CONF_THERMOSTAT_ID
+    saved_options = {
+        section: [
+            {
+                CONF_ID: item_id,
+                CONF_TEMPERATURE_ENTITY_ID: sources["temperature_a"].entity_id,
+                CONF_TEMPERATURE_ENTITY_REF: _stable_reference(
+                    sources["temperature_a"]
+                ),
+                CONF_MOTION_ENTITY_ID: sources["motion_a"].entity_id,
+                entity_reference_field(CONF_MOTION_ENTITY_ID): _stable_reference(
+                    sources["motion_a"]
+                ),
+                setting: 7 if thermostat else True,
+                cleared_field: "input_datetime.filter_changed" if thermostat else 1001,
+                **({CONF_FILTER_CHANGED_DATE: "2026-08-01"} if thermostat else {}),
+            }
+        ]
+    }
+    entry = _add_mock_entry(hass, options=saved_options)
+    entry.runtime_data = _runtime_data(
+        thermostats=[
+            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+        ],
+        sensors=[_configured_sensor(sensor_id=2002, name="Room A", slug="room_a")],
+    )
+    if saved_mapping_missing:
+        er.async_get(hass).async_remove(sources["motion_a"].entity_id)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": f"{mapping_kind}_mapping"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ID: str(item_id)}
+    )
+    if saved_mapping_missing:
+        assert CONF_MOTION_ENTITY_ID not in _suggested_values(result)
+    else:
+        assert _suggested_values(result)[CONF_MOTION_ENTITY_ID] == (
+            sources["motion_a"].entity_id
+        )
+    assert _suggested_values(result)[setting] == (7 if thermostat else True)
+    attempted = {
+        CONF_TEMPERATURE_ENTITY_ID: (
+            "sensor.missing"
+            if error == "mapping_source_unavailable"
+            else sources["temperature_b"].entity_id
+        ),
+        CONF_OCCUPANCY_ENTITY_ID: sources["occupancy_a"].entity_id,
+        setting: 0 if thermostat else False,
+    }
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], attempted
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == f"{mapping_kind}_mapping_detail"
+    assert result["errors"] == {"base": error}
+    assert _suggested_values(result) == attempted
+    assert entry.options == saved_options
+    reload.assert_not_called()
+
+    corrected = dict(_suggested_values(result))
+    corrected[CONF_TEMPERATURE_ENTITY_ID] = sources["temperature_a"].entity_id
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], corrected
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    reload.assert_called_once_with(entry.entry_id)
+    saved = result["data"][section][0]
+    _assert_stable_mapping(saved, CONF_TEMPERATURE_ENTITY_ID, sources["temperature_a"])
+    _assert_stable_mapping(saved, CONF_OCCUPANCY_ENTITY_ID, sources["occupancy_a"])
+    assert saved[setting] == attempted[setting]
+    assert cleared_field not in saved
+    if thermostat:
+        assert saved[CONF_FILTER_CHANGED_DATE] == "2026-08-01"
+    if saved_mapping_missing:
+        _assert_stable_mapping(saved, CONF_MOTION_ENTITY_ID, sources["motion_a"])
+        restored = er.async_get(hass).async_get_or_create(
+            "binary_sensor",
+            "homekit_controller",
+            "motion_a",
+            config_entry=source_entry,
+            device_id=devices["a"].id,
+            suggested_object_id="motion_restored",
+        )
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": f"{mapping_kind}_mapping"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_ID: str(item_id)}
+        )
+        assert _suggested_values(result)[CONF_MOTION_ENTITY_ID] == restored.entity_id
+    else:
+        assert CONF_MOTION_ENTITY_ID not in saved
+        assert entity_reference_field(CONF_MOTION_ENTITY_ID) not in saved
+
+
 async def test_options_flow_updates_room_sensor_mapping(hass: HomeAssistant) -> None:
     """Test the options flow identifies the selected room-sensor override."""
 
@@ -3355,6 +3554,61 @@ async def test_options_flow_recovers_temporarily_missing_room_sensor_default(
     )
 
 
+async def test_mapping_clears_visible_filter_policy_overrides(
+    hass: HomeAssistant,
+) -> None:
+    """Clearing saved numeric policy restores defaults without losing filter history."""
+
+    saved_date = "2026-08-20"
+    entry = _add_mock_entry(
+        hass,
+        options={
+            CONF_THERMOSTATS: [
+                {
+                    CONF_ID: 1,
+                    CONF_FILTER_LIFETIME_RUNTIME_HOURS: 400,
+                    CONF_FILTER_MAX_AGE_DAYS: 120,
+                    CONF_FILTER_NOTICE_DAYS: 14,
+                    CONF_FILTER_CHANGED_DATE: saved_date,
+                }
+            ]
+        },
+    )
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "thermostat_mapping"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ID: "1"}
+    )
+    policy_defaults = {
+        CONF_FILTER_LIFETIME_RUNTIME_HOURS: DEFAULT_FILTER_LIFETIME_RUNTIME_HOURS,
+        CONF_FILTER_MAX_AGE_DAYS: DEFAULT_FILTER_MAX_AGE_DAYS,
+        CONF_FILTER_NOTICE_DAYS: DEFAULT_FILTER_NOTICE_DAYS,
+    }
+    assert all(field in _suggested_values(result) for field in policy_defaults)
+    with patch.object(hass.config_entries, "async_reload", return_value=True) as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {}
+        )
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    saved = entry.options[CONF_THERMOSTATS][0]
+    assert all(field not in saved for field in policy_defaults)
+    assert saved[CONF_FILTER_CHANGED_DATE] == saved_date
+    reload.assert_awaited_once_with(entry.entry_id)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "thermostat_mapping"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ID: "1"}
+    )
+    suggested = _suggested_values(result)
+    assert {field: suggested[field] for field in policy_defaults} == policy_defaults
+
+
 def _suggested_values(result: dict[str, Any]) -> dict[str, Any]:
     """Return suggested values attached to one Home Assistant flow schema."""
 
@@ -3385,6 +3639,46 @@ def _add_mock_entry(
     )
     entry.add_to_hass(hass)
     return entry
+
+
+def _add_source_mapping_entry(
+    hass: HomeAssistant,
+    *,
+    legacy: bool,
+) -> MockConfigEntry:
+    """Create an entry with account-scoped rows in both supported owners."""
+
+    data = {
+        **_add_mock_entry_data(),
+        CONF_THERMOSTATS: [
+            {
+                CONF_ID: 1001,
+                "slug": "zone_a",
+                CONF_FILTER_CHANGED_DATE: "2026-01-01",
+                CONF_FILTER_MAX_AGE_DAYS: 60,
+            }
+        ],
+        CONF_SENSORS: [{CONF_ID: 2001}],
+        "future_data": {"preserve": True},
+    }
+    if legacy:
+        data.pop(CONF_ACCOUNT_FINGERPRINT)
+    return _add_mock_entry(
+        hass,
+        data=data,
+        options={
+            CONF_POINT_LOOKBACK_DAYS: 30,
+            CONF_SCAN_INTERVAL_SECONDS: 900,
+            CONF_THERMOSTATS: [{CONF_ID: 1001}],
+            CONF_SENSORS: [
+                {
+                    CONF_ID: 2001,
+                    CONF_TEMPERATURE_ENTITY_ID: "sensor.room_sensor_a_temperature",
+                }
+            ],
+            "future_option": {"preserve": True},
+        },
+    )
 
 
 def _mock_validate_input(**kwargs: Any):

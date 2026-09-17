@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import attr
 import pytest
 from homeassistant.const import (
     CONF_API_KEY,
@@ -27,6 +28,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import EntityPlatform
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant_custom_component.common import (
@@ -34,7 +36,11 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
-from custom_components.beestat_statistics import _async_track_room_temperature_sources
+from custom_components.beestat_statistics import (
+    _async_track_room_temperature_sources,
+    _is_current_resource_fallback,
+    async_remove_config_entry_device,
+)
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
@@ -51,6 +57,7 @@ from custom_components.beestat_statistics.coordinator import (
     RoomTemperatureSpread,
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
+from custom_components.beestat_statistics.entity import is_beestat_only_device
 from custom_components.beestat_statistics.runtime import BeestatStatisticsRuntime
 from custom_components.beestat_statistics.sensor import (
     BeestatSensor,
@@ -59,6 +66,137 @@ from custom_components.beestat_statistics.sensor import (
 
 pytestmark = pytest.mark.asyncio
 _LOGGER = logging.getLogger(__name__)
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_owned", "expected_fallback"),
+    [
+        ("owned", True, True),
+        ("different_resource", True, False),
+        ("foreign_owner", False, False),
+        ("mixed_identifiers", False, False),
+        ("external_connection", False, False),
+        ("missing_device", False, False),
+    ],
+)
+async def test_fallback_ownership_uses_native_device_metadata(
+    hass: HomeAssistant,
+    case: str,
+    expected_owned: bool,
+    expected_fallback: bool,
+) -> None:
+    """The actual fallback consumer retains exclusive identity and connection guards."""
+
+    entry = MockConfigEntry(domain=DOMAIN)
+    foreign_entry = MockConfigEntry(domain="homekit_controller")
+    entry.add_to_hass(hass)
+    foreign_entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    identifiers = {(DOMAIN, "thermostat_1")}
+    if case == "mixed_identifiers":
+        identifiers.add(("homekit_controller", "foreign-device"))
+    device = devices.async_get_or_create(
+        config_entry_id=(
+            foreign_entry.entry_id if case == "foreign_owner" else entry.entry_id
+        ),
+        identifiers=identifiers,
+        connections=(
+            {("mac", "00:11:22:33:44:55")} if case == "external_connection" else set()
+        ),
+    )
+    device_id = "missing-device" if case == "missing_device" else device.id
+    assert (
+        is_beestat_only_device(devices.async_get(device_id), entry.entry_id)
+        is expected_owned
+    )
+    resource_id = "2" if case == "different_resource" else "1"
+    assert (
+        _is_current_resource_fallback(
+            devices, device_id, entry.entry_id, ("thermostat", resource_id)
+        )
+        is expected_fallback
+    )
+    assert devices.async_get(device.id) is device
+
+
+@pytest.mark.skipif(
+    not hasattr(dr.DeviceRegistry, "async_get_or_create_child"),
+    reason="This Core lane has no native child-device registry contract",
+)
+async def test_native_child_device_is_not_an_ordinary_beestat_fallback(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Core's child return type is rejected without using its connection shim."""
+
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    parent = devices.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "service")},
+    )
+    child = devices.async_get_or_create_child(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "thermostat_1")},
+        parent_device_id=parent.id,
+    )
+    assert devices.async_get(child.id) is child
+    assert not is_beestat_only_device(child, entry.entry_id)
+    assert not _is_current_resource_fallback(
+        devices, child.id, entry.entry_id, ("thermostat", "1")
+    )
+    assert "ChildDeviceEntry.connections" not in caplog.text
+    assert devices.async_get(parent.id) is parent
+    assert devices.async_get(child.id) is child
+
+
+async def test_native_shared_composite_is_not_owned_fallback_or_removable(
+    hass: HomeAssistant, coordinator: BeestatRuntimeDataCoordinator
+) -> None:
+    """A composite's primary entry does not own every split behind its old ID."""
+
+    entry = coordinator.beestat_config_entry
+    entry.runtime_data = Mock(coordinator=coordinator)
+    foreign_entry = MockConfigEntry(domain="homekit_controller")
+    foreign_entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    identifiers = {(DOMAIN, "thermostat_99")}
+    owned = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers=identifiers
+    )
+    foreign = devices.async_get_or_create(
+        config_entry_id=foreign_entry.entry_id, identifiers=identifiers
+    )
+    composite_id = "former-shared-fallback-device"
+    # Mirror Core's migration-split fixture. Core itself must synthesize the
+    # composite returned by async_get; do not fake its ownership properties.
+    registry_items = getattr(devices, "_devices", None)
+    if registry_items is None:
+        registry_items = devices.devices
+    for device in (owned, foreign):
+        registry_items[device.id] = attr.evolve(
+            device,
+            composite_device_id=composite_id,
+            composite_primary_config_entry=entry.entry_id,
+        )
+    composite = devices.async_get(composite_id)
+    assert isinstance(composite, dr.DeviceEntry)
+    assert composite.config_entry_id == entry.entry_id
+    assert composite.config_entries == {entry.entry_id, foreign_entry.entry_id}
+    assert composite.identifiers == identifiers
+    assert composite.connections == set()
+    owned_after = devices.async_get(owned.id)
+    foreign_after = devices.async_get(foreign.id)
+
+    assert is_beestat_only_device(owned_after, entry.entry_id)
+    assert not is_beestat_only_device(foreign_after, entry.entry_id)
+    assert not is_beestat_only_device(composite, entry.entry_id)
+    assert not _is_current_resource_fallback(
+        devices, composite_id, entry.entry_id, ("thermostat", "99")
+    )
+    assert not await async_remove_config_entry_device(hass, entry, composite)
+    assert devices.async_get(owned.id) is owned_after
+    assert devices.async_get(foreign.id) is foreign_after
 
 
 @pytest.fixture

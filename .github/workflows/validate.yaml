@@ -14,67 +14,138 @@ concurrency:
   group: validate-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  VALIDATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+  VALIDATION_HEAD: ${{ github.sha }}
+  VALIDATION_FULL: ${{ github.event_name == 'workflow_dispatch' }}
+
 jobs:
+  plan:
+    name: Select applicable validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      unit: ${{ steps.select.outputs.unit }}
+      minimum: ${{ steps.select.outputs.minimum }}
+      current: ${{ steps.select.outputs.current }}
+      release: ${{ steps.select.outputs.release }}
+      hacs: ${{ steps.select.outputs.hacs }}
+      plan: ${{ steps.select.outputs.plan }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - id: select
+        name: Resolve the candidate's validation consumers
+        run: |
+          if [[ "$VALIDATION_FULL" == true ]]; then
+            python scripts/run_dependency_light_tests.py --plan --full --github-output
+          else
+            python scripts/run_dependency_light_tests.py --plan --base "$VALIDATION_BASE" --head "$VALIDATION_HEAD" --github-output
+          fi
+
   unit:
+    needs: plan
+    if: ${{ needs.plan.outputs.unit == 'true' }}
     name: Unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Run product-owned unit and static validation
-        run: bash scripts/verify-release-local.sh unit native
+        run: |
+          if [[ "$VALIDATION_FULL" == true ]]; then
+            bash scripts/verify-release-local.sh unit native
+          else
+            bash scripts/verify-release-local.sh affected native "" --base "$VALIDATION_BASE" --head "$VALIDATION_HEAD" --only unit
+          fi
 
   home_assistant_minimum:
+    needs: plan
+    if: ${{ needs.plan.outputs.minimum == 'true' }}
     name: Home Assistant minimum integration tests (Core 2026.8.0)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Run product-owned minimum-version validation
-        run: bash scripts/verify-release-local.sh minimum native
+        run: |
+          if [[ "$VALIDATION_FULL" == true ]]; then
+            bash scripts/verify-release-local.sh minimum native
+          else
+            bash scripts/verify-release-local.sh affected native "" --base "$VALIDATION_BASE" --head "$VALIDATION_HEAD" --only minimum
+          fi
 
   home_assistant_current:
-    name: Home Assistant current integration tests (Core 2026.9.1)
+    needs: plan
+    if: ${{ needs.plan.outputs.current == 'true' }}
+    name: Home Assistant current integration tests (Core 2026.9.2)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
       - name: Run product-owned current-version validation
-        run: bash scripts/verify-release-local.sh current native
+        run: |
+          if [[ "$VALIDATION_FULL" == true ]]; then
+            bash scripts/verify-release-local.sh current native
+          else
+            bash scripts/verify-release-local.sh affected native "" --base "$VALIDATION_BASE" --head "$VALIDATION_HEAD" --only current
+          fi
 
   hassfest:
+    needs: plan
+    if: ${{ needs.plan.outputs.release == 'true' }}
     name: Hassfest
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - name: Run product-owned Hassfest validation
-        run: bash scripts/verify-release-local.sh release native
+        run: |
+          if [[ "$VALIDATION_FULL" == true ]]; then
+            bash scripts/verify-release-local.sh release native
+          else
+            bash scripts/verify-release-local.sh affected native "" --base "$VALIDATION_BASE" --head "$VALIDATION_HEAD" --only release
+          fi
 
   hacs:
+    needs: plan
+    if: ${{ needs.plan.outputs.hacs == 'true' }}
     name: HACS
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # zizmor: ignore[stale-action-refs] upstream publishes only from main
         with:
@@ -83,20 +154,30 @@ jobs:
   release_gate:
     name: Release gate
     if: ${{ always() }}
-    needs: [unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]
+    needs: [plan, unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every validation job
+      - name: Require every selected validation job
         env:
+          PLAN_STATUS: ${{ needs.plan.result }}
+          PLAN: ${{ needs.plan.outputs.plan }}
           UNIT: ${{ needs.unit.result }}
           HOME_ASSISTANT_MINIMUM: ${{ needs.home_assistant_minimum.result }}
           HOME_ASSISTANT_CURRENT: ${{ needs.home_assistant_current.result }}
           HASSFEST: ${{ needs.hassfest.result }}
           HACS: ${{ needs.hacs.result }}
         run: |
-          test "$UNIT" = success
-          test "$HOME_ASSISTANT_MINIMUM" = success
-          test "$HOME_ASSISTANT_CURRENT" = success
-          test "$HASSFEST" = success
-          test "$HACS" = success
+          test "$PLAN_STATUS" = success
+          python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["PLAN"])
+          names = {"unit": "UNIT", "minimum": "HOME_ASSISTANT_MINIMUM", "current": "HOME_ASSISTANT_CURRENT", "release": "HASSFEST", "hacs": "HACS"}
+          if plan["unresolved"]:
+              raise SystemExit("Unresolved validation applicability")
+          for lane, variable in names.items():
+              expected = "success" if plan["jobs"][lane] else "skipped"
+              if os.environ[variable] != expected:
+                  raise SystemExit(f"{lane}: expected {expected}, got {os.environ[variable]}")
+          PY

@@ -253,6 +253,26 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ("Zone A (HomeKit)", "Room A (HomeKit)", "Room B"),
         )
 
+        for device_class in ("temperature_delta", "humidity", None, ""):
+            with self.subTest(device_class=device_class):
+                state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
+                    state="3",
+                    attributes={
+                        "device_class": device_class,
+                        "unit_of_measurement": "°C",
+                    },
+                )
+                invalid_class = self.coordinator._build_room_temperature_spreads(
+                    hass,
+                    self.config_model.BeestatConfig(
+                        thermostats=(thermostat,),
+                        sensors=sensors,
+                    ),
+                    metadata,
+                    sensor_metadata,
+                )[1]
+                self.assertEqual(invalid_class, projection)
+
         state_values["sensor.room_b_temperature"] = types.SimpleNamespace(
             state="78",
             attributes={"unit_of_measurement": "°F"},
@@ -274,6 +294,30 @@ class CoordinatorHelpersTest(unittest.TestCase):
             0,
         )
 
+    def test_temperature_state_accepts_absolute_and_classless_supported_units(
+        self,
+    ) -> None:
+        for value, source_unit, target_unit, expected in (
+            (22, "°C", "°F", 71.6),
+            (71.6, "°F", "°C", 22),
+            (295.15, "K", "°C", 22),
+        ):
+            for class_attributes in ({}, {"device_class": "temperature"}):
+                with self.subTest(unit=source_unit, attributes=class_attributes):
+                    state = types.SimpleNamespace(
+                        state=str(value),
+                        attributes={
+                            **class_attributes,
+                            "unit_of_measurement": source_unit,
+                        },
+                    )
+                    reading = self.coordinator._temperature_state_value(
+                        state, target_unit
+                    )
+                    self.assertIsNotNone(reading)
+                    self.assertAlmostEqual(reading[0], expected)
+                    self.assertEqual(reading[1], target_unit)
+
     def test_temperature_state_rejects_overflow_after_unit_conversion(self) -> None:
         state = types.SimpleNamespace(
             state="1e308",
@@ -285,6 +329,38 @@ class CoordinatorHelpersTest(unittest.TestCase):
             self.coordinator._temperature_state_value(state, "°C"),
             (1e308, "°C"),
         )
+
+    def test_absolute_temperature_bounds_preserve_roundoff_and_valid_extremes(
+        self,
+    ) -> None:
+        for unit, zero, negative in (
+            ("K", 0.0, None),
+            ("°C", -273.15, -40),
+            ("°F", -459.67, -40),
+        ):
+            for value in (zero, zero - 5e-10, zero + 5e-10, negative, 1e308):
+                if value is None:
+                    continue
+                with self.subTest(unit=unit, valid=value):
+                    state = types.SimpleNamespace(
+                        state=str(value), attributes={"unit_of_measurement": unit}
+                    )
+                    self.assertEqual(
+                        self.coordinator._temperature_state_value(state, unit),
+                        (value, unit),
+                    )
+            for value in (zero - 1, zero - 1e-8, float("inf"), float("nan")):
+                with self.subTest(unit=unit, invalid=value):
+                    state = types.SimpleNamespace(
+                        state=str(value), attributes={"unit_of_measurement": unit}
+                    )
+                    self.assertIsNone(
+                        self.coordinator._temperature_state_value(state, "°F")
+                    )
+        state = types.SimpleNamespace(
+            state="-459.7", attributes={"unit_of_measurement": "°F"}
+        )
+        self.assertIsNone(self.coordinator._temperature_state_value(state, "°F"))
 
     def test_profile_room_spread_preserves_equal_names_and_fails_ambiguous_identity(
         self,
@@ -363,7 +439,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
         state_values["sensor.room_10"].state = "-1e308"
         state_values["sensor.room_11"].state = "1e308"
-        overflowed = self.coordinator._build_room_temperature_spreads(
+        invalid_temperature = self.coordinator._build_room_temperature_spreads(
             hass,
             self.config_model.BeestatConfig(
                 thermostats=(thermostat,),
@@ -372,8 +448,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             thermostat_metadata,
             sensor_metadata,
         )[1]
-        self.assertEqual(overflowed.valid_sensor_count, 2)
-        self.assertIsNone(overflowed.value)
+        self.assertEqual(invalid_temperature.valid_sensor_count, 1)
+        self.assertEqual(invalid_temperature.unavailable_sensor_names, ("Shared name",))
+        self.assertIsNone(invalid_temperature.value)
         state_values["sensor.room_10"].state = "70"
         state_values["sensor.room_11"].state = "74"
 
@@ -2080,152 +2157,227 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator._filter_day_cache, {})
 
     async def test_timezone_change_prevents_stale_boundary_persistence(self) -> None:
-        changed_at = datetime.fromisoformat("2026-07-05T01:48:00+00:00")
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1001,
-            slug="zone_a",
-            name="Zone A",
-            filter_changed_date=date(2026, 7, 4),
-            filter_changed_at=changed_at,
-        )
-        entry = types.SimpleNamespace(
-            data={},
-            options={
-                "thermostats": [
+        async def check_boundary(change_during_read):
+            changed_at = datetime.fromisoformat("2026-07-05T01:48:00+00:00")
+            thermostat = self.config_model.ConfiguredThermostat(
+                thermostat_id=1001,
+                slug="zone_a",
+                name="Zone A",
+                filter_changed_date=date(2026, 7, 4),
+                filter_changed_at=changed_at,
+            )
+            entry = types.SimpleNamespace(
+                data={},
+                options={
+                    "thermostats": [
+                        {
+                            "id": 1001,
+                            "filter_changed_date": "2026-07-04",
+                            "filter_changed_at": changed_at.isoformat(),
+                        }
+                    ]
+                },
+            )
+
+            async def read_runtime(*_args):
+                if change_during_read:
+                    coordinator._local_tz = ZoneInfo("Europe/London")
+                    coordinator._timezone_revision += 1
+                start = datetime(2026, 7, 4, 4, tzinfo=UTC)
+                return [
                     {
-                        "id": 1001,
-                        "filter_changed_date": "2026-07-04",
-                        "filter_changed_at": changed_at.isoformat(),
+                        "timestamp": (start + timedelta(minutes=5 * index)).isoformat(),
+                        "fan": 0,
                     }
+                    for index in range(261)
+                ] + [
+                    {"timestamp": "2026-07-05T01:45:00+00:00", "fan": 180},
+                    {"timestamp": "2026-07-05T01:50:00+00:00", "fan": 0},
                 ]
-            },
-        )
 
-        async def read_runtime(*_args):
-            coordinator._local_tz = ZoneInfo("Europe/London")
-            coordinator._timezone_revision += 1
-            return [
-                {"timestamp": "2026-07-05T01:45:00+00:00", "fan": 180},
-                {"timestamp": "2026-07-05T01:50:00+00:00", "fan": 0},
-            ]
-
-        updates: list[dict[str, object]] = []
-        coordinator = types.SimpleNamespace(
-            _client=types.SimpleNamespace(
-                async_read_runtime_thermostat=read_runtime,
-                redact_error=lambda err: str(err),
-            ),
-            _local_tz=ZoneInfo("America/New_York"),
-            _timezone_revision=0,
-            config_entry=entry,
-            hass=types.SimpleNamespace(
-                config_entries=types.SimpleNamespace(
-                    async_update_entry=lambda _entry, *, options: updates.append(
-                        options
+            updates: list[dict[str, object]] = []
+            coordinator = types.SimpleNamespace(
+                _client=types.SimpleNamespace(
+                    async_read_runtime_thermostat=read_runtime,
+                    redact_error=lambda err: str(err),
+                ),
+                _local_tz=ZoneInfo("America/New_York"),
+                _timezone_revision=0,
+                config_entry=entry,
+                hass=types.SimpleNamespace(
+                    config_entries=types.SimpleNamespace(
+                        async_update_entry=lambda _entry, *, options: updates.append(
+                            options
+                        )
                     )
+                ),
+                last_filter_boundary_pending_count=0,
+                last_filter_boundary_reconciled_count=0,
+                last_filter_boundary_reconcile_error=None,
+                last_filter_boundary_reconcile_attempt_at=None,
+                async_schedule_filter_boundary_reconcile=lambda *_args: None,
+                _async_cancel_filter_boundary_retry=lambda: None,
+            )
+
+            self._attach_temporal_context(coordinator)
+            coordinator.capture_temporal_context = lambda: (
+                self.coordinator.TemporalContext(
+                    datetime(2026, 7, 7, 12, tzinfo=UTC),
+                    coordinator._local_tz,
+                    coordinator._timezone_revision,
                 )
-            ),
-            last_filter_boundary_pending_count=0,
-            last_filter_boundary_reconciled_count=0,
-            last_filter_boundary_reconcile_error=None,
-            last_filter_boundary_reconcile_attempt_at=None,
-            async_schedule_filter_boundary_reconcile=lambda *_args: None,
-            _async_cancel_filter_boundary_retry=lambda: None,
-        )
+            )
 
-        self._attach_temporal_context(coordinator)
+            await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
+                coordinator,
+                self.config_model.BeestatConfig(
+                    thermostats=(thermostat,),
+                    sensors=(),
+                ),
+            )
 
-        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
-            coordinator,
-            self.config_model.BeestatConfig(
-                thermostats=(thermostat,),
-                sensors=(),
-            ),
-        )
+            if change_during_read:
+                self.assertEqual(updates, [])
+            else:
+                self.assertEqual(len(updates), 1)
+                self.assertEqual(
+                    updates[0]["thermostats"][0][
+                        "filter_change_day_runtime_baseline_seconds"
+                    ],
+                    180,
+                )
+            self.assertEqual(
+                coordinator.last_filter_boundary_reconciled_count,
+                0 if change_during_read else 1,
+            )
+            self.assertEqual(
+                coordinator.last_filter_boundary_pending_count,
+                1 if change_during_read else 0,
+            )
 
-        self.assertEqual(updates, [])
-        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 0)
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+        for change_during_read in (False, True):
+            with self.subTest(change_during_read=change_during_read):
+                await check_boundary(change_during_read)
 
     async def test_slow_reconciliation_does_not_overwrite_newer_click(self) -> None:
-        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
-        newer_changed_at = datetime.fromisoformat("2026-07-05T22:12:00+00:00")
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1001,
-            slug="zone_a",
-            name="Zone A",
-            filter_changed_date=date(2026, 7, 5),
-            filter_changed_at=changed_at,
-        )
-        entry = types.SimpleNamespace(
-            data={},
-            options={
-                "unrelated_option": "preserve-me",
-                "thermostats": [
-                    {
-                        "id": 1001,
-                        "filter_changed_date": "2026-07-05",
-                        "filter_changed_at": changed_at.isoformat(),
+        async def check_boundary(change_during_read):
+            changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+            newer_changed_at = datetime.fromisoformat("2026-07-05T22:12:00+00:00")
+            thermostat = self.config_model.ConfiguredThermostat(
+                thermostat_id=1001,
+                slug="zone_a",
+                name="Zone A",
+                filter_changed_date=date(2026, 7, 5),
+                filter_changed_at=changed_at,
+            )
+            entry = types.SimpleNamespace(
+                data={},
+                options={
+                    "unrelated_option": "preserve-me",
+                    "thermostats": [
+                        {
+                            "id": 1001,
+                            "filter_changed_date": "2026-07-05",
+                            "filter_changed_at": changed_at.isoformat(),
+                        }
+                    ],
+                },
+            )
+
+            async def read_runtime(*_args):
+                if change_during_read:
+                    entry.options = {
+                        "unrelated_option": "newer-value",
+                        "thermostats": [
+                            {
+                                "id": 1001,
+                                "filter_changed_date": "2026-07-05",
+                                "filter_changed_at": newer_changed_at.isoformat(),
+                            }
+                        ],
                     }
-                ],
-            },
-        )
-
-        async def read_runtime(*_args):
-            entry.options = {
-                "unrelated_option": "newer-value",
-                "thermostats": [
+                start = datetime(2026, 7, 5, 4, tzinfo=UTC)
+                return [
                     {
-                        "id": 1001,
-                        "filter_changed_date": "2026-07-05",
-                        "filter_changed_at": newer_changed_at.isoformat(),
+                        "timestamp": (start + timedelta(minutes=5 * index)).isoformat(),
+                        "fan": 0,
                     }
-                ],
-            }
-            return [
-                {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
-                {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
-            ]
+                    for index in range(213)
+                ] + [
+                    {"timestamp": "2026-07-05T21:45:00+00:00", "fan": 180},
+                    {"timestamp": "2026-07-05T21:50:00+00:00", "fan": 0},
+                ]
 
-        def update_entry(_entry, *, options):
-            entry.options = options
+            def update_entry(_entry, *, options):
+                entry.options = options
 
-        coordinator = types.SimpleNamespace(
-            _client=types.SimpleNamespace(
-                async_read_runtime_thermostat=read_runtime,
-                redact_error=lambda err: str(err),
-            ),
-            _local_tz=ZoneInfo("America/New_York"),
-            _timezone_revision=0,
-            config_entry=entry,
-            hass=types.SimpleNamespace(
-                config_entries=types.SimpleNamespace(async_update_entry=update_entry)
-            ),
-            last_filter_boundary_pending_count=0,
-            last_filter_boundary_reconciled_count=0,
-            last_filter_boundary_reconcile_error=None,
-            last_filter_boundary_reconcile_attempt_at=None,
-            async_schedule_filter_boundary_reconcile=lambda *_args: None,
-            _async_cancel_filter_boundary_retry=lambda: None,
-        )
+            coordinator = types.SimpleNamespace(
+                _client=types.SimpleNamespace(
+                    async_read_runtime_thermostat=read_runtime,
+                    redact_error=lambda err: str(err),
+                ),
+                _local_tz=ZoneInfo("America/New_York"),
+                _timezone_revision=0,
+                config_entry=entry,
+                hass=types.SimpleNamespace(
+                    config_entries=types.SimpleNamespace(
+                        async_update_entry=update_entry
+                    )
+                ),
+                last_filter_boundary_pending_count=0,
+                last_filter_boundary_reconciled_count=0,
+                last_filter_boundary_reconcile_error=None,
+                last_filter_boundary_reconcile_attempt_at=None,
+                async_schedule_filter_boundary_reconcile=lambda *_args: None,
+                _async_cancel_filter_boundary_retry=lambda: None,
+            )
 
-        self._attach_temporal_context(coordinator)
+            self._attach_temporal_context(coordinator)
+            coordinator.capture_temporal_context = lambda: (
+                self.coordinator.TemporalContext(
+                    datetime(2026, 7, 7, 12, tzinfo=UTC),
+                    coordinator._local_tz,
+                    coordinator._timezone_revision,
+                )
+            )
 
-        await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
-            coordinator,
-            self.config_model.BeestatConfig(
-                thermostats=(thermostat,),
-                sensors=(),
-            ),
-        )
+            await self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries(
+                coordinator,
+                self.config_model.BeestatConfig(
+                    thermostats=(thermostat,),
+                    sensors=(),
+                ),
+            )
 
-        saved = entry.options["thermostats"][0]
-        self.assertEqual(saved["filter_changed_at"], newer_changed_at.isoformat())
-        self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
-        self.assertNotIn("filter_change_boundary_reconciled_at", saved)
-        self.assertEqual(entry.options["unrelated_option"], "newer-value")
-        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 0)
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+            saved = entry.options["thermostats"][0]
+            expected_changed_at = newer_changed_at if change_during_read else changed_at
+            self.assertEqual(
+                saved["filter_changed_at"], expected_changed_at.isoformat()
+            )
+            if change_during_read:
+                self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
+                self.assertNotIn("filter_change_boundary_reconciled_at", saved)
+            else:
+                self.assertEqual(
+                    saved["filter_change_day_runtime_baseline_seconds"], 180
+                )
+                self.assertIn("filter_change_boundary_reconciled_at", saved)
+            self.assertEqual(
+                entry.options["unrelated_option"],
+                "newer-value" if change_during_read else "preserve-me",
+            )
+            self.assertEqual(
+                coordinator.last_filter_boundary_reconciled_count,
+                0 if change_during_read else 1,
+            )
+            self.assertEqual(
+                coordinator.last_filter_boundary_pending_count,
+                1 if change_during_read else 0,
+            )
+
+        for change_during_read in (False, True):
+            with self.subTest(change_during_read=change_during_read):
+                await check_boundary(change_during_read)
 
 
 class _FakeDataUpdateCoordinator:
