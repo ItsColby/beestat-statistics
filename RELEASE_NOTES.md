@@ -3,6 +3,36 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.17
+
+- Add explicit hourly successor statistics with per-quantity UTC epochs,
+  source-quality checks, coverage, durable checkpoints and recoverable Recorder
+  writes. Existing daily history remains in place. Installing the release does
+  not select quantities or migrate them to hourly statistics.
+- Preserve the legacy writer for enabled, unselected quantities while selected
+  quantities retain exclusive hourly ownership across renames, disabled settings,
+  interrupted work and reloads. Report partial progress and blocked hourly work
+  explicitly. VOC continues through its existing legacy path; hourly VOC remains
+  unavailable until its source-unit contract is established.
+- Add the admin-only `get_raw_points` response action for bounded, read-only
+  thermostat or sensor history acquisition. Preserve source order, duplicates,
+  tombstones and response provenance, and reject oversized, incomplete or
+  malformed responses without inventing complete history.
+- Preserve connection form input after validation errors, honor cleared optional
+  mappings, and require confirmation when a changed connection cannot safely
+  establish account continuity. Improve recovery from interrupted setup.
+- Reject invalid absolute temperatures before building imported statistics.
+  Missing or rejected observations remain unknown.
+- Support Home Assistant Core 2026.9.2 device-registry results while preserving
+  exclusive device ownership. The minimum remains Core 2026.8.0, and existing
+  configuration entries remain version 1.5.
+
+Hourly selection and historical repair are separate explicit operations. Review
+source coverage, recovery state and consumers before adopting a quantity. A
+selection preview can reconcile pending work; it is not a read-only history
+export. Downgrading code after hourly adoption alone does not restore consistent
+journal, Recorder and legacy-writer state.
+
 ## Beestat Statistics v2026.9.10.4
 
 - Preserve previously imported stage and accessory series when Beestat corrects
