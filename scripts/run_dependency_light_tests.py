@@ -398,8 +398,40 @@ def runner_dependencies(source: str) -> dict[str, str]:
     return result
 
 
+def _workflow_content(source: str) -> tuple[str, ...]:
+    """Compare maintained YAML bodies while preserving literal scalar payloads."""
+    lines = []
+    scalar_indent: int | None = None
+    for raw in source.splitlines():
+        indent = len(raw) - len(raw.lstrip())
+        if scalar_indent is not None and (not raw.strip() or indent > scalar_indent):
+            # A hash or blank line in shell/heredoc or env data is not a YAML comment.
+            lines.append(raw)
+            continue
+        scalar_indent = None
+        line = re.sub(
+            r"""("(?:\\.|[^"\\])*"|'(?:''|[^'])*')|(?<!\S)#.*""",
+            lambda match: match[1] or "",
+            raw,
+        ).rstrip()
+        if not line.strip() or re.match(r"^(?: {4}| {6}- | {8})name:", line):
+            continue
+        if re.search(r":\s*[|>][+-]?\s*$", line):
+            scalar_indent = indent
+        lines.append(line)
+    return tuple(lines)
+
+
 def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
-    """Read environment/action inputs in the maintained workflow's job blocks."""
+    """Read execution inputs in the maintained workflow's mapped job blocks."""
+    shared = _workflow_content(
+        "\n".join(
+            re.findall(
+                r"(?ms)^(?:env|defaults):.*?(?=^\S|\Z)",
+                source.split("jobs:\n", 1)[0],
+            )
+        )
+    )
     jobs = dict(
         re.findall(
             r"(?ms)^  ([a-z_]+):\n(.*?)(?=^  [a-z_]+:|\Z)",
@@ -424,12 +456,7 @@ def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
         )
         if not values or any("${{" in value for _, value in values):
             raise ValueError(f"Unresolved workflow dependencies: {name}")
-        result[lane] = tuple(
-            sorted(
-                f"{key}:{value.strip().strip(chr(34)).strip(chr(39))}"
-                for key, value in values
-            )
-        )
+        result[lane] = (*shared, *_workflow_content(jobs[name]))
     return result
 
 

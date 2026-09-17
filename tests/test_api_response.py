@@ -132,7 +132,6 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             fingerprint = self.api.exception_fingerprint(err)
 
         self.assertEqual("RuntimeError@synthetic:fail:17", fingerprint)
-        self.assertNotIn("private-response-secret", fingerprint)
 
     def test_exception_fingerprint_is_sanitized_and_bounded(self) -> None:
         exception_type = type("Private!" + ("x" * 256), (RuntimeError,), {})
