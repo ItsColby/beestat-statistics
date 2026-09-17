@@ -630,36 +630,53 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("EntityCategory.CONFIG", button_text)
 
     def test_diagnostic_attributes_are_excluded_from_recorder_history(self) -> None:
-        sensor_text = (
-            ROOT / "custom_components/beestat_statistics/sensor.py"
-        ).read_text(encoding="utf-8")
-        binary_text = (
-            ROOT / "custom_components/beestat_statistics/binary_sensor.py"
-        ).read_text(encoding="utf-8")
-        date_text = (ROOT / "custom_components/beestat_statistics/date.py").read_text(
-            encoding="utf-8"
-        )
-
-        for text, snippets in {
-            sensor_text: (
-                "_unrecorded_attributes = frozenset(",
-                '"last_error"',
-                '"profiles"',
-                '"active_alerts"',
+        for filename, class_name, expected in (
+            ("sensor.py", "BeestatSensor", {"last_error", "profiles", "active_alerts"}),
+            ("binary_sensor.py", "BeestatSensorInUseBinarySensor", {"beestat_name"}),
+            (
+                "binary_sensor.py",
+                "BeestatThermostatAlertProblemBinarySensor",
+                {"active_alerts"},
             ),
-            binary_text: (
-                "_unrecorded_attributes = frozenset(",
-                '"beestat_name"',
-                '"active_alerts"',
+            (
+                "date.py",
+                "BeestatFilterChangedDate",
+                {"change_day_runtime_baseline_seconds", "legacy_helper_entity_id"},
             ),
-            date_text: (
-                "_unrecorded_attributes = frozenset(",
-                '"change_day_runtime_baseline_seconds"',
-                '"legacy_helper_entity_id"',
-            ),
-        }.items():
-            for snippet in snippets:
-                self.assertIn(snippet, text)
+        ):
+            with self.subTest(filename=filename, class_name=class_name):
+                tree = ast.parse(
+                    (
+                        ROOT / "custom_components/beestat_statistics" / filename
+                    ).read_text(encoding="utf-8")
+                )
+                classes = {
+                    node.name: node
+                    for node in tree.body
+                    if isinstance(node, ast.ClassDef)
+                }
+                declarations = [
+                    node.value
+                    for node in classes[class_name].body
+                    if isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name)
+                        and target.id == "_unrecorded_attributes"
+                        for target in node.targets
+                    )
+                ]
+                self.assertEqual(len(declarations), 1)
+                declaration = declarations[0]
+                self.assertIsInstance(declaration, ast.Call)
+                self.assertEqual(ast.unparse(declaration.func), "frozenset")
+                self.assertEqual(len(declaration.args), 1)
+                self.assertIsInstance(declaration.args[0], ast.Set)
+                attributes = {
+                    node.value
+                    for node in declaration.args[0].elts
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                }
+                self.assertLessEqual(expected, attributes)
 
     def test_room_sensor_state_attributes_do_not_expose_mapping_internals(self) -> None:
         binary_text = (
