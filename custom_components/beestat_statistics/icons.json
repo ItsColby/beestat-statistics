@@ -1,5 +1,14 @@
 {
   "services": {
+    "stage_hourly_source": {
+      "service": "mdi:database-import-outline"
+    },
+    "plan_hourly_history": {
+      "service": "mdi:clipboard-search-outline"
+    },
+    "apply_hourly_history": {
+      "service": "mdi:database-check-outline"
+    },
     "select_hourly_statistics": {
       "service": "mdi:chart-timeline-variant"
     },

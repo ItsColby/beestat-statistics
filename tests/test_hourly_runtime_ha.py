@@ -96,6 +96,18 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
     freezer.move_to(NOW)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=NOW)
     manager = Mock(
+        has_pending_history=False,
+        history_quantity_ids=Mock(return_value=()),
+        history_status=Mock(
+            return_value={
+                "status": "unselected",
+                "root_revision": 0,
+                "has_pending": False,
+            }
+        ),
+        history_configuration=Mock(
+            return_value={"contract_version": 3, "quantities": []}
+        ),
         async_mode=AsyncMock(return_value=mode),
         async_writer_partition=AsyncMock(
             side_effect=lambda identity: _partition(
@@ -124,7 +136,9 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
     coordinator.async_refresh_runtime = AsyncMock(return_value=coordinator.data)
     client.async_read_runtime_thermostat = AsyncMock(return_value=_rows())
     client.async_read_runtime_sensor = AsyncMock(return_value=[])
-    entry.runtime_data = SimpleNamespace(coordinator=coordinator, importer=importer)
+    entry.runtime_data = SimpleNamespace(
+        client=client, coordinator=coordinator, importer=importer
+    )
     entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry, coordinator, client, importer, manager
 
@@ -953,7 +967,14 @@ async def test_coverage_and_configuration_are_cached_detached_reads(
         blocking=True,
         return_response=True,
     )
-    assert configuration["hourly_statistics"] == status
+    assert {
+        key: value
+        for key, value in configuration["hourly_statistics"].items()
+        if key != "history_v3"
+    } == status
+    assert configuration["hourly_statistics"]["history_v3"] == (
+        manager.history_configuration.return_value
+    )
     configuration["hourly_statistics"]["series"].clear()
     assert status["series"]
     coordinator.async_refresh_runtime.assert_not_awaited()

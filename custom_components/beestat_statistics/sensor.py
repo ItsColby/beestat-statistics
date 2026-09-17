@@ -366,6 +366,8 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
             "last_import_summary_fallback_reason",
             "last_import_cumulative_seed_count",
             "last_import_writers",
+            "hourly_history_revision",
+            "hourly_history_status",
             "last_filter_alert_dismiss_attempt_at",
             "last_filter_alert_dismiss_matched",
             "last_filter_alert_dismissed",
@@ -511,6 +513,8 @@ class BeestatSensor(CoordinatorEntity[BeestatRuntimeDataCoordinator], SensorEnti
                 if self.coordinator.last_import_writers is not None
                 else None
             ),
+            "hourly_history_revision": self.coordinator.hourly_history_revision,
+            "hourly_history_status": self.coordinator.hourly_history_status,
             "last_filter_alert_dismiss_attempt_at": _isoformat(
                 self.coordinator.last_filter_alert_dismiss_attempt_at
             ),

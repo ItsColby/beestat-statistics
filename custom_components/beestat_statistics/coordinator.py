@@ -244,6 +244,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_fallback_reason: str | None = None
         self.last_import_cumulative_seed_count: int | None = None
         self.last_import_writers: dict[str, int | str | None] | None = None
+        self.hourly_history_revision: int = 0
+        self.hourly_history_status: str = "legacy"
         self.last_filter_alert_dismiss_attempt_at: datetime | None = None
         self.last_filter_alert_dismiss_thermostat_id: int | None = None
         self.last_filter_alert_dismiss_matched: int | None = None

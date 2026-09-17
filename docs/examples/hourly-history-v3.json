@@ -1,0 +1,1292 @@
+{
+  "cases": [
+    {
+      "title": "Complete hourly fan and aggregate heat; component runtime may exceed one hour",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours",
+          "thermostat:101:heat_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 2,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 2,
+          "batch_count": 2,
+          "verified_batches": 2,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "33422a285d10b5dc89f2a89b9b00fd50cb4eeb9d50bb82bd2de75019bb4b9890",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 2
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": 0.5,
+                "min": null,
+                "max": null,
+                "reason": "ready",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 1,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": 0.5,
+                "complete_total": 0.5,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ]
+                ]
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T05:00:00+00:00",
+              "verified_hours": 1,
+              "expected_hours": 1,
+              "closed_hours": 1,
+              "eligible_hours": 1,
+              "eligible_buckets": 1,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "ready": 1
+              },
+              "observed_amount": 0.5,
+              "complete_total": 0.5,
+              "eligible_amount": 0.5
+            }
+          },
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:heat_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "heat_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_heat_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_heat_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_heat_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": 1.75,
+                "min": null,
+                "max": null,
+                "reason": "ready",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 1,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": 1.75,
+                "complete_total": 1.75,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ]
+                ]
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T05:00:00+00:00",
+              "verified_hours": 1,
+              "expected_hours": 1,
+              "closed_hours": 1,
+              "eligible_hours": 1,
+              "eligible_buckets": 1,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "ready": 1
+              },
+              "observed_amount": 1.75,
+              "complete_total": 1.75,
+              "eligible_amount": 1.75
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "Partial point day retains its subtotal without claiming a complete day",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-11T04:00:00+00:00",
+        "period": "day",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "day",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-11T04:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 1,
+          "batch_count": 1,
+          "verified_batches": 1,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "15cb618647befa7d3db1f6276cc55497ac9e58ac2e3874f164251603a8e4b9c0",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 1
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-11T04:00:00+00:00",
+                "value": 0.5,
+                "min": null,
+                "max": null,
+                "reason": "partial",
+                "failure_reason": null,
+                "valid_slots": 24,
+                "expected_slots": 288,
+                "verified_hours": 2,
+                "expected_hours": 24,
+                "closed_hours": 24,
+                "observed_amount": 0.5,
+                "complete_total": null,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [],
+                "point_observed_amount": 0.5,
+                "observed_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T05:00:00+00:00",
+                    "2026-09-10T06:00:00+00:00"
+                  ]
+                ],
+                "coverage_reasons": {
+                  "ready": 2,
+                  "unassessed": 22
+                },
+                "calendar_start": "2026-09-10T04:00:00+00:00",
+                "calendar_end": "2026-09-11T04:00:00+00:00",
+                "calendar_hours": 24
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-11T04:00:00+00:00",
+              "verified_hours": 2,
+              "expected_hours": 24,
+              "closed_hours": 24,
+              "eligible_hours": 0,
+              "eligible_buckets": 0,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "ready": 2,
+                "unassessed": 22
+              },
+              "observed_amount": 0.5,
+              "complete_total": null,
+              "eligible_amount": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "A qualified legacy day supplies one daily total without adding partial points",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-11T04:00:00+00:00",
+        "period": "day",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "day",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-11T04:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 1,
+          "batch_count": 1,
+          "verified_batches": 1,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "2c532684082925533f7b4cbb7c3e84fcecf586156140bd4b7c322bed8cd98fd0",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 1
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-11T04:00:00+00:00",
+                "value": 2.5,
+                "min": null,
+                "max": null,
+                "reason": "legacy_day",
+                "failure_reason": null,
+                "valid_slots": 24,
+                "expected_slots": 288,
+                "verified_hours": 2,
+                "expected_hours": 24,
+                "closed_hours": 24,
+                "observed_amount": 2.5,
+                "complete_total": 2.5,
+                "source_basis": "legacy_daily",
+                "method_basis": "legacy_daily_cumulative",
+                "confidence": [
+                  "historical_sample_completeness_unproven",
+                  "legacy_native_daily_value"
+                ],
+                "source_ids": [
+                  "beestat:example_zone_fan_runtime_hours"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T05:00:00+00:00",
+                    "2026-09-10T06:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T06:00:00+00:00",
+                    "2026-09-10T07:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T07:00:00+00:00",
+                    "2026-09-10T08:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T08:00:00+00:00",
+                    "2026-09-10T09:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T09:00:00+00:00",
+                    "2026-09-10T10:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T10:00:00+00:00",
+                    "2026-09-10T11:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T11:00:00+00:00",
+                    "2026-09-10T12:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T12:00:00+00:00",
+                    "2026-09-10T13:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T13:00:00+00:00",
+                    "2026-09-10T14:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T14:00:00+00:00",
+                    "2026-09-10T15:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T15:00:00+00:00",
+                    "2026-09-10T16:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T16:00:00+00:00",
+                    "2026-09-10T17:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T17:00:00+00:00",
+                    "2026-09-10T18:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T18:00:00+00:00",
+                    "2026-09-10T19:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T19:00:00+00:00",
+                    "2026-09-10T20:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T20:00:00+00:00",
+                    "2026-09-10T21:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T21:00:00+00:00",
+                    "2026-09-10T22:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T22:00:00+00:00",
+                    "2026-09-10T23:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T23:00:00+00:00",
+                    "2026-09-11T00:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-11T00:00:00+00:00",
+                    "2026-09-11T01:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-11T01:00:00+00:00",
+                    "2026-09-11T02:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-11T02:00:00+00:00",
+                    "2026-09-11T03:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-11T03:00:00+00:00",
+                    "2026-09-11T04:00:00+00:00"
+                  ]
+                ],
+                "point_observed_amount": 0.5,
+                "observed_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ],
+                  [
+                    "2026-09-10T05:00:00+00:00",
+                    "2026-09-10T06:00:00+00:00"
+                  ]
+                ],
+                "coverage_reasons": {
+                  "ready": 2,
+                  "unassessed": 22
+                },
+                "calendar_start": "2026-09-10T04:00:00+00:00",
+                "calendar_end": "2026-09-11T04:00:00+00:00",
+                "calendar_hours": 24
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-11T04:00:00+00:00",
+              "verified_hours": 2,
+              "expected_hours": 24,
+              "closed_hours": 24,
+              "eligible_hours": 24,
+              "eligible_buckets": 1,
+              "legacy_days": 1,
+              "coverage_reasons": {
+                "ready": 2,
+                "unassessed": 22
+              },
+              "observed_amount": 2.5,
+              "complete_total": 2.5,
+              "eligible_amount": 2.5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "VOC remains visible with blocked admission while its unit contract is unresolved",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "sensor:201:voc_concentration"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 0,
+        "source_revision": null,
+        "coverage_revision": 0,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "status": "unselected",
+          "root_revision": 0,
+          "has_pending": false
+        },
+        "view_token": "9a81d08b93e65a3d3b31e04e6c23ab9c1690ead5773955780f5f8911c6815ab8",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 1
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "sensor:201:voc_concentration",
+              "thermostat_id": 101,
+              "sensor_id": 201,
+              "quantity": "voc_concentration",
+              "kind": "measurement",
+              "logical_unit": "ppb",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_room_voc_concentration_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_room_voc_concentration"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "ppb",
+                "unit_class": "unitless",
+                "logical_multiplier": 1.0,
+                "v2_statistic_id": "beestat:example_room_voc_concentration_hourly_v2"
+              },
+              "admission": "blocked",
+              "writer_status": "unselected",
+              "blocked_reason": "voc_unit_unresolved"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": null,
+                "min": null,
+                "max": null,
+                "reason": "blocked",
+                "failure_reason": "voc_unit_unresolved",
+                "valid_slots": 0,
+                "expected_slots": 12,
+                "verified_hours": 0,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": null,
+                "complete_total": null,
+                "source_basis": "unavailable",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [],
+                "source_ids": [],
+                "eligible_intervals": []
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T05:00:00+00:00",
+              "verified_hours": 0,
+              "expected_hours": 1,
+              "closed_hours": 1,
+              "eligible_hours": 0,
+              "eligible_buckets": 0,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "blocked": 1
+              },
+              "observed_mean": null,
+              "observed_min": null,
+              "observed_max": null,
+              "summary_basis": "verified_point_hours"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "An in-progress native batch suppresses the affected interval",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "in_progress",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 0,
+          "batch_count": 1,
+          "verified_batches": 0,
+          "remaining_batches": 1,
+          "root_revision": 8,
+          "has_pending": true,
+          "error": null
+        },
+        "view_token": "c9b6619afa22c4afc8b20c85d32beef165876cb53264de46ed731465006a889b",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 1
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "reserved"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": null,
+                "min": null,
+                "max": null,
+                "reason": "pending",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 0,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": null,
+                "complete_total": null,
+                "source_basis": "unavailable",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": []
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T05:00:00+00:00",
+              "verified_hours": 0,
+              "expected_hours": 1,
+              "closed_hours": 1,
+              "eligible_hours": 0,
+              "eligible_buckets": 0,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "pending": 1
+              },
+              "observed_amount": null,
+              "complete_total": null,
+              "eligible_amount": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "Unplaced source timestamps remain blocked evidence, never a numeric zero",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 4096,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T05:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 1,
+          "batch_count": 1,
+          "verified_batches": 1,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "a332cbedc6ed0c8c2d350d47f8b206ead31532120aa92e82a58c4b48a00be74a",
+        "pagination": {
+          "offset": 0,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 1
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": null,
+                "min": null,
+                "max": null,
+                "reason": "blocked",
+                "failure_reason": "source_timestamp_unplaced",
+                "valid_slots": 0,
+                "expected_slots": 12,
+                "verified_hours": 0,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": null,
+                "complete_total": null,
+                "source_basis": "unavailable",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": []
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T05:00:00+00:00",
+              "verified_hours": 0,
+              "expected_hours": 1,
+              "closed_hours": 1,
+              "eligible_hours": 0,
+              "eligible_buckets": 0,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "blocked": 1
+              },
+              "observed_amount": null,
+              "complete_total": null,
+              "eligible_amount": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "Paginated hourly history, page 1: summary covers all three requested hours",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T07:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 2,
+        "offset": 0
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T07:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 1,
+          "batch_count": 1,
+          "verified_batches": 1,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "b78b2234bc741d1b769adbb89ddba58cade26a1089c58e3faffa920e77495c2b",
+        "pagination": {
+          "offset": 0,
+          "next_offset": 2,
+          "has_more": true,
+          "total_buckets": 3
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T04:00:00+00:00",
+                "end": "2026-09-10T05:00:00+00:00",
+                "value": 0.5,
+                "min": null,
+                "max": null,
+                "reason": "ready",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 1,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": 0.5,
+                "complete_total": 0.5,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T04:00:00+00:00",
+                    "2026-09-10T05:00:00+00:00"
+                  ]
+                ]
+              },
+              {
+                "start": "2026-09-10T05:00:00+00:00",
+                "end": "2026-09-10T06:00:00+00:00",
+                "value": 0.0,
+                "min": null,
+                "max": null,
+                "reason": "ready",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 1,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": 0.0,
+                "complete_total": 0.0,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T05:00:00+00:00",
+                    "2026-09-10T06:00:00+00:00"
+                  ]
+                ]
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T07:00:00+00:00",
+              "verified_hours": 3,
+              "expected_hours": 3,
+              "closed_hours": 3,
+              "eligible_hours": 3,
+              "eligible_buckets": 3,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "ready": 3
+              },
+              "observed_amount": 0.75,
+              "complete_total": 0.75,
+              "eligible_amount": 0.75
+            }
+          }
+        ]
+      }
+    },
+    {
+      "title": "Paginated hourly history, page 2: repeated query summary must not be added again",
+      "request": {
+        "config_entry_id": "01K000000000000000000000001",
+        "contract_version": 3,
+        "quantity_ids": [
+          "thermostat:101:fan_runtime_hours"
+        ],
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T07:00:00+00:00",
+        "period": "hour",
+        "daily_policy": "complete_points_else_legacy_day",
+        "page_size": 2,
+        "offset": 2,
+        "view_token": "b78b2234bc741d1b769adbb89ddba58cade26a1089c58e3faffa920e77495c2b",
+        "evaluated_at": "2026-09-12T04:00:00+00:00"
+      },
+      "response": {
+        "contract_version": 3,
+        "identity": {
+          "entry_id": "01K000000000000000000000001",
+          "api_base": "https://api.beestat.io",
+          "account_anchors": [
+            "16dc368a89b428b2485484313ba67a3912ca03f2b2b42429174a4f8b3dc84e44"
+          ]
+        },
+        "config_revision": "8de8b2ecc8a4eb725d524b381f9f0ce5164f484153fccef9241b48798d3ce069",
+        "root_revision": 8,
+        "source_revision": "22d3fd6ecd74234ee407d26307b12be718cc9ed4c1048134a05dc115db9a821b",
+        "coverage_revision": 1,
+        "method_version": "five_minute_complete_hour_v3",
+        "daily_policy": "complete_points_else_legacy_day",
+        "period": "hour",
+        "start": "2026-09-10T04:00:00+00:00",
+        "end": "2026-09-10T07:00:00+00:00",
+        "evaluated_at": "2026-09-12T04:00:00+00:00",
+        "timezone": "America/New_York",
+        "timezone_revision": 0,
+        "native_verification": "bounded_readback",
+        "operation": {
+          "contract_version": 3,
+          "status": "completed",
+          "operation_id": "example-history-operation",
+          "plan_digest": "690f18cc88f7202e712adca40cf9ee7772fcf4d7287be9197e4d52b48fbbc4d3",
+          "cursor": 1,
+          "batch_count": 1,
+          "verified_batches": 1,
+          "remaining_batches": 0,
+          "root_revision": 8,
+          "has_pending": false,
+          "error": null
+        },
+        "view_token": "b78b2234bc741d1b769adbb89ddba58cade26a1089c58e3faffa920e77495c2b",
+        "pagination": {
+          "offset": 2,
+          "next_offset": null,
+          "has_more": false,
+          "total_buckets": 3
+        },
+        "series": [
+          {
+            "descriptor": {
+              "quantity_id": "thermostat:101:fan_runtime_hours",
+              "thermostat_id": 101,
+              "sensor_id": null,
+              "quantity": "fan_runtime_hours",
+              "kind": "runtime",
+              "logical_unit": "h",
+              "method_version": "five_minute_complete_hour_v3",
+              "statistic_id": "beestat:example_zone_fan_runtime_rate_hourly_v3",
+              "legacy_statistic_ids": [
+                "beestat:example_zone_fan_runtime_hours"
+              ],
+              "representation": {
+                "kind": "arithmetic_mean",
+                "native_field": "mean",
+                "unit_of_measurement": "%",
+                "unit_class": "unitless",
+                "logical_multiplier": 0.01,
+                "v2_statistic_id": "beestat:example_zone_fan_runtime_hours_hourly_v2"
+              },
+              "admission": "eligible",
+              "writer_status": "adopted"
+            },
+            "buckets": [
+              {
+                "start": "2026-09-10T06:00:00+00:00",
+                "end": "2026-09-10T07:00:00+00:00",
+                "value": 0.25,
+                "min": null,
+                "max": null,
+                "reason": "ready",
+                "failure_reason": null,
+                "valid_slots": 12,
+                "expected_slots": 12,
+                "verified_hours": 1,
+                "expected_hours": 1,
+                "closed_hours": 1,
+                "observed_amount": 0.25,
+                "complete_total": 0.25,
+                "source_basis": "points",
+                "method_basis": "five_minute_complete_hour_v3",
+                "confidence": [
+                  "provider_ordered"
+                ],
+                "source_ids": [
+                  "079df763f7bf4866d560b18dfcd0e856474795398b9a4448bb59eeda363a5e98"
+                ],
+                "eligible_intervals": [
+                  [
+                    "2026-09-10T06:00:00+00:00",
+                    "2026-09-10T07:00:00+00:00"
+                  ]
+                ]
+              }
+            ],
+            "summary": {
+              "scope": "query",
+              "start": "2026-09-10T04:00:00+00:00",
+              "end": "2026-09-10T07:00:00+00:00",
+              "verified_hours": 3,
+              "expected_hours": 3,
+              "closed_hours": 3,
+              "eligible_hours": 3,
+              "eligible_buckets": 3,
+              "legacy_days": 0,
+              "coverage_reasons": {
+                "ready": 3
+              },
+              "observed_amount": 0.75,
+              "complete_total": 0.75,
+              "eligible_amount": 0.75
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

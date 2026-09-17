@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -561,7 +561,9 @@ async def test_mapping_device_conflict_repair_follows_registry_moves(
 
 
 @pytest.fixture(autouse=True)
-def _skip_dependency_setup_for_config_flow_tests():
+async def _skip_dependency_setup_for_config_flow_tests(
+    hass: HomeAssistant,
+) -> AsyncIterator[None]:
     """Keep config-flow tests focused on flow behavior, not integration setup."""
 
     with (
@@ -576,6 +578,9 @@ def _skip_dependency_setup_for_config_flow_tests():
         ),
     ):
         yield
+        # Flows may schedule a reload instead of awaiting it. Finish that work
+        # while these setup mocks and HA's dependency lifecycle are still alive.
+        await hass.async_block_till_done()
 
 
 async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
