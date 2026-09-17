@@ -296,7 +296,6 @@ class DiagnosticsTest(unittest.TestCase):
         )
         self.assertNotIn("secret-key", text)
         self.assertNotIn("fingerprint-secret", text)
-        self.assertNotIn("https://api.example.test/", text)
         self.assertNotIn("https://api.example.test", text)
         self.assertNotIn("climate.zone_a", text)
         self.assertNotIn("sensor.room_sensor_a_temperature", text)

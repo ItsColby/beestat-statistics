@@ -238,16 +238,34 @@ class ValidationSelectionTests(unittest.TestCase):
             )
         workflow = (ROOT / ".github/workflows/validate.yaml").read_text()
         for job_id in ("future_job", "extra-job", "job2", "FutureJob", "_job-2"):
-            with (
-                self.subTest(job_id=job_id),
-                self.assertRaisesRegex(ValueError, "job dependency mapping"),
-            ):
-                planner.workflow_dependencies(
-                    workflow.rstrip()
-                    + f"\n  {job_id}:\n"
-                    + "    runs-on: ubuntu-24.04\n"
-                    + "    steps:\n      - run: exit 1\n"
-                )
+            for comment in ("", " # synthetic", " \t# synthetic"):
+                with (
+                    self.subTest(job_id=job_id, comment=comment),
+                    self.assertRaisesRegex(ValueError, "job dependency mapping"),
+                ):
+                    planner.workflow_dependencies(
+                        workflow.rstrip()
+                        + f"\n  {job_id}:{comment}\n"
+                        + "    runs-on: ubuntu-24.04\n"
+                        + "    steps:\n      - run: exit 1\n"
+                    )
+        commented = workflow
+        for job_id in (
+            "plan",
+            "unit",
+            "home_assistant_minimum",
+            "home_assistant_current",
+            "hassfest",
+            "hacs",
+            "release_gate",
+        ):
+            commented = commented.replace(
+                f"  {job_id}:\n", f"  {job_id}: # explanation\n"
+            )
+        self.assertEqual(
+            planner.workflow_dependencies(workflow),
+            planner.workflow_dependencies(commented),
+        )
 
     def test_retained_document_contracts_select_their_static_consumer(self):
         self.assertFalse((ROOT / "docs/removed.md").exists())

@@ -434,8 +434,8 @@ def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
     )
     jobs = dict(
         re.findall(
-            r"(?ms)^  ([A-Za-z_][A-Za-z0-9_-]*):\n(.*?)"
-            r"(?=^  [A-Za-z_][A-Za-z0-9_-]*:|\Z)",
+            r"(?ms)^  ([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(?:#[^\n]*)?\n(.*?)"
+            r"(?=^  [A-Za-z_][A-Za-z0-9_-]*:[ \t]*(?:#[^\n]*)?(?:\n|\Z)|\Z)",
             source.split("jobs:\n", 1)[-1],
         )
     )
