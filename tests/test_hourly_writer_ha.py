@@ -31,9 +31,13 @@ from custom_components import beestat_statistics as integration
 from custom_components.beestat_statistics import hourly_recorder
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
+    ConfiguredSensor,
     ConfiguredThermostat,
 )
-from custom_components.beestat_statistics.hourly_import import HourlyImportManager
+from custom_components.beestat_statistics.hourly_import import (
+    HourlyImportError,
+    HourlyImportManager,
+)
 from custom_components.beestat_statistics.hourly_import_plan import HourlyStatisticRow
 from custom_components.beestat_statistics.hourly_recorder import (
     MAX_SNAPSHOT_ROWS,
@@ -490,6 +494,158 @@ async def _select(writer, source, identity, *, epoch=START):
     return preview
 
 
+async def test_native_partition_reserves_interrupted_selection_and_survives_reload(
+    hass, disk_store
+):
+    entry, identity = _entry_and_identity(hass)
+    voc_id = "beestat:writer_voc_concentration_hourly_v2"
+    identity["resources"][voc_id] = {
+        "thermostat_id": 1,
+        "sensor_id": 10,
+        "quantity": "voc_concentration",
+    }
+    recorder = HourlyRecorder(hass)
+    writer = HourlyImportManager(hass, entry, store=disk_store, recorder=recorder)
+    source = _source_hours((0.25, 0.5))
+    args = {
+        "epoch_start": START,
+        "statistic_ids": (RUNTIME_ID,),
+        "expected_revision": 0,
+    }
+    preview = await writer.async_select(source, identity, **args)
+    with (
+        patch.object(
+            hass.config_entries,
+            "async_update_entry",
+            side_effect=OSError("Synthetic selection marker failure"),
+        ),
+        pytest.raises(OSError, match="selection marker"),
+    ):
+        await writer.async_select(
+            source, identity, **args, preview_digest=preview["preview_digest"]
+        )
+    saved = await disk_store.async_load()
+    assert saved["pending_selection"] is not None and saved["phase"] == "prepared"
+    writer.close()
+    replacement = HourlyImportManager(hass, entry, store=disk_store, recorder=recorder)
+    with (
+        patch.object(recorder, "async_snapshot") as snapshot,
+        patch.object(disk_store, "async_save") as save,
+        patch.object(hass.config_entries, "async_update_entry") as update,
+    ):
+        partition = await replacement.async_writer_partition(identity)
+        assert partition.hourly_blocked_reason == "selection_pending"
+        assert partition.hourly_statistic_ids == {RUNTIME_ID}
+        assert partition.legacy_statistic_ids == {voc_id.removesuffix("_hourly_v2")}
+        assert partition.frozen_legacy_statistic_ids == {
+            RUNTIME_ID.removesuffix("_hourly_v2")
+        }
+        snapshot.assert_not_awaited()
+        save.assert_not_awaited()
+        update.assert_not_called()
+    assert await disk_store.async_load() == saved
+    assert not await recorder.async_known_ids()
+    await replacement.async_select(
+        source, identity, **args, preview_digest=preview["preview_digest"]
+    )
+    ready = await replacement.async_writer_partition(identity)
+    assert (
+        ready.hourly_ready
+        and ready.legacy_statistic_ids == partition.legacy_statistic_ids
+    )
+    await replacement.async_import(source, identity)
+    assert await recorder.async_known_ids() == {RUNTIME_ID}
+    assert [
+        row.sum for row in (await recorder.async_snapshot(RUNTIME_ID, START)).rows
+    ] == [
+        0.25,
+        0.75,
+    ]
+
+
+async def test_native_selected_quantity_disable_reload_and_reenable(hass, disk_store):
+    entry, identity = _entry_and_identity(hass)
+    identity["resources"][TEMPERATURE_ID] = {
+        "thermostat_id": 1,
+        "sensor_id": 10,
+        "quantity": "temperature",
+    }
+    config = BeestatConfig(
+        (ConfiguredThermostat(1, "writer", "Writer fixture"),),
+        (
+            ConfiguredSensor(
+                10, "writer", "Sensor fixture", 1, "writer", True, False, False, False
+            ),
+        ),
+    )
+    sensor_series = build_hourly_statistics(
+        {},
+        {
+            10: [
+                {
+                    "sensor_id": 10,
+                    "timestamp": (START + slot * timedelta(minutes=5)).isoformat(),
+                    "temperature": 72,
+                }
+                for slot in range(12)
+            ]
+        },
+        config,
+        start=START,
+        end=START + HOUR,
+        evaluated_at=NOW,
+        source_end_by_thermostat={1: START + HOUR - timedelta(minutes=5)},
+    )
+    fan = _source_hours((0.25,))
+    source = (
+        *fan,
+        *(item for item in sensor_series if item.statistic_id == TEMPERATURE_ID),
+    )
+    recorder = HourlyRecorder(hass)
+    writer = HourlyImportManager(hass, entry, store=disk_store, recorder=recorder)
+    args = {
+        "epoch_start": START,
+        "statistic_ids": (RUNTIME_ID, TEMPERATURE_ID),
+        "expected_revision": 0,
+    }
+    preview = await writer.async_select(source, identity, **args)
+    await writer.async_select(
+        source, identity, **args, preview_digest=preview["preview_digest"]
+    )
+    await writer.async_import(
+        source, identity, eligible_resources=identity["resources"]
+    )
+    retained = await recorder.async_snapshot(TEMPERATURE_ID, START)
+    assert retained.rows == (HourlyStatisticRow(START, mean=72, min=72, max=72),)
+    writer.close()
+    writer = HourlyImportManager(hass, entry, store=disk_store, recorder=recorder)
+    disabled = {
+        **identity,
+        "resources": {RUNTIME_ID: identity["resources"][RUNTIME_ID]},
+    }
+    await writer.async_import(fan, disabled, eligible_resources=disabled["resources"])
+    partition = await writer.async_writer_partition(disabled)
+    assert not partition.legacy_statistic_ids
+    assert (
+        TEMPERATURE_ID.removesuffix("_hourly_v2")
+        in partition.frozen_legacy_statistic_ids
+    )
+    assert await recorder.async_snapshot(TEMPERATURE_ID, START) == retained
+    with pytest.raises(HourlyImportError, match="resource is missing"):
+        await writer.async_import(
+            fan, identity, eligible_resources=identity["resources"]
+        )
+    await writer.async_import(
+        source, identity, eligible_resources=identity["resources"]
+    )
+    assert await recorder.async_snapshot(TEMPERATURE_ID, START) == retained
+    assert (await writer.async_writer_partition(identity)).hourly_statistic_ids == {
+        RUNTIME_ID,
+        TEMPERATURE_ID,
+    }
+    assert await recorder.async_known_ids() == {RUNTIME_ID, TEMPERATURE_ID}
+
+
 async def test_real_manager_restart_gap_invalidation_and_explicit_segment(
     hass, disk_store
 ):
@@ -667,12 +823,25 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
 
         client.async_read_runtime_thermostat.reset_mock()
         result = await importer.async_import_statistics(skip_sync=True)
-        client.async_read_runtime_thermostat.assert_awaited_once_with(
-            1,
-            START.strftime("%Y-%m-%d %H:%M:%S"),
-            available_end.strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        assert result.summary_mode == "hourly" and result.imported_rows == 48
+        # Hourly bootstrap reaches the saved epoch. Unadmitted legacy quantities
+        # retain their own New York local-day window, starting September 11.
+        legacy_start = datetime(2026, 9, 11, 4, tzinfo=UTC)
+        assert [
+            call.args for call in client.async_read_runtime_thermostat.await_args_list
+        ] == [
+            (
+                1,
+                START.strftime("%Y-%m-%d %H:%M:%S"),
+                available_end.strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+            (
+                1,
+                legacy_start.strftime("%Y-%m-%d %H:%M:%S"),
+                evaluation.strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        ]
+        assert result.summary_mode == "mixed" and result.hourly_imported_rows == 48
+        assert result.legacy_imported_rows == 0 and result.imported_rows == 48
         first = await recorder.async_snapshot(statistic_id, START)
         assert first.rows == tuple(
             HourlyStatisticRow(
@@ -688,12 +857,22 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
         freezer.move_to(available_end + timedelta(minutes=10))
         client.async_read_runtime_thermostat.reset_mock()
         result = await importer.async_import_statistics(skip_sync=True)
-        client.async_read_runtime_thermostat.assert_awaited_once_with(
-            1,
-            (available_end - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
-            available_end.strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        assert result.summary_mode == "hourly" and result.imported_rows == 24
+        assert [
+            call.args for call in client.async_read_runtime_thermostat.await_args_list
+        ] == [
+            (
+                1,
+                (available_end - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
+                available_end.strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+            (
+                1,
+                legacy_start.strftime("%Y-%m-%d %H:%M:%S"),
+                (available_end + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        ]
+        assert result.summary_mode == "mixed" and result.hourly_imported_rows == 24
+        assert result.legacy_imported_rows == 0 and result.imported_rows == 24
         advanced = await recorder.async_snapshot(statistic_id, START)
         assert advanced.rows == (
             *first.rows,
@@ -825,7 +1004,8 @@ async def test_real_importer_scopes_expanded_source_validation_per_quantity(
         corrupt = True
         client.async_read_runtime_thermostat.reset_mock()
         result = await importer.async_import_statistics(skip_sync=True)
-        assert result.summary_mode == "hourly" and result.imported_series == 6
+        assert result.summary_mode == "mixed" and result.hourly_imported_series == 6
+        assert result.legacy_imported_series == 0 and result.imported_series == 6
         assert [
             call.args for call in client.async_read_runtime_thermostat.await_args_list
         ] == [
@@ -833,6 +1013,15 @@ async def test_real_importer_scopes_expanded_source_validation_per_quantity(
                 thermostat_id,
                 START.strftime("%Y-%m-%d %H:%M:%S"),
                 end.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            for thermostat_id in (1, 2)
+        ] + [
+            (
+                thermostat_id,
+                # Legacy uses the unchanged local-day lookback, independent of
+                # either selected hourly bootstrap epoch.
+                "2026-09-11 04:00:00",
+                evaluation.strftime("%Y-%m-%d %H:%M:%S"),
             )
             for thermostat_id in (1, 2)
         ]
@@ -896,6 +1085,18 @@ async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(
         assert saved["pending"] is not None
         held = writer.coverage(start=START, end=START + 2 * HOUR)["series"][RUNTIME_ID]
         assert held["complete_observed_hours"] == 0
+        voc_id = "beestat:writer_voc_concentration_hourly_v2"
+        identity["resources"][voc_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "voc_concentration",
+        }
+        with patch.object(recorder, "async_snapshot") as snapshot:
+            partition = await writer.async_writer_partition(identity)
+            assert partition.hourly_statistic_ids == {RUNTIME_ID}
+            assert partition.legacy_statistic_ids == {voc_id.removesuffix("_hourly_v2")}
+            snapshot.assert_not_awaited()
+        assert await disk_store.async_load() == saved
 
         writer.close()
         recovered = HourlyImportManager(
@@ -909,3 +1110,4 @@ async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(
         ]
         assert coverage["complete"] and coverage["complete_observed_hours"] == 2
         assert coverage["observed_hour_average"] == 0.375
+        assert await recovered.async_writer_partition(identity) == partition

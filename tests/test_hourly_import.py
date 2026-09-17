@@ -200,7 +200,14 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_adoption_and_verified_average(self):
         preview = await self.adopt()
-        self.assertEqual("stop_for_entry", preview["legacy_writes"])
+        self.assertEqual(
+            {
+                "policy": "per_quantity",
+                "frozen_statistic_ids": [ID.removesuffix("_hourly_v2")],
+                "continuing_statistic_ids": [],
+            },
+            preview["legacy_writes"],
+        )
         self.assertFalse(self.recorder.submissions)
         result = await self.writer.async_import((source(),), identity())
         self.assertEqual(2, result["imported_rows"])
@@ -210,6 +217,301 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0.375, coverage["observed_hour_average"])
         self.assertIsNone(coverage["hours"][2]["value"])
         self.assertFalse(coverage["complete"])
+
+    async def test_partition_keeps_voc_legacy_across_reload_disable_and_rename(self):
+        voc_id = "beestat:zone_voc_concentration_hourly_v2"
+        bound = identity()
+        bound["resources"][voc_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "voc_concentration",
+        }
+        unadopted = await self.writer.async_writer_partition(bound)
+        self.assertFalse(unadopted.has_hourly)
+        self.assertEqual(
+            {ID.removesuffix("_hourly_v2"), voc_id.removesuffix("_hourly_v2")},
+            unadopted.legacy_statistic_ids,
+        )
+        args = {"epoch_start": START, "statistic_ids": (ID,), "expected_revision": 0}
+        preview = await self.writer.async_select((source(),), bound, **args)
+        self.assertEqual(
+            [voc_id.removesuffix("_hourly_v2")],
+            preview["legacy_writes"]["continuing_statistic_ids"],
+        )
+        await self.writer.async_select(
+            (source(),), bound, **args, preview_digest=preview["preview_digest"]
+        )
+        saved = deepcopy(self.store.value)
+        writer = self.fresh()
+        with (
+            patch.object(self.recorder, "async_snapshot") as snapshot,
+            patch.object(self.store, "async_save") as save,
+        ):
+            selected = await writer.async_writer_partition(bound)
+            self.assertTrue(selected.hourly_ready)
+            self.assertEqual({ID}, selected.hourly_statistic_ids)
+            self.assertEqual(
+                {voc_id.removesuffix("_hourly_v2")}, selected.legacy_statistic_ids
+            )
+            disabled = deepcopy(bound)
+            disabled["resources"].pop(ID)
+            partition = await writer.async_writer_partition(disabled)
+            self.assertFalse(partition.hourly_statistic_ids)
+            self.assertEqual(
+                {ID.removesuffix("_hourly_v2")}, partition.frozen_legacy_statistic_ids
+            )
+            renamed = "beestat:renamed_fan_runtime_hours_hourly_v2"
+            bound["resources"][renamed] = bound["resources"].pop(ID)
+            partition = await writer.async_writer_partition(bound)
+            self.assertEqual({renamed}, partition.hourly_statistic_ids)
+            self.assertEqual(
+                {ID.removesuffix("_hourly_v2"), renamed.removesuffix("_hourly_v2")},
+                partition.frozen_legacy_statistic_ids,
+            )
+            self.assertEqual(
+                {voc_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
+            )
+            snapshot.assert_not_awaited()
+            save.assert_not_awaited()
+        self.assertEqual(saved, self.store.value)
+
+    async def test_partition_rejects_rebound_original_alias_and_sensor_parent(self):
+        sensor_id = "beestat:zone_temperature_hourly_v2"
+        bound = identity(sensor_id)
+        bound["resources"][sensor_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "temperature",
+        }
+        item = source((70,), cumulative=False, statistic_id=sensor_id)
+        args = {
+            "epoch_start": START,
+            "statistic_ids": (sensor_id,),
+            "expected_revision": 0,
+        }
+        preview = await self.writer.async_select((item,), bound, **args)
+        await self.writer.async_select(
+            (item,), bound, **args, preview_digest=preview["preview_digest"]
+        )
+        for changed in (None, 2):
+            with self.subTest(parent=changed):
+                rebound = {**bound, "sensor_parents": {10: changed}}
+                with self.assertRaises(manager.HourlyImportError):
+                    await self.fresh().async_writer_partition(rebound)
+        rebound = deepcopy(bound)
+        rebound["resources"][sensor_id]["sensor_id"] = 11
+        with self.assertRaisesRegex(manager.HourlyImportError, "rebound"):
+            await self.fresh().async_writer_partition(rebound)
+        renamed = "beestat:renamed_temperature_hourly_v2"
+        rebound["resources"][renamed] = bound["resources"][sensor_id]
+        with self.assertRaisesRegex(manager.HourlyImportError, "rebound"):
+            await self.fresh().async_writer_partition(rebound)
+
+    async def test_partition_preserves_unmapped_unselected_sensor_legacy_behavior(self):
+        bound = identity()
+        orphan = "beestat:unmapped_temperature_hourly_v2"
+        bound["resources"][orphan] = {
+            "thermostat_id": None,
+            "sensor_id": 10,
+            "quantity": "temperature",
+        }
+        bound["sensor_parents"] = {10: None}
+        legacy = await self.writer.async_writer_partition(bound)
+        self.assertIn(orphan.removesuffix("_hourly_v2"), legacy.legacy_statistic_ids)
+        await self.adopt()
+        mixed = await self.fresh().async_writer_partition(bound)
+        self.assertEqual(
+            {orphan.removesuffix("_hourly_v2")}, mixed.legacy_statistic_ids
+        )
+        self.assertEqual({ID}, mixed.hourly_statistic_ids)
+
+    async def test_empty_configuration_retains_adopted_freeze_and_identity_checks(self):
+        empty = {"entry_id": self.entry.entry_id, "resources": {}}
+        legacy = await self.writer.async_writer_partition(empty)
+        self.assertFalse(legacy.has_hourly or legacy.legacy_statistic_ids)
+        with self.assertRaisesRegex(manager.HourlyImportError, "config-entry"):
+            await self.writer.async_writer_partition({**empty, "entry_id": "other"})
+        await self.adopt()
+        disabled = {**identity(), "resources": {}}
+        partition = await self.fresh().async_writer_partition(disabled)
+        self.assertTrue(partition.has_hourly)
+        self.assertFalse(
+            partition.legacy_statistic_ids or partition.hourly_statistic_ids
+        )
+        self.assertEqual(
+            {ID.removesuffix("_hourly_v2")}, partition.frozen_legacy_statistic_ids
+        )
+        with self.assertRaisesRegex(manager.HourlyImportError, "account"):
+            await self.fresh().async_writer_partition(empty)
+        for marker in (None, {"version": 1, "token": "other"}):
+            with self.subTest(marker=marker):
+                self.entry.data[manager.MARKER] = marker
+                with self.assertRaisesRegex(manager.HourlyImportError, "marker"):
+                    await self.fresh().async_writer_partition(disabled)
+
+    async def test_partition_rejects_marker_missing_mismatch_and_corrupt_saved_identity(
+        self,
+    ):
+        await self.adopt()
+        original_marker = deepcopy(self.entry.data[manager.MARKER])
+        original_store = deepcopy(self.store.value)
+        for marker in (None, {"version": 1, "token": "wrong"}):
+            with self.subTest(marker=marker):
+                self.entry.data[manager.MARKER] = marker
+                with self.assertRaisesRegex(manager.HourlyImportError, "marker"):
+                    await self.fresh().async_writer_partition(identity())
+        self.entry.data[manager.MARKER] = original_marker
+        for field, value in (
+            ("thermostat_id", True),
+            ("thermostat_id", 0),
+            ("sensor_id", False),
+            ("sensor_id", -1),
+            ("quantity", "unrecognized_quantity"),
+        ):
+            with self.subTest(field=field, value=value):
+                self.store.value = deepcopy(original_store)
+                self.store.value["series"][ID]["resource"][field] = value
+                self.store.value.pop("integrity")
+                self.store.value["integrity"] = manager._digest(self.store.value)
+                with self.assertRaisesRegex(manager.HourlyImportError, "corrupt"):
+                    await self.fresh().async_writer_partition(identity())
+        self.assertFalse(self.recorder.submissions)
+
+    async def test_partition_rejects_duplicate_saved_quantity_owners(self):
+        await self.adopt()
+        duplicate = "beestat:alias_fan_runtime_hours_hourly_v2"
+        record = deepcopy(self.store.value["series"][ID])
+        record["statistic_id"] = duplicate
+        record["metadata"]["statistic_id"] = duplicate
+        self.store.value["series"][duplicate] = record
+        self.store.value.pop("integrity")
+        self.store.value["integrity"] = manager._digest(self.store.value)
+        with self.assertRaisesRegex(manager.HourlyImportError, "corrupt"):
+            await self.fresh().async_writer_partition(identity())
+
+    async def test_partition_reserves_old_and_interrupted_additional_selection(self):
+        await self.adopt()
+        temperature_id = "beestat:zone_temperature_hourly_v2"
+        voc_id = "beestat:zone_voc_concentration_hourly_v2"
+        bound = identity()
+        for statistic_id, quantity in (
+            (temperature_id, "temperature"),
+            (voc_id, "voc_concentration"),
+        ):
+            bound["resources"][statistic_id] = {
+                "thermostat_id": 1,
+                "sensor_id": 10,
+                "quantity": quantity,
+            }
+        items = (source(), source((70,), cumulative=False, statistic_id=temperature_id))
+        args = {
+            "epoch_start": START,
+            "statistic_ids": (temperature_id,),
+            "expected_revision": self.writer.status()["revision"],
+        }
+        preview = await self.writer.async_select(items, bound, **args)
+        self.assertEqual(
+            [voc_id.removesuffix("_hourly_v2")],
+            preview["legacy_writes"]["continuing_statistic_ids"],
+        )
+        self.store.fail = self.store.calls + 2
+        with self.assertRaises(OSError):
+            await self.writer.async_select(
+                items, bound, **args, preview_digest=preview["preview_digest"]
+            )
+        replacement = self.fresh()
+        partition = await replacement.async_writer_partition(bound)
+        self.assertEqual("selection_pending", partition.hourly_blocked_reason)
+        self.assertEqual({ID, temperature_id}, partition.hourly_statistic_ids)
+        self.assertEqual(
+            {voc_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
+        )
+        self.assertEqual(
+            {ID.removesuffix("_hourly_v2"), temperature_id.removesuffix("_hourly_v2")},
+            partition.frozen_legacy_statistic_ids,
+        )
+        await replacement.async_select(
+            items, bound, **args, preview_digest=preview["preview_digest"]
+        )
+        recovered = await replacement.async_writer_partition(bound)
+        self.assertTrue(recovered.hourly_ready)
+        self.assertEqual(partition.hourly_statistic_ids, recovered.hourly_statistic_ids)
+        self.assertEqual(partition.legacy_statistic_ids, recovered.legacy_statistic_ids)
+
+    async def test_disabled_quantity_skips_hourly_writer_without_releasing_ownership(
+        self,
+    ):
+        temperature_id = "beestat:zone_temperature_hourly_v2"
+        bound = identity()
+        bound["resources"][temperature_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "temperature",
+        }
+        items = (
+            source(),
+            source((70, 71), cumulative=False, statistic_id=temperature_id),
+        )
+        args = {
+            "epoch_start": START,
+            "statistic_ids": (ID, temperature_id),
+            "expected_revision": 0,
+        }
+        preview = await self.writer.async_select(items, bound, **args)
+        await self.writer.async_select(
+            items, bound, **args, preview_digest=preview["preview_digest"]
+        )
+        await self.writer.async_import(
+            items, bound, eligible_resources=bound["resources"]
+        )
+        retained = deepcopy(self.recorder.rows[temperature_id])
+        writer = self.fresh()
+        await writer.async_import(
+            (source(),), identity(), eligible_resources=identity()["resources"]
+        )
+        self.assertEqual(retained, self.recorder.rows[temperature_id])
+        disabled = await writer.async_writer_partition(identity())
+        self.assertIn(
+            temperature_id.removesuffix("_hourly_v2"),
+            disabled.frozen_legacy_statistic_ids,
+        )
+        with self.assertRaisesRegex(manager.HourlyImportError, "resource is missing"):
+            await writer.async_import(
+                (source(),), bound, eligible_resources=bound["resources"]
+            )
+        corrected = source((70, 72), cumulative=False, statistic_id=temperature_id)
+        await writer.async_import(
+            (source(), corrected), bound, eligible_resources=bound["resources"]
+        )
+        self.assertEqual(72, self.recorder.rows[temperature_id][START + HOUR].mean)
+        reenabled = await writer.async_writer_partition(bound)
+        self.assertEqual({ID, temperature_id}, reenabled.hourly_statistic_ids)
+        self.assertFalse(reenabled.legacy_statistic_ids)
+
+    async def test_partition_survives_native_conflict_without_replaying_pending_effect(
+        self,
+    ):
+        await self.pending_extension()
+        bound = identity()
+        other_id = "beestat:other_fan_runtime_hours_hourly_v2"
+        bound["resources"][other_id] = {
+            "thermostat_id": 2,
+            "sensor_id": None,
+            "quantity": "fan_runtime_hours",
+        }
+        self.recorder.metadata[ID]["unit_of_measurement"] = "s"
+        replacement = self.fresh()
+        with self.assertRaises(manager.HourlyReconciliationError):
+            await replacement.async_reconcile()
+        before = deepcopy(self.store.value)
+        with patch.object(self.recorder, "async_snapshot") as snapshot:
+            partition = await replacement.async_writer_partition(bound)
+            self.assertEqual(
+                {other_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
+            )
+            self.assertEqual({ID}, partition.hourly_statistic_ids)
+            snapshot.assert_not_awaited()
+        self.assertEqual(before, self.store.value)
 
     async def test_window_rolls_with_exact_saved_seed_and_immutable_id(self):
         await self.adopt()
@@ -238,7 +540,7 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
                 },
                 measurement_id: {
                     "thermostat_id": 3,
-                    "sensor_id": None,
+                    "sensor_id": 10,
                     "quantity": "temperature",
                 },
             }
@@ -302,7 +604,7 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
                 },
                 measurement_id: {
                     "thermostat_id": 1,
-                    "sensor_id": None,
+                    "sensor_id": 10,
                     "quantity": "temperature",
                 },
             }
@@ -892,6 +1194,40 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0.75, self.recorder.rows[target][START + 2 * HOUR].sum)
         self.assertNotIn(renamed, self.recorder.rows)
 
+    async def test_disabled_old_counter_cannot_expand_active_bootstrap_window(self):
+        old_epoch = START - manager.timedelta(days=400)
+        await self.adopt(source(start=old_epoch))
+        active_id = "beestat:active_fan_runtime_hours_hourly_v2"
+        active = source(statistic_id=active_id)
+        bound = identity(active_id)
+        bound["resources"][active_id]["thermostat_id"] = 2
+        args = {
+            "epoch_start": START,
+            "statistic_ids": (active_id,),
+            "expected_revision": self.writer.status()["revision"],
+        }
+        preview = await self.writer.async_select((active,), bound, **args)
+        await self.writer.async_select(
+            (active,), bound, **args, preview_digest=preview["preview_digest"]
+        )
+        self.assertEqual(old_epoch, self.writer.bootstrap_start())
+        self.assertEqual(
+            START,
+            self.writer.bootstrap_start(eligible_resources=bound["resources"]),
+        )
+        self.assertIsNone(
+            self.writer.bootstrap_start(
+                thermostat_id=1, eligible_resources=bound["resources"]
+            )
+        )
+        self.assertIsNone(self.writer.bootstrap_start(eligible_resources={}))
+        partition = await self.writer.async_writer_partition(bound)
+        self.assertEqual({active_id}, partition.hourly_statistic_ids)
+        self.assertIn(
+            ID.removesuffix("_hourly_v2"), partition.frozen_legacy_statistic_ids
+        )
+        self.assertIsNone(self.store.value["series"][ID]["checkpoint"])
+
     async def test_exact_selection_retry_restores_missing_marker_idempotently(self):
         preview = await self.adopt()
         marker = self.entry.data.pop(manager.MARKER)
@@ -937,6 +1273,20 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         replacement = self.fresh()
         with self.assertRaises(manager.HourlyImportError):
             await replacement.async_mode()
+        bound = identity()
+        other_id = "beestat:other_fan_runtime_hours_hourly_v2"
+        bound["resources"][other_id] = {
+            "thermostat_id": 2,
+            "sensor_id": None,
+            "quantity": "fan_runtime_hours",
+        }
+        partition = await replacement.async_writer_partition(bound)
+        self.assertEqual("selection_pending", partition.hourly_blocked_reason)
+        self.assertFalse(partition.hourly_ready)
+        self.assertEqual({ID}, partition.hourly_statistic_ids)
+        self.assertEqual(
+            {other_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
+        )
         await replacement.async_select(
             (source(),), identity(), **args, preview_digest=preview["preview_digest"]
         )

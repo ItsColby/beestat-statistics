@@ -32,6 +32,10 @@ class FakeEntity:
     unique_id: str | None
 
 
+class FakeDeviceEntry(types.SimpleNamespace):
+    """Admitted ordinary device entry, separate from child/unknown records."""
+
+
 class FakeCoordinator:
     def __init__(self) -> None:
         self.entities = [FakeEntity("one"), FakeEntity("two")]
@@ -171,41 +175,46 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertEqual(target.device_entry.id, "thermostat-device-id")
 
     def test_only_exclusively_owned_beestat_devices_are_safe_to_remove(self) -> None:
-        current = types.SimpleNamespace(
+        current = FakeDeviceEntry(
             config_entry_id="entry-1",
             identifiers={("beestat_statistics", "thermostat_1")},
             connections=set(),
         )
-        current_foreign = types.SimpleNamespace(
+        current_foreign = FakeDeviceEntry(
             config_entry_id="homekit-entry",
             identifiers={("beestat_statistics", "thermostat_1")},
             connections=set(),
         )
-        current_unowned = types.SimpleNamespace(
+        current_unowned = FakeDeviceEntry(
             config_entry_id=None,
             config_entries={"entry-1"},
             identifiers={("beestat_statistics", "thermostat_1")},
             connections=set(),
         )
-        fallback = types.SimpleNamespace(
+        fallback = FakeDeviceEntry(
             config_entries={"entry-1"},
             identifiers={("beestat_statistics", "thermostat_1")},
             connections=set(),
         )
-        shared = types.SimpleNamespace(
+        shared = FakeDeviceEntry(
             config_entries={"entry-1", "homekit-entry"},
+            identifiers={("beestat_statistics", "thermostat_1")},
+            connections=set(),
+        )
+        mixed = FakeDeviceEntry(
+            config_entry_id="entry-1",
             identifiers={
                 ("beestat_statistics", "thermostat_1"),
                 ("homekit_controller", "source-device"),
             },
             connections=set(),
         )
-        connected = types.SimpleNamespace(
+        connected = FakeDeviceEntry(
             config_entries={"entry-1"},
             identifiers={("beestat_statistics", "thermostat_1")},
             connections={("mac", "00:11:22:33:44:55")},
         )
-        foreign = types.SimpleNamespace(
+        foreign = FakeDeviceEntry(
             config_entries={"entry-1"},
             identifiers={("homekit_controller", "source-device")},
             connections=set(),
@@ -216,8 +225,57 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertFalse(self.entity.is_beestat_only_device(current_unowned, "entry-1"))
         self.assertTrue(self.entity.is_beestat_only_device(fallback, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(shared, "entry-1"))
+        self.assertFalse(self.entity.is_beestat_only_device(mixed, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(connected, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(foreign, "entry-1"))
+
+        empty = FakeDeviceEntry(
+            config_entry_id="entry-1", identifiers=set(), connections=set()
+        )
+        self.assertFalse(self.entity.is_beestat_only_device(empty, "entry-1"))
+
+    def test_child_and_unknown_devices_are_rejected_before_metadata_access(
+        self,
+    ) -> None:
+        class ChildDeviceEntry:
+            def __init__(self):
+                self.config_entry_id = "entry-1"
+                self.identifiers = {("beestat_statistics", "thermostat_1")}
+
+            @property
+            def connections(self):
+                raise AssertionError("Child-device compatibility shim was accessed")
+
+        for device in (
+            ChildDeviceEntry(),
+            types.SimpleNamespace(
+                config_entry_id="entry-1",
+                identifiers={("beestat_statistics", "thermostat_1")},
+                connections=set(),
+            ),
+            object(),
+            None,
+        ):
+            with self.subTest(device_type=type(device).__name__):
+                self.assertFalse(self.entity.is_beestat_only_device(device, "entry-1"))
+
+    def test_composite_primary_owner_does_not_prove_exclusive_ownership(self) -> None:
+        for config_entries, expected in (
+            ({"entry-1"}, True),
+            ({"entry-1", "homekit-entry"}, False),
+            ({"homekit-entry"}, False),
+            (set(), False),
+        ):
+            with self.subTest(config_entries=config_entries):
+                device = FakeDeviceEntry(
+                    config_entry_id="entry-1",
+                    config_entries=config_entries,
+                    identifiers={("beestat_statistics", "thermostat_99")},
+                    connections=set(),
+                )
+                self.assertIs(
+                    self.entity.is_beestat_only_device(device, "entry-1"), expected
+                )
 
     def test_device_ownership_cleanup_prefers_current_home_assistant_api(self) -> None:
         calls = []
@@ -237,13 +295,19 @@ class EntityHelpersTest(unittest.TestCase):
             ("device-2", None, "device-1", "device-2"),
         )
 
-        self.assertEqual({call[0] for call in calls}, {"current"})
-        self.assertEqual(
-            {call[2]["source_device_id"] for call in calls},
-            {"device-1", "device-2"},
-        )
-        self.assertTrue(
-            all(call[2]["helper_config_entry_id"] == "entry-1" for call in calls)
+        self.assertCountEqual(
+            calls,
+            [
+                (
+                    "current",
+                    hass,
+                    {
+                        "helper_config_entry_id": "entry-1",
+                        "source_device_id": device_id,
+                    },
+                )
+                for device_id in ("device-1", "device-2")
+            ],
         )
 
     def test_device_ownership_cleanup_supports_legacy_home_assistant_api(self) -> None:
@@ -314,6 +378,7 @@ class EntityHelpersTest(unittest.TestCase):
             )
 
         device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
+        device_registry.DeviceEntry = FakeDeviceEntry
         device_registry.async_get = async_get
         entity.DeviceInfo = lambda **kwargs: kwargs
         entity.Entity = object

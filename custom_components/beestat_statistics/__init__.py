@@ -146,6 +146,7 @@ from .const import (
     RUNTIME_FIELD_GROUPS,
     SERVICE_GET_CONFIGURATION,
     SERVICE_GET_HOURLY_COVERAGE,
+    SERVICE_GET_RAW_POINTS,
     SERVICE_IMPORT_STATISTICS,
     SERVICE_REBUILD_STATISTICS,
     SERVICE_RECORD_FILTER_CHANGE,
@@ -178,12 +179,21 @@ from .entry_options import (
     saved_filter_boundary,
 )
 from .filter_forecast import build_filter_forecast, filter_forecast_quality_attributes
-from .hourly_import import HourlyImportManager
+from .hourly_import import HourlyImportManager, HourlyReconciliationError
+from .hourly_recorder import HourlyRecorderError
 from .hourly_statistics import HourlySeries, build_hourly_statistics
+from .hourly_storage import HourlyStorageError
 from .import_evidence import SkippedWindowEvidence
 from .issues import (
     async_set_insecure_api_base_issue,
     async_set_yaml_connection_change_issue,
+)
+from .raw_points import (
+    RawPointIdentity,
+    RawPointRequest,
+    async_read_raw_points,
+    parse_raw_point_request,
+    validate_raw_point_identity,
 )
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .source_identity import is_thermostat_identity_source
@@ -402,6 +412,16 @@ GET_HOURLY_COVERAGE_SERVICE_SCHEMA = vol.Schema(
     }
 )
 
+GET_RAW_POINTS_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Required("resource"): vol.In(("runtime_thermostat", "runtime_sensor")),
+        vol.Required("resource_id"): int,
+        vol.Required(ATTR_START): cv.datetime,
+        vol.Required(ATTR_END): cv.datetime,
+    }
+)
+
 REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
@@ -502,6 +522,12 @@ class ImportResult:
     summary_overlap_days: int | None
     summary_fallback_reason: str | None
     cumulative_seed_count: int
+    legacy_imported_series: int = 0
+    legacy_imported_rows: int = 0
+    hourly_imported_series: int | None = 0
+    hourly_imported_rows: int | None = 0
+    hourly_blocked_reason: str | None = None
+    coverage_incomplete: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,6 +539,68 @@ class PreparedHourlyImport:
     source_rows: int
     skipped_windows: SkippedWindowEvidence
     ordinary_start: datetime | None
+    eligible_resources: dict[str, dict[str, Any]]
+
+
+def _combined_import_result(
+    legacy: ImportResult | None,
+    hourly: ImportResult | None,
+    *,
+    has_hourly: bool,
+    hourly_blocked_reason: str | None,
+) -> ImportResult:
+    """Report acknowledged counts separately from uncertain hourly effects."""
+
+    parts = [result for result in (legacy, hourly) if result is not None]
+    return ImportResult(
+        imported_series=sum(result.imported_series for result in parts),
+        imported_rows=sum(result.imported_rows for result in parts),
+        source_rows=sum(result.source_rows for result in parts),
+        skipped_windows=sum(result.skipped_windows for result in parts),
+        skipped_runtime_thermostat_windows=sum(
+            result.skipped_runtime_thermostat_windows for result in parts
+        ),
+        skipped_runtime_sensor_windows=sum(
+            result.skipped_runtime_sensor_windows for result in parts
+        ),
+        skipped_window_examples=tuple(
+            example for result in parts for example in result.skipped_window_examples
+        ),
+        latest_start_by_statistic_id={
+            key: value
+            for result in parts
+            for key, value in result.latest_start_by_statistic_id.items()
+        },
+        summary_mode=(
+            "mixed"
+            if has_hourly and legacy is not None
+            else "hourly"
+            if has_hourly
+            else legacy.summary_mode
+            if legacy is not None
+            else "full"
+        ),
+        summary_window_start=legacy.summary_window_start if legacy else None,
+        summary_window_end=legacy.summary_window_end if legacy else None,
+        summary_overlap_days=legacy.summary_overlap_days if legacy else None,
+        summary_fallback_reason=(
+            hourly_blocked_reason
+            or (hourly.summary_fallback_reason if hourly else None)
+            or (legacy.summary_fallback_reason if legacy else None)
+        ),
+        cumulative_seed_count=legacy.cumulative_seed_count if legacy else 0,
+        legacy_imported_series=legacy.imported_series if legacy else 0,
+        legacy_imported_rows=legacy.imported_rows if legacy else 0,
+        hourly_imported_series=(
+            hourly.imported_series if hourly else None if hourly_blocked_reason else 0
+        ),
+        hourly_imported_rows=(
+            hourly.imported_rows if hourly else None if hourly_blocked_reason else 0
+        ),
+        hourly_blocked_reason=hourly_blocked_reason,
+        coverage_incomplete=bool(hourly_blocked_reason)
+        or any(result.coverage_incomplete for result in parts),
+    )
 
 
 class BeestatStatisticsImporter:
@@ -541,6 +629,53 @@ class BeestatStatisticsImporter:
 
         self._unloaded = True
         self.hourly.close()
+
+    async def async_get_raw_points(self, request: RawPointRequest) -> dict[str, Any]:
+        """Run a bounded source read under the loaded entry's task lifecycle."""
+
+        entry = self._coordinator.beestat_config_entry
+        runtime = entry.runtime_data
+        self._raw_point_identity(request, runtime)
+        return await entry.async_create_background_task(
+            self._hass,
+            self._async_get_raw_points(request, runtime),
+            f"{DOMAIN}_get_raw_points",
+        )
+
+    def _raw_point_identity(
+        self, request: RawPointRequest, runtime: BeestatStatisticsRuntime
+    ) -> RawPointIdentity:
+        entry = self._coordinator.beestat_config_entry
+        if (
+            self._unloaded
+            or entry.state is not ConfigEntryState.LOADED
+            or entry.runtime_data is not runtime
+            or runtime.importer is not self
+            or runtime.client is not self._client
+            or runtime.coordinator is not self._coordinator
+        ):
+            raise RuntimeError(
+                "Beestat Statistics config entry is unloaded or replaced"
+            )
+        data = self._coordinator.data
+        return validate_raw_point_identity(
+            request,
+            data.config,
+            data.thermostat_rows,
+            data.sensor_rows,
+            config_entry_id=entry.entry_id,
+            metadata_fetched_at=data.fetched_at,
+        )
+
+    async def _async_get_raw_points(
+        self, request: RawPointRequest, runtime: BeestatStatisticsRuntime
+    ) -> dict[str, Any]:
+        async with self._lock:
+            identity = self._raw_point_identity(request, runtime)
+            response = await async_read_raw_points(runtime.client, request, identity)
+            if self._raw_point_identity(request, runtime) != identity:
+                raise ValueError("Cached resource identity changed during source read")
+            return response
 
     async def async_import_statistics(
         self,
@@ -581,117 +716,207 @@ class BeestatStatisticsImporter:
         rebuild_end: dt_date | None,
         thermostat_id: int | None,
     ) -> ImportResult:
-        """Run one serialized import owned by the config-entry lifecycle."""
+        """Run both disjoint writers under the existing config-entry lock."""
 
         async with self._lock:
             if self._unloaded:
                 raise RuntimeError("Beestat Statistics config entry is unloaded")
-            mode = await self.hourly.async_mode()
-            await self.hourly.async_reconcile()
+            partition = await self.hourly.async_writer_partition(
+                _writer_identity(
+                    self._coordinator.beestat_config_entry, self._coordinator.data
+                )
+            )
+            blocked = partition.hourly_blocked_reason
+            if partition.hourly_ready:
+                try:
+                    await self.hourly.async_reconcile()
+                except (
+                    HourlyReconciliationError,
+                    HourlyRecorderError,
+                    HourlyStorageError,
+                ):
+                    # Only identified hourly persistence/readback failures are
+                    # isolated. Revalidation below must still prove ownership.
+                    blocked = "hourly_reconciliation_unverified"
             lookback_days = point_lookback_days or self._point_lookback_days
             runtime_data = await self._coordinator.async_refresh_runtime(
                 skip_sync=skip_sync,
-                summary_window=mode == "hourly" or not force_full_summary,
+                summary_window=not force_full_summary,
             )
             _validate_thermostat_id(runtime_data, thermostat_id)
-            if mode == "hourly":
-                return await self._async_import_hourly(
-                    runtime_data,
-                    lookback_days=lookback_days,
-                    rebuild_start=rebuild_start,
-                    rebuild_end=rebuild_end,
-                    thermostat_id=thermostat_id,
-                )
-            prepared: PreparedImport | None = None
-            for attempt in range(_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS):
-                temporal_context = self._coordinator.capture_temporal_context()
-                prepared = await self._async_prepare_import(
+            partition = await self.hourly.async_writer_partition(
+                _writer_identity(self._coordinator.beestat_config_entry, runtime_data)
+            )
+            blocked = blocked or partition.hourly_blocked_reason
+            hourly_result: ImportResult | None = None
+            if (
+                partition.hourly_ready
+                and partition.hourly_statistic_ids
+                and blocked is None
+            ):
+                try:
+                    hourly_result = await self._async_import_hourly(
+                        runtime_data,
+                        lookback_days=lookback_days,
+                        rebuild_start=rebuild_start,
+                        rebuild_end=rebuild_end,
+                        thermostat_id=thermostat_id,
+                    )
+                except (
+                    HourlyReconciliationError,
+                    HourlyRecorderError,
+                    HourlyStorageError,
+                ):
+                    blocked = "hourly_effect_unverified"
+            # A failed save can invalidate the manager's in-memory state, and
+            # settings may change during an await. Never reuse an old partition.
+            if self._unloaded:
+                raise RuntimeError("Beestat Statistics config entry is unloaded")
+            runtime_data = self._coordinator.data
+            partition = await self.hourly.async_writer_partition(
+                _writer_identity(self._coordinator.beestat_config_entry, runtime_data)
+            )
+            blocked = blocked or partition.hourly_blocked_reason
+            legacy_result: ImportResult | None = None
+            if partition.legacy_statistic_ids:
+                legacy_result = await self._async_import_legacy(
                     runtime_data,
                     lookback_days=lookback_days,
                     force_full_summary=force_full_summary,
                     rebuild_start=rebuild_start,
                     rebuild_end=rebuild_end,
                     thermostat_id=thermostat_id,
-                    temporal_context=temporal_context,
+                    allowed_legacy_ids=partition.legacy_statistic_ids,
                 )
-                if self._coordinator.temporal_context_is_current(temporal_context):
-                    break
-                if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
-                    raise RuntimeError(
-                        "Home Assistant timezone changed repeatedly during "
-                        "Beestat statistics import"
-                    )
-                _LOGGER.info(
-                    "Restarting Beestat statistics preparation after a Home "
-                    "Assistant timezone change"
-                )
-                if self._coordinator.data is not None:
-                    runtime_data = self._coordinator.data
-
-            if prepared is None:  # pragma: no cover - positive attempt constant
-                raise RuntimeError("Beestat statistics import was not prepared")
-
-            imported_rows = 0
-            latest_start_by_id: dict[str, str | None] = {}
-            for item in prepared.series:
-                async_add_external_statistics(
-                    self._hass,
-                    cast(StatisticMetaData, item.metadata),
-                    cast(Iterable[StatisticData], item.statistics),
-                )
-                imported_rows += len(item.statistics)
-                latest_start_by_id[item.statistic_id] = _format_start(item)
-
-            result = ImportResult(
-                imported_series=len(prepared.series),
-                imported_rows=imported_rows,
-                source_rows=len(prepared.summary_rows)
-                + sum(len(rows) for rows in prepared.thermostat_rows_by_id.values())
-                + sum(len(rows) for rows in prepared.sensor_rows_by_id.values()),
-                skipped_windows=prepared.skipped_windows.total_count,
-                skipped_runtime_thermostat_windows=(
-                    prepared.skipped_windows.runtime_thermostat_count
-                ),
-                skipped_runtime_sensor_windows=(
-                    prepared.skipped_windows.runtime_sensor_count
-                ),
-                skipped_window_examples=prepared.skipped_windows.examples,
-                latest_start_by_statistic_id=latest_start_by_id,
-                summary_mode=prepared.summary_plan.mode,
-                summary_window_start=_format_day(prepared.summary_plan.window_start),
-                summary_window_end=_format_day(prepared.summary_plan.window_end),
-                summary_overlap_days=prepared.summary_plan.overlap_days,
-                summary_fallback_reason=prepared.summary_plan.fallback_reason,
-                cumulative_seed_count=len(prepared.summary_plan.seeds),
+            result = _combined_import_result(
+                legacy_result,
+                hourly_result,
+                has_hourly=partition.has_hourly,
+                hourly_blocked_reason=blocked,
             )
-            self._coordinator.async_record_import_result(
-                imported_series=result.imported_series,
-                imported_rows=result.imported_rows,
-                source_rows=result.source_rows,
-                skipped_windows=result.skipped_windows,
-                skipped_runtime_thermostat_windows=(
-                    result.skipped_runtime_thermostat_windows
-                ),
-                skipped_runtime_sensor_windows=result.skipped_runtime_sensor_windows,
-                skipped_window_examples=result.skipped_window_examples,
-                summary_mode=result.summary_mode,
-                summary_window_start=result.summary_window_start,
-                summary_window_end=result.summary_window_end,
-                summary_overlap_days=result.summary_overlap_days,
-                summary_fallback_reason=result.summary_fallback_reason,
-                cumulative_seed_count=result.cumulative_seed_count,
-            )
-            _LOGGER.info(
-                (
-                    "Imported %s Beestat statistics rows across %s series; "
-                    "summary_mode=%s skipped_windows=%s"
-                ),
-                result.imported_rows,
-                result.imported_series,
-                result.summary_mode,
-                result.skipped_windows,
-            )
+            self._record_import_result(result)
             return result
+
+    def _record_import_result(self, result: ImportResult) -> None:
+        self._coordinator.async_record_import_result(
+            imported_series=result.imported_series,
+            imported_rows=result.imported_rows,
+            source_rows=result.source_rows,
+            skipped_windows=result.skipped_windows,
+            skipped_runtime_thermostat_windows=result.skipped_runtime_thermostat_windows,
+            skipped_runtime_sensor_windows=result.skipped_runtime_sensor_windows,
+            skipped_window_examples=result.skipped_window_examples,
+            summary_mode=result.summary_mode,
+            summary_window_start=result.summary_window_start,
+            summary_window_end=result.summary_window_end,
+            summary_overlap_days=result.summary_overlap_days,
+            summary_fallback_reason=result.summary_fallback_reason,
+            cumulative_seed_count=result.cumulative_seed_count,
+            coverage_incomplete=result.coverage_incomplete,
+            writer_result={
+                "legacy_imported_series": result.legacy_imported_series,
+                "legacy_imported_rows": result.legacy_imported_rows,
+                "hourly_imported_series": result.hourly_imported_series,
+                "hourly_imported_rows": result.hourly_imported_rows,
+                "hourly_blocked_reason": result.hourly_blocked_reason,
+            },
+        )
+        _LOGGER.info(
+            "Imported %s Beestat rows across %s series; mode=%s hourly_blocked=%s",
+            result.imported_rows,
+            result.imported_series,
+            result.summary_mode,
+            result.hourly_blocked_reason,
+        )
+
+    async def _async_import_legacy(
+        self,
+        runtime_data: BeestatRuntimeData,
+        *,
+        lookback_days: int,
+        force_full_summary: bool,
+        rebuild_start: dt_date | None,
+        rebuild_end: dt_date | None,
+        thermostat_id: int | None,
+        allowed_legacy_ids: frozenset[str],
+    ) -> ImportResult:
+        """Keep enabled unadmitted quantities on their existing daily writer."""
+
+        prepared: PreparedImport | None = None
+        for attempt in range(_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS):
+            temporal_context = self._coordinator.capture_temporal_context()
+            prepared = await self._async_prepare_import(
+                runtime_data,
+                lookback_days=lookback_days,
+                force_full_summary=force_full_summary,
+                rebuild_start=rebuild_start,
+                rebuild_end=rebuild_end,
+                thermostat_id=thermostat_id,
+                temporal_context=temporal_context,
+                allowed_legacy_ids=allowed_legacy_ids,
+            )
+            current_partition = await self.hourly.async_writer_partition(
+                _writer_identity(
+                    self._coordinator.beestat_config_entry, self._coordinator.data
+                )
+            )
+            if (
+                self._coordinator.temporal_context_is_current(temporal_context)
+                and runtime_data.config == self._coordinator.data.config
+                and allowed_legacy_ids == current_partition.legacy_statistic_ids
+            ):
+                break
+            if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
+                raise RuntimeError(
+                    "Home Assistant timezone or writer configuration changed repeatedly during "
+                    "Beestat statistics import"
+                )
+            _LOGGER.info(
+                "Restarting Beestat statistics preparation after a Home "
+                "Assistant timezone change"
+            )
+            if self._coordinator.data is not None:
+                runtime_data = self._coordinator.data
+                allowed_legacy_ids = current_partition.legacy_statistic_ids
+
+        if prepared is None:  # pragma: no cover - positive attempt constant
+            raise RuntimeError("Beestat statistics import was not prepared")
+
+        imported_rows = 0
+        latest_start_by_id: dict[str, str | None] = {}
+        for item in prepared.series:
+            async_add_external_statistics(
+                self._hass,
+                cast(StatisticMetaData, item.metadata),
+                cast(Iterable[StatisticData], item.statistics),
+            )
+            imported_rows += len(item.statistics)
+            latest_start_by_id[item.statistic_id] = _format_start(item)
+
+        return ImportResult(
+            imported_series=len(prepared.series),
+            imported_rows=imported_rows,
+            source_rows=len(prepared.summary_rows)
+            + sum(len(rows) for rows in prepared.thermostat_rows_by_id.values())
+            + sum(len(rows) for rows in prepared.sensor_rows_by_id.values()),
+            skipped_windows=prepared.skipped_windows.total_count,
+            skipped_runtime_thermostat_windows=(
+                prepared.skipped_windows.runtime_thermostat_count
+            ),
+            skipped_runtime_sensor_windows=(
+                prepared.skipped_windows.runtime_sensor_count
+            ),
+            skipped_window_examples=prepared.skipped_windows.examples,
+            latest_start_by_statistic_id=latest_start_by_id,
+            summary_mode=prepared.summary_plan.mode,
+            summary_window_start=_format_day(prepared.summary_plan.window_start),
+            summary_window_end=_format_day(prepared.summary_plan.window_end),
+            summary_overlap_days=prepared.summary_plan.overlap_days,
+            summary_fallback_reason=prepared.summary_plan.fallback_reason,
+            cumulative_seed_count=len(prepared.summary_plan.seeds),
+            legacy_imported_series=len(prepared.series),
+            legacy_imported_rows=imported_rows,
+        )
 
     async def _async_import_hourly(
         self,
@@ -713,6 +938,7 @@ class BeestatStatisticsImporter:
             prepared.series,
             prepared.identity,
             ordinary_start=prepared.ordinary_start,
+            eligible_resources=prepared.eligible_resources,
         )
         status = self.hourly.status()
         coverage_incomplete = bool(status.get("pending")) or any(
@@ -720,7 +946,7 @@ class BeestatStatisticsImporter:
             for record in status.get("series", {}).values()
         )
         skipped = prepared.skipped_windows
-        result = ImportResult(
+        return ImportResult(
             imported_series=imported["imported_series"],
             imported_rows=imported["imported_rows"],
             source_rows=prepared.source_rows,
@@ -737,24 +963,10 @@ class BeestatStatisticsImporter:
                 "hourly_coverage_incomplete" if coverage_incomplete else None
             ),
             cumulative_seed_count=0,
-        )
-        self._coordinator.async_record_import_result(
-            imported_series=result.imported_series,
-            imported_rows=result.imported_rows,
-            source_rows=result.source_rows,
-            skipped_windows=result.skipped_windows,
-            skipped_runtime_thermostat_windows=result.skipped_runtime_thermostat_windows,
-            skipped_runtime_sensor_windows=result.skipped_runtime_sensor_windows,
-            skipped_window_examples=result.skipped_window_examples,
-            summary_mode=result.summary_mode,
-            summary_window_start=None,
-            summary_window_end=None,
-            summary_overlap_days=None,
-            summary_fallback_reason=result.summary_fallback_reason,
-            cumulative_seed_count=0,
+            hourly_imported_series=imported["imported_series"],
+            hourly_imported_rows=imported["imported_rows"],
             coverage_incomplete=coverage_incomplete,
         )
-        return result
 
     async def _async_prepare_hourly(
         self,
@@ -776,7 +988,8 @@ class BeestatStatisticsImporter:
                 rebuild_end=rebuild_end,
                 epoch_start=epoch_start,
                 bootstrap_start=self.hourly.bootstrap_start(
-                    thermostat_id=thermostat_id
+                    thermostat_id=thermostat_id,
+                    eligible_resources=_hourly_resource_identities(runtime_data.config),
                 ),
             )
             skipped = SkippedWindowEvidence()
@@ -798,11 +1011,14 @@ class BeestatStatisticsImporter:
                 window=(start, end),
                 preserve_source_rows=True,
             )
-            if self._coordinator.temporal_context_is_current(context):
+            if (
+                self._coordinator.temporal_context_is_current(context)
+                and runtime_data.config == self._coordinator.data.config
+            ):
                 break
             if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
                 raise RuntimeError(
-                    "Home Assistant timezone changed during hourly preparation"
+                    "Home Assistant timezone or configuration changed during hourly preparation"
                 )
             runtime_data = self._coordinator.data or runtime_data
         config = runtime_data.config
@@ -863,6 +1079,7 @@ class BeestatStatisticsImporter:
             + sum(len(rows) for rows in sensor_rows.values()),
             skipped,
             ordinary_start,
+            _hourly_resource_identities(config),
         )
 
     async def async_select_hourly_statistics(
@@ -958,17 +1175,19 @@ class BeestatStatisticsImporter:
         rebuild_end: dt_date | None,
         thermostat_id: int | None,
         temporal_context: TemporalContext,
+        allowed_legacy_ids: frozenset[str] | None = None,
     ) -> PreparedImport:
         """Prepare one coherent local-time import before Recorder writes."""
 
         existing_statistic_ids = await self._async_existing_detailed_statistic_ids(
-            runtime_data
+            runtime_data, allowed_legacy_ids=allowed_legacy_ids
         )
         summary_plan = await self._async_summary_import_plan(
             runtime_data,
             force_full_summary=force_full_summary,
             temporal_context=temporal_context,
             existing_statistic_ids=existing_statistic_ids,
+            allowed_legacy_ids=allowed_legacy_ids,
         )
         summary_rows = _filter_summary_rows_by_thermostat(
             summary_plan.rows,
@@ -1001,6 +1220,16 @@ class BeestatStatisticsImporter:
             runtime_data.config,
             existing_statistic_ids=existing_statistic_ids,
         )
+        if allowed_legacy_ids is not None:
+            known_ids = {
+                key.removesuffix("_hourly_v2")
+                for key in _hourly_resource_identities(runtime_data.config)
+            }
+            if any(item.statistic_id not in known_ids for item in series):
+                raise ValueError("Legacy output has no verified resource identity")
+            series = [
+                item for item in series if item.statistic_id in allowed_legacy_ids
+            ]
         if summary_plan.seeds:
             series = apply_cumulative_seeds(series, summary_plan.seeds)
         if rebuild_start is not None or rebuild_end is not None:
@@ -1026,6 +1255,7 @@ class BeestatStatisticsImporter:
         force_full_summary: bool,
         temporal_context: TemporalContext,
         existing_statistic_ids: frozenset[str],
+        allowed_legacy_ids: frozenset[str] | None = None,
     ) -> SummaryImportPlan:
         cached_rows = list(runtime_data.summary_rows)
         if force_full_summary:
@@ -1040,6 +1270,10 @@ class BeestatStatisticsImporter:
             cached_rows,
             existing_statistic_ids=existing_statistic_ids,
         )
+        if allowed_legacy_ids is not None:
+            statistic_ids = tuple(
+                value for value in statistic_ids if value in allowed_legacy_ids
+            )
         if not statistic_ids:
             return SummaryImportPlan.full(
                 cached_rows,
@@ -1105,13 +1339,15 @@ class BeestatStatisticsImporter:
         # The Recorder window can include hardware absent from the recent cache,
         # or a correction can introduce another stage between the two reads.
         if (
-            not set(
-                cumulative_statistic_ids(
+            not {
+                value
+                for value in cumulative_statistic_ids(
                     runtime_data.config,
                     rows,
                     existing_statistic_ids=existing_statistic_ids,
                 )
-            )
+                if allowed_legacy_ids is None or value in allowed_legacy_ids
+            }
             <= seeds.keys()
         ):
             full_rows = await self._async_full_summary_rows(runtime_data)
@@ -1141,10 +1377,14 @@ class BeestatStatisticsImporter:
     async def _async_existing_detailed_statistic_ids(
         self,
         runtime_data: BeestatRuntimeData,
+        *,
+        allowed_legacy_ids: frozenset[str] | None = None,
     ) -> frozenset[str]:
         """Retain imported hardware even when its source runtime becomes all zero."""
 
         statistic_ids = set(detailed_runtime_statistic_ids(runtime_data.config))
+        if allowed_legacy_ids is not None:
+            statistic_ids.intersection_update(allowed_legacy_ids)
         if not statistic_ids:
             return frozenset()
         recorder = get_recorder_instance(self._hass)
@@ -1543,6 +1783,42 @@ async def _async_handle_hourly_service(
         ) from None
 
 
+async def _async_handle_raw_points_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    """Export only a bounded fixed resource read for an active admin caller."""
+
+    user = (
+        await hass.auth.async_get_user(call.context.user_id)
+        if call.context.user_id is not None
+        else None
+    )
+    if user is None or not user.is_active or not user.is_admin:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="raw_points_admin_required"
+        )
+    importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+    try:
+        request = parse_raw_point_request(
+            call.data["resource"],
+            call.data["resource_id"],
+            call.data[ATTR_START],
+            call.data[ATTR_END],
+        )
+        return await importer.async_get_raw_points(request)
+    except ValueError:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="raw_points_invalid"
+        ) from None
+    except Exception as err:  # noqa: BLE001 - sanitize without reauth or status writes
+        _LOGGER.warning(
+            "Raw point read did not complete (%s)", exception_fingerprint(err)
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="raw_points_failed"
+        ) from None
+
+
 async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) -> None:
     """Rebuild Beestat statistics on demand."""
 
@@ -1773,6 +2049,14 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             schema=schema,
             supports_response=SupportsResponse.ONLY,
         )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_RAW_POINTS,
+        partial(_async_handle_raw_points_service, hass),
+        schema=GET_RAW_POINTS_SERVICE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
     hass.services.async_register(
         DOMAIN,
@@ -3009,6 +3293,7 @@ def _hourly_identity(
     series: tuple[HourlySeries, ...],
     *,
     selected_thermostat_id: int | None = None,
+    require_account: bool = True,
 ) -> dict[str, Any]:
     anchors = sorted(
         {
@@ -3017,7 +3302,7 @@ def _hourly_identity(
             if (resource_id := _row_int(row, "thermostat_id", "id")) is not None
         }
     )
-    if not anchors:
+    if not anchors and require_account:
         raise ValueError("Hourly account identity is unavailable")
     parsed = urlsplit(normalize_api_base(entry.data.get(CONF_API_BASE, API_BASE)))
     host = parsed.hostname or ""
@@ -3035,6 +3320,31 @@ def _hourly_identity(
         "resources": selected,
         "selected_thermostat_id": selected_thermostat_id,
     }
+
+
+def _writer_identity(
+    entry: BeestatStatisticsConfigEntry, data: BeestatRuntimeData
+) -> dict[str, Any]:
+    """Map eligible quantities separately from stable cached sensor topology."""
+
+    identity = _hourly_identity(entry, data, (), require_account=False)
+    identity["resources"] = _hourly_resource_identities(data.config)
+    parents: dict[int, int | None] = {}
+    for row in data.sensor_rows:
+        sensor_id = positive_resource_id(row.get("sensor_id", row.get("id")))
+        if sensor_id is None:
+            continue
+        parent = positive_resource_id(row.get("thermostat_id"))
+        if sensor_id in parents and parents[sensor_id] != parent:
+            raise ValueError("Sensor parent identity is ambiguous")
+        parents[sensor_id] = parent
+    for sensor in data.config.sensors:
+        # Keep provider topology independent of configured overrides. The
+        # manager checks both against adopted resources; unadmitted legacy
+        # quantities retain their existing configuration semantics.
+        parents.setdefault(sensor.sensor_id, sensor.thermostat_id)
+    identity["sensor_parents"] = parents
+    return identity
 
 
 def _local_midnight(local_day: dt_date, local_tz: ZoneInfo) -> datetime:

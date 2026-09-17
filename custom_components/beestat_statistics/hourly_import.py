@@ -10,12 +10,19 @@ import asyncio
 import json
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import fsum, isfinite
 from typing import Any
 
+from .const import (
+    DETAILED_RUNTIME_FIELDS,
+    RUNTIME_FIELD_GROUPS,
+    SUMMARY_MEAN_STATISTICS,
+    SUMMARY_SUM_STATISTICS,
+    THERMOSTAT_POINT_STATISTICS,
+)
 from .hourly_import_plan import (
     CumulativeCheckpoint,
     HourlyStatisticRow,
@@ -40,10 +47,48 @@ _FIELDS = (
     "has_sum",
 )
 _SAVES = "beestat_hourly_storage_tasks"
+_SUCCESSOR = "_hourly_v2"
+_THERMOSTAT_QUANTITIES = frozenset(
+    (
+        *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
+        *(f"{key}_runtime_hours" for key, _label, _field in DETAILED_RUNTIME_FIELDS),
+        *(spec.statistic_suffix for spec in SUMMARY_MEAN_STATISTICS),
+        *(spec.statistic_suffix for spec in SUMMARY_SUM_STATISTICS),
+        *(spec.statistic_suffix for spec in THERMOSTAT_POINT_STATISTICS),
+    )
+)
+_SENSOR_QUANTITIES = frozenset(
+    {
+        "temperature",
+        "occupancy",
+        "air_quality",
+        "co2_concentration",
+        "voc_concentration",
+    }
+)
 
 
 class HourlyImportError(ValueError):
     """An explicit reconciliation or selection is required before more effects."""
+
+
+class HourlyReconciliationError(HourlyImportError):
+    """A valid saved hourly intent cannot yet prove its native Recorder effects."""
+
+
+@dataclass(frozen=True, slots=True)
+class WriterPartition:
+    """Detached ownership projection; membership does not enable a quantity."""
+
+    legacy_statistic_ids: frozenset[str]
+    hourly_statistic_ids: frozenset[str]
+    frozen_legacy_statistic_ids: frozenset[str]
+    has_hourly: bool
+    hourly_blocked_reason: str | None = None
+
+    @property
+    def hourly_ready(self) -> bool:
+        return self.has_hourly and self.hourly_blocked_reason is None
 
 
 def _time(value: str | datetime) -> datetime:
@@ -82,6 +127,97 @@ def _metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any] | None:
 
 def _resource(value: dict[str, Any]) -> tuple[Any, ...]:
     return value.get("thermostat_id"), value.get("sensor_id"), value.get("quantity")
+
+
+def _validate_resource(
+    value: Any, *, allow_unmapped_sensor: bool = False
+) -> tuple[int | None, int | None, str]:
+    if not isinstance(value, dict):
+        raise TypeError("Invalid source resource")
+    thermostat_id, sensor_id, quantity = _resource(value)
+    unmapped_sensor = (
+        allow_unmapped_sensor and thermostat_id is None and sensor_id is not None
+    )
+    if (
+        (not unmapped_sensor and (type(thermostat_id) is not int or thermostat_id <= 0))
+        or (sensor_id is not None and (type(sensor_id) is not int or sensor_id <= 0))
+        or not isinstance(quantity, str)
+        or quantity
+        not in (_THERMOSTAT_QUANTITIES if sensor_id is None else _SENSOR_QUANTITIES)
+    ):
+        raise ValueError("Invalid source resource")
+    return thermostat_id, sensor_id, quantity
+
+
+def _validated_records(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Keep every committed and intended owner; a segment may only keep its owner."""
+    records = dict(state["series"])
+    selection = state.get("pending_selection")
+    if selection is not None:
+        for base, record in selection["records"].items():
+            if base in records and _resource(record["resource"]) != _resource(
+                records[base]["resource"]
+            ):
+                raise ValueError("Pending selection changes an adopted resource")
+            records[base] = record
+    owned: set[tuple[int | None, int | None, str]] = set()
+    parents: dict[int, int | None] = {}
+    for record in records.values():
+        resource = _validate_resource(record["resource"])
+        if resource in owned:
+            raise ValueError("Multiple hourly writers own the same quantity")
+        owned.add(resource)
+        thermostat_id, sensor_id, _quantity = resource
+        if sensor_id is not None:
+            if sensor_id in parents and parents[sensor_id] != thermostat_id:
+                raise ValueError("An adopted sensor has conflicting parents")
+            parents[sensor_id] = thermostat_id
+    return records
+
+
+def _partition_resources(
+    identity: dict[str, Any],
+) -> tuple[dict[tuple[int | None, int | None, str], str], dict[int, int | None]]:
+    current: dict[tuple[int | None, int | None, str], str] = {}
+    parents: dict[int, int | None] = {}
+    for base, value in identity["resources"].items():
+        resource = _validate_resource(value, allow_unmapped_sensor=True)
+        thermostat_id, sensor_id, _quantity = resource
+        if hourly_base_id(base) != base or resource in current:
+            raise ValueError("Ambiguous current quantity identity")
+        current[resource] = base
+        if sensor_id is not None:
+            if sensor_id in parents and parents[sensor_id] != thermostat_id:
+                raise ValueError("Configured sensor has conflicting parents")
+            parents[sensor_id] = thermostat_id
+    supplied_parents = identity.get("sensor_parents", parents)
+    if not isinstance(supplied_parents, dict):
+        raise TypeError("Invalid observed sensor parents")
+    for sensor_id, thermostat_id in supplied_parents.items():
+        if (
+            type(sensor_id) is not int
+            or sensor_id <= 0
+            or (
+                thermostat_id is not None
+                and (type(thermostat_id) is not int or thermostat_id <= 0)
+            )
+            or (sensor_id in parents and parents[sensor_id] != thermostat_id)
+        ):
+            raise ValueError("Invalid observed sensor parents")
+    return current, {**parents, **supplied_parents}
+
+
+def _eligible_keys(
+    resources: Mapping[str, dict[str, Any]] | None,
+) -> set[tuple[int | None, int | None, str]] | None:
+    return (
+        None
+        if resources is None
+        else {
+            _validate_resource(resource, allow_unmapped_sensor=True)
+            for resource in resources.values()
+        }
+    )
 
 
 def _source_start(record: dict[str, Any], ordinary_start: datetime | None) -> datetime:
@@ -189,6 +325,37 @@ class HourlyImportManager:
             if selection is not None:
                 for base, record in selection["records"].items():
                     self._validate_record(base, record)
+                if (
+                    not selection["records"]
+                    or sorted(selection["records"]) != selection["statistic_ids"]
+                    or type(selection["expected_revision"]) is not int
+                    or not 0 <= selection["expected_revision"] <= state["revision"]
+                    or any(
+                        record["epoch_start"] != selection["epoch_start"]
+                        for record in selection["records"].values()
+                    )
+                ):
+                    raise ValueError("Invalid pending selection")
+            if state["phase"] == "prepared" and (
+                state["series"] or selection is None or pending is not None
+            ):
+                raise ValueError("Invalid prepared selection")
+            if state["phase"] == "hourly" and not state["series"]:
+                raise ValueError("Adopted state has no writers")
+            identity = state["identity"]
+            if (
+                identity["entry_id"] != self._entry.entry_id
+                or not isinstance(identity["api_base"], str)
+                or not identity["api_base"]
+                or not isinstance(identity["account_anchors"], list)
+                or not identity["account_anchors"]
+                or any(
+                    not isinstance(anchor, str) or not anchor
+                    for anchor in identity["account_anchors"]
+                )
+            ):
+                raise ValueError("Invalid adopted source identity")
+            _validated_records(state)
         except (KeyError, TypeError, ValueError, AttributeError) as err:
             raise HourlyImportError(
                 "Invalid hourly state; reconstruction requires explicit reconciliation"
@@ -196,6 +363,7 @@ class HourlyImportManager:
 
     def _validate_record(self, base: str, record: dict[str, Any]) -> None:
         epoch = _time(record["epoch_start"])
+        _validate_resource(record["resource"])
         if (
             hourly_base_id(base) != base
             or hourly_base_id(record["statistic_id"]) != base
@@ -255,6 +423,10 @@ class HourlyImportManager:
             ):
                 raise ValueError("Invalid pending row order or range")
         self._validate_record(pending["base_id"], pending["after_series"])
+        if _resource(pending["after_series"]["resource"]) != _resource(
+            state["series"][pending["base_id"]]["resource"]
+        ):
+            raise ValueError("Pending effect changes the writer resource")
 
     async def _save(self, value: dict[str, Any]) -> None:
         self._admit()
@@ -296,16 +468,98 @@ class HourlyImportManager:
             self._error = None
         return "hourly"
 
+    async def async_writer_partition(self, identity: dict[str, Any]) -> WriterPartition:
+        """Read ownership without replaying a selection, saving or querying Recorder.
+
+        The caller supplies currently eligible resource identities and, when
+        available, the complete observed sensor-parent map. Disabled or removed
+        quantities keep their saved reservation. A verified interrupted selection
+        reserves its quantities immediately; unrelated legacy quantities remain eligible.
+        """
+        await self._load()
+        if self._state is not None:
+            self._identity(identity, require_resources=False)
+        elif identity.get("entry_id") != self._entry.entry_id:
+            self._error = "source_identity_unverified"
+            raise HourlyImportError("Writer partition config-entry identity changed")
+        try:
+            current, parents = _partition_resources(identity)
+            resources = identity["resources"]
+            if self._state is None:
+                return WriterPartition(
+                    frozenset(base.removesuffix(_SUCCESSOR) for base in resources),
+                    frozenset(),
+                    frozenset(),
+                    False,
+                )
+            marker = self._entry.data.get(MARKER)
+            expected = {"version": _VERSION, "token": self._document["token"]}
+            pending_selection = self._document.get("pending_selection")
+            prepared_without_marker = (
+                self._document["phase"] == "prepared"
+                and pending_selection is not None
+                and marker is None
+            )
+            if marker != expected and not prepared_without_marker:
+                self._error = "adoption_unverified"
+                raise HourlyImportError(
+                    "Hourly adoption marker and Store disagree; legacy writes are blocked"
+                )
+            records = _validated_records(self._document)
+            hourly_ids: set[str] = set()
+            frozen: set[str] = set()
+            for base, record in records.items():
+                resource = _validate_resource(record["resource"])
+                thermostat_id, sensor_id, _quantity = resource
+                if (
+                    sensor_id is not None
+                    and sensor_id in parents
+                    and parents[sensor_id] != thermostat_id
+                ):
+                    self._error = "source_resource_rebound"
+                    raise HourlyImportError("An adopted sensor parent changed")
+                current_base = current.get(resource)
+                if base in resources and _resource(resources[base]) != resource:
+                    self._error = "source_resource_rebound"
+                    raise HourlyImportError("An adopted legacy identity was rebound")
+                frozen.add(base.removesuffix(_SUCCESSOR))
+                if current_base is not None:
+                    hourly_ids.add(current_base)
+                    frozen.add(current_base.removesuffix(_SUCCESSOR))
+            return WriterPartition(
+                frozenset(
+                    base.removesuffix(_SUCCESSOR)
+                    for base in resources
+                    if base not in hourly_ids
+                ),
+                frozenset(hourly_ids),
+                frozenset(frozen),
+                True,
+                "selection_pending" if pending_selection is not None else None,
+            )
+        except HourlyImportError:
+            raise
+        except (KeyError, TypeError, AttributeError, ValueError) as err:
+            self._error = "source_identity_unverified"
+            raise HourlyImportError("Writer partition identity is invalid") from err
+
     def base_statistic_ids(self) -> tuple[str, ...]:
         return tuple((self._state or {}).get("series", {}))
 
-    def bootstrap_start(self, *, thermostat_id: int | None = None) -> datetime | None:
+    def bootstrap_start(
+        self,
+        *,
+        thermostat_id: int | None = None,
+        eligible_resources: Mapping[str, dict[str, Any]] | None = None,
+    ) -> datetime | None:
         """Include an explicit cumulative epoch until its first verified checkpoint."""
+        eligible = _eligible_keys(eligible_resources)
         epochs = [
             _time(record["epoch_start"])
             for record in (self._state or {}).get("series", {}).values()
             if record["metadata"].get("has_sum")
             and record["checkpoint"] is None
+            and (eligible is None or _resource(record["resource"]) in eligible)
             and (
                 thermostat_id is None
                 or record["resource"]["thermostat_id"] == thermostat_id
@@ -370,12 +624,18 @@ class HourlyImportManager:
             },
         }
 
-    def _identity(self, identity: dict[str, Any], *, compare: bool = True) -> None:
+    def _identity(
+        self,
+        identity: dict[str, Any],
+        *,
+        compare: bool = True,
+        require_resources: bool = True,
+    ) -> None:
         if (
             identity.get("entry_id") != self._entry.entry_id
             or not identity.get("api_base")
             or not identity.get("account_anchors")
-            or not identity.get("resources")
+            or (require_resources and not identity.get("resources"))
         ):
             self._error = "source_identity_unverified"
             raise HourlyImportError(
@@ -396,6 +656,7 @@ class HourlyImportManager:
         series: tuple[HourlySeries, ...],
         identity: dict[str, Any],
         ordinary_start: datetime | None,
+        eligible_resources: Mapping[str, dict[str, Any]] | None = None,
     ) -> dict[str, HourlySeries]:
         self._identity(identity)
         by_resource: dict[tuple[Any, ...], HourlySeries] = {}
@@ -404,8 +665,12 @@ class HourlyImportManager:
             if resource is None or _resource(resource) in by_resource:
                 raise HourlyImportError("Missing or ambiguous source resource identity")
             by_resource[_resource(resource)] = source_item
+        eligible = _eligible_keys(eligible_resources)
         result = {}
         for base, record in self._document["series"].items():
+            if eligible is not None and _resource(record["resource"]) not in eligible:
+                # Settings can disable a quantity without releasing its identity.
+                continue
             item = by_resource.get(_resource(record["resource"]))
             if item is None:
                 selected = identity.get("selected_thermostat_id")
@@ -449,7 +714,7 @@ class HourlyImportManager:
                 pending["statistic_id"], _time(pending["start"])
             )
             if self._compare(pending, snapshot):
-                raise HourlyImportError("Recorder intent is still incomplete")
+                raise HourlyReconciliationError("Recorder intent is still incomplete")
         after = deepcopy(self._document)
         after["series"][pending["base_id"]] = pending["after_series"]
         after["pending"] = None
@@ -461,11 +726,13 @@ class HourlyImportManager:
         self, pending: dict[str, Any], snapshot: RecorderSnapshot
     ) -> list[dict[str, Any]]:
         if not snapshot.complete:
-            raise HourlyImportError("Incomplete Recorder readback")
+            raise HourlyReconciliationError("Incomplete Recorder readback")
         metadata = _metadata(snapshot.metadata)
         if metadata not in (pending["before_metadata"], _metadata(pending["metadata"])):
             self._error = "recorder_metadata_conflict"
-            raise HourlyImportError("Recorder metadata changed during pending intent")
+            raise HourlyReconciliationError(
+                "Recorder metadata changed during pending intent"
+            )
         before = {row["start"]: row for row in pending["before"]}
         current = {_iso(row.start): _row(row) for row in snapshot.rows}
         intended = {row["start"]: row for row in pending["rows"]}
@@ -476,13 +743,13 @@ class HourlyImportManager:
                 continue
             if actual != prior:
                 self._error = "recorder_row_conflict"
-                raise HourlyImportError(
+                raise HourlyReconciliationError(
                     "Recorder contains a third state; pending intent was retained"
                 )
             if start in intended:
                 retry.append(intended[start])
         if metadata is None and current:
-            raise HourlyImportError("Recorder rows have no metadata")
+            raise HourlyReconciliationError("Recorder rows have no metadata")
         return sorted(retry, key=lambda row: row["start"])
 
     async def _write(
@@ -531,13 +798,14 @@ class HourlyImportManager:
         identity: dict[str, Any],
         *,
         ordinary_start: datetime | None = None,
+        eligible_resources: Mapping[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if await self.async_mode() != "hourly":
             raise HourlyImportError(
                 "Hourly statistics have not been explicitly adopted"
             )
         await self.async_reconcile()
-        bound = self._bound_series(series, identity, ordinary_start)
+        bound = self._bound_series(series, identity, ordinary_start, eligible_resources)
         self._error = None
         imported_rows = imported_series = 0
         latest = {}
@@ -815,6 +1083,20 @@ class HourlyImportManager:
             if snapshot is not None:
                 snapshots[base] = snapshot
             preview.append(projection)
+        adopted = {
+            **({} if self._state is None else _validated_records(self._state)),
+            **records,
+        }
+        frozen_resources = {
+            _resource(record["resource"]) for record in adopted.values()
+        }
+        frozen_legacy_ids = {base.removesuffix(_SUCCESSOR) for base in adopted}
+        continuing_legacy_ids = set()
+        for base, resource in identity["resources"].items():
+            if _resource(resource) in frozen_resources:
+                frozen_legacy_ids.add(base.removesuffix(_SUCCESSOR))
+            else:
+                continuing_legacy_ids.add(base.removesuffix(_SUCCESSOR))
         proposal = {
             "expected_revision": revision,
             "epoch_start": _iso(epoch),
@@ -824,8 +1106,16 @@ class HourlyImportManager:
                 for key in ("entry_id", "api_base", "account_anchors")
             },
             "selection": preview,
-            "legacy_writes": "stop_for_entry",
-            "unselected_series": sorted(set(available) - set(statistic_ids)),
+            "legacy_writes": {
+                "policy": "per_quantity",
+                "frozen_statistic_ids": sorted(frozen_legacy_ids),
+                "continuing_statistic_ids": sorted(continuing_legacy_ids),
+            },
+            "unselected_series": sorted(
+                base
+                for base in available
+                if _resource(identity["resources"][base]) not in frozen_resources
+            ),
         }
         digest = _digest(proposal)
         if preview_digest is None:

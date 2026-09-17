@@ -13,7 +13,7 @@ The normal flow is:
 1. The client requests Beestat synchronization, then reads thermostat, sensor, and summary resources. An optional `ecobee_thermostat` read supplies allowlisted settings; its failure leaves that projection unavailable without discarding primary runtime data.
 2. The coordinator normalizes resource identities and builds one `BeestatRuntimeData` snapshot containing effective configuration, source rows, runtime observations, metadata, settings, and room-temperature spread.
 3. Entity platforms project that snapshot. Registry and mapped-state events can rebuild relevant cached projections; entity property reads perform no network requests.
-4. The importer resolves the entry's statistics mode under its existing lock. Entries without an hourly selection retain daily imports. Explicitly adopted entries reconcile any pending hourly batch before acquiring new point history, then build and verify hourly statistics through Home Assistant's external-statistics API. Recorder remains the history owner.
+4. The importer resolves writer ownership per source quantity under its existing lock. Enabled quantities without an hourly selection retain daily imports. Selected quantities reconcile any pending hourly batch before acquiring their next point history, then build and verify hourly statistics through Home Assistant's external-statistics API. Recorder remains the history owner.
 
 Runtime refreshes and imports have separate locks. Scheduled import requests coalesce to one running pass plus one pending follow-up through [`task_coalescer.py`](../custom_components/beestat_statistics/task_coalescer.py). This bounds repeated timer/helper events without dropping the need to reconcile current state. Entry-owned background tasks, listeners, and timers stop on unload; retained coordinator/importer references reject new work. The startup import reuses the initial refresh by skipping another sync request.
 
@@ -39,7 +39,7 @@ A mixed HomeKit climate/Ecobee temperature mapping needs stronger proof than an 
 
 Built-in Beestat sensor rows inherit their thermostat's physical identity constraints. A child override must belong to that same device or satisfy the same mixed-source proof; options validation, runtime resolution, and Repairs evaluate the effective inherited claims together.
 
-[`entity.py`](../custom_components/beestat_statistics/entity.py) links derived entities to mapped devices through Home Assistant's helper integration API without making this config entry a co-owner of those source devices. Unmapped resources use integration-owned fallback devices. Discovery adds newly available entity identities once; relinking follows registry changes. Repairs identify missing references, invalid domains, and conflicting device claims.
+[`entity.py`](../custom_components/beestat_statistics/entity.py) links derived entities to mapped devices through Home Assistant's helper integration API without making this config entry a co-owner of those source devices. Unmapped resources use integration-owned fallback devices. Cleanup admits only ordinary device entries exclusively owned by this config entry, with Beestat-only identifiers and no connections; child devices cannot satisfy that ownership check. Discovery adds newly available entity identities once; relinking follows registry changes. Repairs identify missing references, invalid domains, and conflicting device claims.
 
 ## Clocks and source quality
 
@@ -88,12 +88,22 @@ Scheduled imports, manual imports, rebuilds and explicit selections share the
 importer's existing lock. There is no second scheduled writer.
 
 An entry stays in legacy daily mode until an explicit
-`select_hourly_statistics` selection is applied. Selection stops all legacy
-statistics writes for that entry and admits only its selected hourly quantities.
-It does not rename, rewrite or remove legacy history. New resources and newly
-available quantities require another deliberate selection; routine refresh does
-not adopt them. Daily summaries remain available to the filter engine and other
-explicitly daily uses.
+`select_hourly_statistics` selection is applied. Selection freezes legacy writes
+only for its selected source quantities and admits their hourly successors. Other
+enabled quantities continue daily imports, including enabled VOC measurements
+whose hourly unit contract is not admitted. Selection does not rename, rewrite or
+remove legacy history. New resources and newly available quantities require
+another deliberate hourly selection; routine refresh does not adopt them. Daily
+summaries remain available to the filter engine and other explicitly daily uses.
+
+The writer partition binds thermostat ID, optional sensor ID and quantity through
+committed records and verified pending selection records. It retains the original
+legacy ID reservation and freezes the quantity's current legacy ID after a slug
+change. Disabling, removing or renaming a selected quantity cannot reopen its daily
+writer; reusing a reserved ID for a different resource is rejected. The importer
+checks ownership again after awaited work and before legacy submission. Legacy
+preparation and cumulative seed discovery use only admitted legacy IDs. There is
+one intended writer per quantity under the same importer and lock.
 
 The builder uses actual thermostat and sensor five-minute points for all declared
 families, including quantities previously imported from daily summaries. The
@@ -171,7 +181,9 @@ collision and blocks selection.
 
 A selection preview identifies target IDs, the observed first hour, units,
 resource bindings, closed boundaries, surviving stale rows and unselected
-quantities. Applying requires that exact preview digest and revision. The old
+quantities. Its `legacy_writes` projection names the frozen and continuing legacy
+IDs under `policy: per_quantity`. Applying requires that exact preview digest and
+revision. The old
 segment's stale suffix must be reconciled before its new segment is admitted;
 the valid old prefix and closed-segment boundary remain. Routine imports never
 allocate epochs or bridge gaps.
@@ -214,13 +226,16 @@ adoption token. It establishes adoption authority; it does not mirror epochs,
 coverage or checkpoints into options or entry data. Initial selection saves its
 prepared journal, updates the marker through native `async_update_entry`, then
 saves the selected state. The entry update uses Home Assistant's delayed native
-persistence, so marker and journal writes are not one transaction. Any mismatch
-blocks routine hourly and legacy writes. An exact explicit selection retry can
+persistence, so marker and journal writes are not one transaction. A verified
+prepared selection without its not-yet-written marker reserves its intended
+quantities while unrelated legacy quantities may continue. Other marker/journal
+mismatches block routine hourly and legacy writes. An exact explicit selection
+retry can
 complete an interrupted selection or restore its missing marker; a different
 selection cannot silently take over.
 
-A present marker with a missing journal blocks continuation. A journal without
-its matching marker also blocks routine continuation. If both owners are missing,
+A present marker with a missing journal blocks continuation. A committed journal
+without its matching marker also blocks routine continuation. If both owners are missing,
 absence cannot prove that hourly adoption never happened. Restore a consistent
 backup or reconcile the prior selection and Recorder state manually before
 resuming; neither a fresh epoch nor the latest native row reconstructs that
@@ -236,8 +251,8 @@ Recorder and the journal have their own failure boundaries:
 2. Submit the captured batch. Queue acceptance is not completed repair. Fence
    Recorder, then compare complete metadata, predecessor, target rows and retained
    tail with the journal's expected-before and intended-after states.
-3. Reconcile a pending batch before acquiring fresh provider data. Exact intended
-   rows are already applied; exact prior rows or absence may be retried with the
+3. Reconcile a pending hourly batch before acquiring new hourly point history.
+   Exact intended rows are already applied; exact prior rows or absence may be retried with the
    identical payload. Partial application does not permit recomputation from
    newer source data. A metadata mismatch or any third row state stops the whole
    batch, retains its intent and suppresses unverified consumer values.
@@ -254,12 +269,44 @@ registry. Recorder fencing handles effects that survived their cancelled waiter.
 Source identity loss, incompatible units, saved-state failures and native
 conflicts hold further effects and suppress unverified coverage.
 
+A verified ownership partition can let unrelated enabled legacy quantities
+continue when a pending selection or hourly persistence/readback failure blocks
+hourly work. Invalid account/resource identity, corrupt saved ownership, or an
+unexplained marker mismatch still blocks all writers. Combined import status
+reports legacy and hourly counts separately with `hourly_blocked_reason`; unknown
+hourly effects have null counts, never an asserted zero. The combined totals count
+only acknowledged results and mark the import incomplete when hourly work is held.
+
 One series batch and each source/coverage window are bounded to 366 elapsed days.
 Oversized reconciliation requires a separately specified recovery plan; bounds
 cannot conceal retained rows. Deliberate downgrade must preserve the journal and
 marker and reconcile their effect before returning to a legacy writer.
 
 ### Consumer coverage and delivery boundaries
+
+`get_raw_points` is a separate read-only source action, implemented by
+[`raw_points.py`](../custom_components/beestat_statistics/raw_points.py) and the
+existing runtime-owned client. It requires an active administrator context and an
+explicit loaded entry, a configured `runtime_thermostat` or `runtime_sensor`
+positive integer ID, and offset-aware whole-second bounds no more than 31 elapsed
+days apart. Cached resource/parent identity is checked before and after the read
+under the importer lock. Entry-owned tasks reject unload and propagate cancellation.
+It invokes only the fixed point `read` methods: no synchronization, metadata
+refresh, selection preview, reconciliation, Recorder writes or configuration or
+journal writes. It accepts no URL, method, credential or output-path parameter.
+
+The response preserves provider list order, object keys and deletion records
+without normalization or synthetic IDs. Its request receipt identifies the
+inclusive `between` bounds and resource; transport attempts, received byte count,
+data shape, row count and start/finish timestamps describe the acquisition.
+Responses are bounded to 10,000 rows and 8 MiB; exceeding a bound fails without a
+truncated success. Provider failures remain failures rather than empty history.
+`transport_complete` distinguishes a fully received response from transport
+failure, while `provider_complete`, `sample_completeness` and
+`provider_settlement` remain unknown. Pagination indicators do not prove that all
+history was returned. A successful empty read proves neither the resource's
+historical horizon nor settlement. Raw responses contain private source history;
+they are not included in diagnostics.
 
 `get_configuration` exposes cached hourly mode, revision, pending/error state,
 selected IDs and segment boundaries. `get_hourly_coverage` projects an explicit

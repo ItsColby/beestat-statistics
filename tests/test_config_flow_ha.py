@@ -2009,36 +2009,36 @@ async def test_options_flow_confirms_all_cached_automatic_mappings_once(
             result["flow_id"],
             {"next_step_id": "confirm_automatic_mappings"},
         )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "confirm_automatic_mappings"
-    assert {
-        key: value
-        for key, value in result["description_placeholders"].items()
-        if key != "mapping_details"
-    } == {
-        "thermostat_count": "1",
-        "sensor_count": "1",
-        "entity_count": "7",
-    }
-    mapping_details = result["description_placeholders"]["mapping_details"]
-    assert "Zone A" in mapping_details
-    assert sources[("climate", "zone-a-climate")].entity_id in mapping_details
-    assert "Room B" in mapping_details
-    assert sources[("sensor", "room-b-temperature")].entity_id in mapping_details
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "confirm_automatic_mappings"
+        assert {
+            key: value
+            for key, value in result["description_placeholders"].items()
+            if key != "mapping_details"
+        } == {
+            "thermostat_count": "1",
+            "sensor_count": "1",
+            "entity_count": "7",
+        }
+        mapping_details = result["description_placeholders"]["mapping_details"]
+        assert "Zone A" in mapping_details
+        assert sources[("climate", "zone-a-climate")].entity_id in mapping_details
+        assert "Room B" in mapping_details
+        assert sources[("sensor", "room-b-temperature")].entity_id in mapping_details
 
-    hass.config_entries.async_update_entry(
-        entry,
-        options={
-            **dict(entry.options),
-            "concurrent_after_preview": {"preserve": True},
-        },
-    )
-
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                **dict(entry.options),
+                "concurrent_after_preview": {"preserve": True},
+            },
         )
+
+        with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"],
+                {},
+            )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     reload.assert_called_once_with(entry.entry_id)

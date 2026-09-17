@@ -491,11 +491,19 @@ function global:wsl.exe {
 }
 function global:git {
     $global:LASTEXITCODE = 0
-    if ($env:VALIDATION_FAIL -eq "git") {
-        $global:LASTEXITCODE = 23
-        return
+    switch ($args[-1]) {
+        '--show-toplevel' {
+            Split-Path (Split-Path $env:VALIDATION_SCRIPT -Parent) -Parent
+        }
+        '--git-dir' {
+            if ($env:VALIDATION_FAIL -eq "git") {
+                $global:LASTEXITCODE = 23
+                return
+            }
+            "C:" + "\source with spaces\.git"
+        }
+        default { throw "Unexpected Git query: $args" }
     }
-    "C:" + "\source with spaces\.git"
 }
 try {
     & $env:VALIDATION_SCRIPT -Mode current

@@ -307,6 +307,15 @@
     "hourly_statistics_failed": {
       "message": "The hourly statistics action did not finish. Read the current hourly status and coverage, then review the selection and revision before retrying."
     },
+    "raw_points_admin_required": {
+      "message": "An active Home Assistant administrator must call this action."
+    },
+    "raw_points_invalid": {
+      "message": "Choose one configured thermostat or room sensor and an explicit time window of at most 31 elapsed days. Use timestamps with UTC offsets and no fractional seconds."
+    },
+    "raw_points_failed": {
+      "message": "The raw point read did not finish. Check the integration status and retry a smaller window if necessary."
+    },
     "filter_change_boundary_conflict": {
       "message": "The saved filter cycle differs from the expected values. Read the current saved filter state and review it before submitting again."
     },
@@ -340,9 +349,35 @@
     }
   },
   "services": {
+    "get_raw_points": {
+      "name": "Get raw Beestat points",
+      "description": "Read bounded point history for one configured resource using cached identity metadata. Requires an active administrator. Does not sync or refresh Beestat, import statistics, or change saved state. The response contains private raw history.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics entry containing the resource."
+        },
+        "resource": {
+          "name": "Resource",
+          "description": "Fixed point-history resource to read."
+        },
+        "resource_id": {
+          "name": "Resource ID",
+          "description": "Positive integer ID of a configured thermostat or room sensor."
+        },
+        "start": {
+          "name": "Start timestamp",
+          "description": "Inclusive timestamp with an explicit UTC offset and no fractional seconds."
+        },
+        "end": {
+          "name": "End timestamp",
+          "description": "Inclusive timestamp after start, at most 31 elapsed days later, with an explicit UTC offset and no fractional seconds."
+        }
+      }
+    },
     "select_hourly_statistics": {
       "name": "Select hourly Beestat statistics",
-      "description": "Preview explicitly selected hourly statistics or a recovery segment. To apply, repeat the same selection with its returned preview digest and expected revision. Reads Beestat history; applying updates retained selection and Recorder statistics.",
+      "description": "Preview explicitly selected hourly statistics or a recovery segment. To apply, repeat the same selection with its returned preview digest and expected revision. Reads Beestat history and can reconcile pending effects. Applying freezes legacy writes for selected quantities and updates retained selection and Recorder statistics. Other enabled quantities continue daily imports.",
       "fields": {
         "config_entry_id": {
           "name": "Configuration entry",
@@ -400,7 +435,7 @@
     },
     "import_statistics": {
       "name": "Import Beestat statistics",
-      "description": "Refresh Beestat runtime and metadata, update integration entities, and import history using the entry's selected daily or hourly statistics mode.",
+      "description": "Refresh Beestat runtime and metadata, update integration entities, and import history using hourly statistics for selected quantities and daily statistics for enabled quantities that have not been selected.",
       "fields": {
         "point_lookback_days": {
           "name": "Point lookback days",

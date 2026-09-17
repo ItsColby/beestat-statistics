@@ -97,9 +97,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             ROOT / "custom_components/beestat_statistics/sensor.py"
         ).read_text(encoding="utf-8")
 
-        self.assertIn(
-            'summary_window=mode == "hourly" or not force_full_summary', init_text
-        )
+        self.assertIn("summary_window=not force_full_summary", init_text)
         self.assertIn("async def _async_full_summary_rows", init_text)
         self.assertNotIn("full_rows = list(runtime_data.summary_rows)", init_text)
         self.assertIn("summary_window: bool = False", coordinator_text)
@@ -517,7 +515,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "python scripts/run_dependency_light_tests.py --home-assistant"
             ),
         )
-        self.assertIn("python scripts/run_dependency_light_tests.py", release_runner)
         development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
         self.assertIn(
             r".\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py",
@@ -752,6 +749,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "unknown_thermostat_id",
                 "statistics_import_failed",
                 "hourly_statistics_failed",
+                "raw_points_admin_required",
+                "raw_points_invalid",
+                "raw_points_failed",
             },
         )
         self.assertTrue(exception_keys <= set(strings["exceptions"]))
@@ -789,7 +789,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("_MISSING_OVERRIDE_ENTITIES_ISSUE_ID", init_text)
         self.assertIn("_INVALID_OVERRIDE_ENTITY_DOMAINS_ISSUE_ID", init_text)
         self.assertIn("_MAPPING_DEVICE_CONFLICTS_ISSUE_ID", init_text)
-        self.assertIn("entry_runtime_config_data", init_text)
         self.assertIn(
             "_missing_override_entity_ids(hass, entry_runtime_config_data(entry))",
             init_text,

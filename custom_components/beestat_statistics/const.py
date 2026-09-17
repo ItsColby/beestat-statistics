@@ -78,6 +78,7 @@ MIN_SCAN_INTERVAL_SECONDS = 300
 SERVICE_IMPORT_STATISTICS = "import_statistics"
 SERVICE_GET_CONFIGURATION = "get_configuration"
 SERVICE_GET_HOURLY_COVERAGE = "get_hourly_coverage"
+SERVICE_GET_RAW_POINTS = "get_raw_points"
 SERVICE_SELECT_HOURLY_STATISTICS = "select_hourly_statistics"
 SERVICE_REBUILD_STATISTICS = "rebuild_statistics"
 SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY = "repair_filter_change_boundary"

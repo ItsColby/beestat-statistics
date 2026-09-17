@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
 
 from custom_components import beestat_statistics as integration
 from custom_components.beestat_statistics.config_model import (
@@ -27,8 +28,23 @@ from custom_components.beestat_statistics.config_model import (
 )
 from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.coordinator import TemporalContext
+from custom_components.beestat_statistics.hourly_import import (
+    HourlyImportError,
+    HourlyImportManager,
+    HourlyReconciliationError,
+    WriterPartition,
+)
+from custom_components.beestat_statistics.hourly_import_plan import HourlyStatisticRow
+from custom_components.beestat_statistics.hourly_recorder import (
+    HourlyRecorder,
+    HourlyRecorderError,
+)
+from custom_components.beestat_statistics.hourly_storage import HourlyStore
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
-from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
+from custom_components.beestat_statistics.statistics_builder import (
+    CumulativeStatisticSeed,
+    StatisticsSeries,
+)
 from tests.test_runtime_ha import _coordinator_data
 
 pytestmark = pytest.mark.asyncio
@@ -36,6 +52,32 @@ NOW = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
 START = datetime(2026, 9, 10, 17, tzinfo=UTC)
 END = START + timedelta(hours=1)
 FAN_ID = "beestat:zone_a_fan_runtime_hours_hourly_v2"
+LEGACY_FAN_ID = FAN_ID.removesuffix("_hourly_v2")
+LEGACY_COOL_ID = "beestat:zone_a_cool_runtime_hours"
+LEGACY_VOC_ID = "beestat:room_voc_concentration"
+_NATIVE_STORE_WRITE = Store._async_write_data
+
+
+@pytest.fixture
+async def native_hourly_hass(recorder_mock, freezer):
+    """Let Recorder configure its disposable database before HA is constructed."""
+
+    hass = recorder_mock.hass
+    freezer.move_to(NOW)
+    await hass.async_start()
+    return hass
+
+
+def _partition(identity, *, selected=(), blocked=None):
+    resources = frozenset(identity["resources"])
+    hourly = frozenset(selected)
+    return WriterPartition(
+        frozenset(key.removesuffix("_hourly_v2") for key in resources - hourly),
+        hourly,
+        frozenset(key.removesuffix("_hourly_v2") for key in hourly),
+        bool(hourly),
+        blocked,
+    )
 
 
 def _rows(start=START, **changes):
@@ -55,6 +97,11 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=NOW)
     manager = Mock(
         async_mode=AsyncMock(return_value=mode),
+        async_writer_partition=AsyncMock(
+            side_effect=lambda identity: _partition(
+                identity, selected=identity["resources"] if mode == "hourly" else ()
+            )
+        ),
         async_reconcile=AsyncMock(),
         async_import=AsyncMock(
             return_value={
@@ -80,6 +127,416 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
     entry.runtime_data = SimpleNamespace(coordinator=coordinator, importer=importer)
     entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry, coordinator, client, importer, manager
+
+
+def _mixed_runtime(hass, freezer, monkeypatch):
+    entry, coordinator, client, importer, manager = _runtime(hass, freezer, monkeypatch)
+    sensor = ConfiguredSensor(
+        10, "room", "Room", 1, "zone_a", False, False, False, True
+    )
+    coordinator.data = replace(
+        coordinator.data,
+        config=BeestatConfig(coordinator.data.config.thermostats, (sensor,)),
+        sensor_rows=({"id": 10, "thermostat_id": 1},),
+        summary_rows=(
+            {
+                "thermostat_id": 1,
+                "date": "2026-09-10",
+                "sum_fan": 3600,
+                "sum_compressor_cool_1": 7200,
+            },
+        ),
+        summary_rows_full=True,
+    )
+    client.async_read_runtime_sensor.return_value = [
+        {"sensor_id": 10, "timestamp": START.isoformat(), "voc_concentration": 123}
+    ]
+    coordinator.async_refresh_runtime.side_effect = lambda **_kwargs: coordinator.data
+    manager.async_writer_partition.side_effect = lambda identity: _partition(
+        identity, selected=(FAN_ID,)
+    )
+    return entry, coordinator, client, importer, manager
+
+
+async def test_partial_selection_preserves_native_legacy_fan_and_continues_cool_voc(
+    native_hourly_hass, freezer, monkeypatch, tmp_path
+):
+    """One real journal/Recorder owner partitions actual builder output by quantity."""
+
+    hass = native_hourly_hass
+    entry, coordinator, _client, importer, _mock_manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    store = HourlyStore(hass, entry.entry_id)
+    native = store._store
+    adapter = HourlyRecorder(hass)
+    manager = HourlyImportManager(hass, entry, store=store, recorder=adapter)
+    importer.hourly = manager
+    with (
+        patch.object(native, "path", str(tmp_path / "partition-journal.json")),
+        patch.object(native, "_async_write_data", _NATIVE_STORE_WRITE.__get__(native)),
+    ):
+        prepared = await importer._async_prepare_import(
+            coordinator.data,
+            lookback_days=1,
+            force_full_summary=True,
+            rebuild_start=None,
+            rebuild_end=None,
+            thermostat_id=None,
+            temporal_context=coordinator.capture_temporal_context(),
+        )
+        daily_fan = next(
+            item for item in prepared.series if item.statistic_id == LEGACY_FAN_ID
+        )
+        daily_start = daily_fan.statistics[0]["start"]
+        adapter.submit(
+            daily_fan.metadata,
+            (HourlyStatisticRow(daily_start, state=7.0, sum=7.0),),
+        )
+        before = await adapter.async_snapshot(LEGACY_FAN_ID, daily_start)
+        selection = {
+            "epoch_start": START,
+            "statistic_ids": (FAN_ID,),
+            "expected_revision": 0,
+        }
+        preview = await importer.async_select_hourly_statistics(**selection)
+        await importer.async_select_hourly_statistics(
+            **selection, preview_digest=preview["preview_digest"]
+        )
+        result = await importer.async_import_statistics(
+            skip_sync=True, force_full_summary=True
+        )
+
+        assert await adapter.async_snapshot(LEGACY_FAN_ID, daily_start) == before
+        hourly = await adapter.async_snapshot(FAN_ID, START)
+        cooling = await adapter.async_snapshot(LEGACY_COOL_ID, daily_start)
+        voc = await adapter.async_snapshot(LEGACY_VOC_ID, daily_start)
+        assert hourly.rows == (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+        assert cooling.rows == (HourlyStatisticRow(daily_start, state=2.0, sum=2.0),)
+        assert voc.rows == (
+            HourlyStatisticRow(daily_start, mean=123.0, min=123.0, max=123.0),
+        )
+        original_voc = next(
+            item for item in prepared.series if item.statistic_id == LEGACY_VOC_ID
+        )
+        assert (
+            voc.metadata["unit_of_measurement"]
+            == original_voc.metadata["unit_of_measurement"]
+        )
+        assert voc.metadata["unit_class"] == original_voc.metadata["unit_class"]
+        assert result.summary_mode == "mixed"
+        assert result.hourly_imported_rows == 1
+        assert result.legacy_imported_rows >= 2
+        assert LEGACY_FAN_ID not in result.latest_start_by_statistic_id
+        assert LEGACY_VOC_ID in result.latest_start_by_statistic_id
+        assert await store.async_load() is not None
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize(
+    ("blocked_at", "reason"),
+    [
+        ("selection_pending", "selection_pending"),
+        ("async_reconcile", "hourly_reconciliation_unverified"),
+        ("async_import", "hourly_effect_unverified"),
+    ],
+)
+async def test_known_hourly_failure_continues_only_unselected_legacy_quantities(
+    hass, freezer, monkeypatch, blocked_at, reason
+):
+    entry, coordinator, _client, importer, manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    if blocked_at == "selection_pending":
+        manager.async_writer_partition.side_effect = lambda identity: _partition(
+            identity, selected=(FAN_ID,), blocked="selection_pending"
+        )
+    elif blocked_at == "async_reconcile":
+        manager.async_reconcile.side_effect = HourlyReconciliationError(
+            "Unverified prior effect"
+        )
+    else:
+        manager.async_import.side_effect = HourlyRecorderError("Unverified effect")
+    monkeypatch.setattr(
+        importer,
+        "_async_existing_detailed_statistic_ids",
+        AsyncMock(return_value=frozenset()),
+    )
+    write = Mock()
+    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    result = await importer.async_import_statistics(
+        skip_sync=True, force_full_summary=True
+    )
+    written = {
+        call.args[1]["statistic_id"]: call.args[2] for call in write.call_args_list
+    }
+    assert LEGACY_FAN_ID not in written
+    assert {LEGACY_COOL_ID, LEGACY_VOC_ID} <= written.keys()
+    assert written[LEGACY_COOL_ID][0]["sum"] == 2.0
+    assert written[LEGACY_VOC_ID][0]["mean"] == 123.0
+    assert result.hourly_blocked_reason == reason
+    assert result.hourly_imported_rows is None
+    assert result.legacy_imported_rows == sum(len(rows) for rows in written.values())
+    assert coordinator.last_import_partial is True
+    assert coordinator.last_import_writers["hourly_blocked_reason"] == reason
+    if blocked_at != "async_import":
+        manager.async_import.assert_not_awaited()
+    await entry._async_process_on_unload(hass)
+
+
+async def test_unverifiable_repartition_after_hourly_failure_blocks_all_legacy_writes(
+    hass, freezer, monkeypatch
+):
+    entry, coordinator, _client, importer, manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    partition = _partition(
+        integration._writer_identity(entry, coordinator.data), selected=(FAN_ID,)
+    )
+    manager.async_writer_partition.side_effect = [
+        partition,
+        partition,
+        HourlyImportError("Journal corrupt after failure"),
+    ]
+    manager.async_import.side_effect = HourlyRecorderError("Unverified effect")
+    prepare = AsyncMock(
+        side_effect=AssertionError("Legacy source work must remain blocked")
+    )
+    monkeypatch.setattr(importer, "_async_prepare_import", prepare)
+    write = Mock()
+    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    with pytest.raises(HourlyImportError, match="Journal corrupt after failure"):
+        await importer.async_import_statistics(skip_sync=True)
+    prepare.assert_not_awaited()
+    write.assert_not_called()
+    assert coordinator.last_import_success_at is None
+    await entry._async_process_on_unload(hass)
+
+
+async def test_hourly_settings_change_reprepares_and_passes_final_eligible_scope(
+    hass, freezer, monkeypatch
+):
+    """A selected sensor disabled during acquisition is never written from the old view."""
+
+    entry, coordinator, client, importer, manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    temperature_id = "beestat:room_temperature_hourly_v2"
+    legacy_temperature_id = temperature_id.removesuffix("_hourly_v2")
+    coordinator.data = replace(
+        coordinator.data,
+        config=replace(
+            coordinator.data.config,
+            sensors=(
+                replace(coordinator.data.config.sensors[0], include_temperature=True),
+            ),
+        ),
+    )
+
+    def partition(identity):
+        current = frozenset(identity["resources"])
+        selected = current & {temperature_id}
+        return WriterPartition(
+            frozenset(key.removesuffix("_hourly_v2") for key in current - selected),
+            selected,
+            frozenset({legacy_temperature_id}),
+            True,
+        )
+
+    manager.async_writer_partition.side_effect = partition
+    source_reads = 0
+
+    async def sensor_rows(*_args):
+        nonlocal source_reads
+        source_reads += 1
+        if source_reads == 1:
+            coordinator.async_set_updated_data(
+                replace(
+                    coordinator.data,
+                    config=replace(
+                        coordinator.data.config,
+                        sensors=(
+                            replace(
+                                coordinator.data.config.sensors[0],
+                                include_temperature=False,
+                            ),
+                        ),
+                    ),
+                )
+            )
+        return [
+            {
+                "sensor_id": 10,
+                "timestamp": row["timestamp"],
+                "temperature": 700,
+                "voc_concentration": 123,
+            }
+            for row in _rows()
+        ]
+
+    client.async_read_runtime_sensor.side_effect = sensor_rows
+    manager.async_import.return_value = {
+        "imported_series": 0,
+        "imported_rows": 0,
+        "latest_start_by_statistic_id": {},
+    }
+    monkeypatch.setattr(
+        importer,
+        "_async_existing_detailed_statistic_ids",
+        AsyncMock(return_value=frozenset()),
+    )
+    write = Mock()
+    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    result = await importer.async_import_statistics(
+        skip_sync=True, force_full_summary=True
+    )
+    assert source_reads == 3  # stale hourly read, reprepared hourly read, legacy read
+    manager.async_import.assert_awaited_once()
+    submission = manager.async_import.await_args
+    assert temperature_id not in submission.kwargs["eligible_resources"]
+    assert not any(item.statistic_id == temperature_id for item in submission.args[0])
+    written = {call.args[1]["statistic_id"] for call in write.call_args_list}
+    assert LEGACY_VOC_ID in written
+    assert legacy_temperature_id not in written
+    assert result.hourly_imported_rows == 0
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("change", ["runtime_config", "timezone"])
+async def test_legacy_reprepares_changed_runtime_or_timezone_before_any_write(
+    hass, freezer, monkeypatch, change
+):
+    entry, coordinator, _client, importer, manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    manager.async_writer_partition.side_effect = lambda identity: _partition(
+        identity, selected=(FAN_ID,), blocked="selection_pending"
+    )
+    monkeypatch.setattr(
+        importer,
+        "_async_existing_detailed_statistic_ids",
+        AsyncMock(return_value=frozenset()),
+    )
+    original_prepare = importer._async_prepare_import
+    prepared_snapshots = []
+
+    async def prepare(data, **kwargs):
+        prepared = await original_prepare(data, **kwargs)
+        prepared_snapshots.append(prepared)
+        if len(prepared_snapshots) == 1:
+            if change == "runtime_config":
+                coordinator.async_set_updated_data(
+                    replace(
+                        coordinator.data,
+                        config=replace(
+                            coordinator.data.config,
+                            sensors=(
+                                replace(
+                                    coordinator.data.config.sensors[0],
+                                    include_voc=False,
+                                ),
+                            ),
+                        ),
+                    )
+                )
+            else:
+                coordinator.async_update_local_timezone(ZoneInfo("UTC"))
+        return prepared
+
+    monkeypatch.setattr(importer, "_async_prepare_import", prepare)
+    writes = []
+
+    def write(_hass, metadata, rows):
+        assert importer._lock.locked()
+        assert len(prepared_snapshots) == 2
+        writes.append((metadata["statistic_id"], list(rows)))
+
+    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    await importer.async_import_statistics(skip_sync=True, force_full_summary=True)
+    assert len(prepared_snapshots) == 2
+    assert {key for key, _rows_written in writes} == {
+        item.statistic_id for item in prepared_snapshots[-1].series
+    }
+    assert LEGACY_FAN_ID not in {key for key, _rows_written in writes}
+    if change == "runtime_config":
+        assert any(
+            item.statistic_id == LEGACY_VOC_ID for item in prepared_snapshots[0].series
+        )
+        assert LEGACY_VOC_ID not in {key for key, _rows_written in writes}
+    else:
+        first = next(
+            item
+            for item in prepared_snapshots[0].series
+            if item.statistic_id == LEGACY_COOL_ID
+        )
+        final = next(rows for key, rows in writes if key == LEGACY_COOL_ID)
+        assert first.statistics[0]["start"].astimezone(UTC).hour == 4
+        assert final[0]["start"].astimezone(UTC).hour == 0
+    await entry._async_process_on_unload(hass)
+
+
+async def test_legacy_planner_excludes_frozen_inventory_latest_seeds_and_new_stages(
+    native_hourly_hass, freezer, monkeypatch
+):
+    """A selected legacy counter cannot pin or invalidate another counter's window."""
+
+    hass = native_hourly_hass
+    entry, coordinator, client, importer, _manager = _mixed_runtime(
+        hass, freezer, monkeypatch
+    )
+    cool_stage_1 = "beestat:zone_a_cool_stage_1_runtime_hours"
+    cool_stage_2 = "beestat:zone_a_cool_stage_2_runtime_hours"
+    allowed = frozenset({LEGACY_COOL_ID, cool_stage_1})
+    with patch.object(
+        integration, "get_metadata", wraps=integration.get_metadata
+    ) as metadata:
+        existing = await importer._async_existing_detailed_statistic_ids(
+            coordinator.data, allowed_legacy_ids=allowed
+        )
+    assert existing == frozenset()
+    assert metadata.call_args.kwargs["statistic_ids"] == {cool_stage_1}
+
+    async def latest(statistic_ids):
+        assert set(statistic_ids) == allowed
+        return dict.fromkeys(statistic_ids, START)
+
+    async def seeds(statistic_ids, *, seed_day, window_start, local_tz):
+        assert set(statistic_ids) == allowed
+        assert seed_day == window_start - timedelta(days=1)
+        return {
+            key: CumulativeStatisticSeed(
+                datetime.combine(seed_day, datetime.min.time(), local_tz), 10.0, 10.0
+            )
+            for key in statistic_ids
+        }
+
+    monkeypatch.setattr(
+        importer, "_async_latest_cumulative_starts", AsyncMock(side_effect=latest)
+    )
+    monkeypatch.setattr(
+        importer, "_async_cumulative_seeds", AsyncMock(side_effect=seeds)
+    )
+    full = AsyncMock(side_effect=AssertionError("Frozen IDs caused a full baseline"))
+    monkeypatch.setattr(importer, "_async_full_summary_rows", full)
+    client.async_read_runtime_thermostat_summary = AsyncMock(
+        return_value=[
+            {**coordinator.data.summary_rows[0], "sum_compressor_cool_2": 3600}
+        ]
+    )
+    plan = await importer._async_summary_import_plan(
+        coordinator.data,
+        force_full_summary=False,
+        temporal_context=coordinator.capture_temporal_context(),
+        existing_statistic_ids=existing,
+        allowed_legacy_ids=allowed,
+    )
+    assert plan.mode == "windowed"
+    assert plan.window_start == date(2026, 9, 3)
+    assert set(plan.seeds) == allowed
+    assert {LEGACY_FAN_ID, cool_stage_2}.isdisjoint(plan.seeds)
+    assert plan.rows[0]["sum_compressor_cool_2"] == 3600
+    full.assert_not_awaited()
+    await entry._async_process_on_unload(hass)
 
 
 async def test_legacy_mode_keeps_existing_preparation_and_daily_writer(
@@ -126,10 +583,10 @@ async def test_hourly_route_reconciles_before_source_and_writes_under_entry_lock
     )
     order = []
 
-    async def mode():
+    async def partition(identity):
         assert importer._lock.locked()
-        order.append("mode")
-        return "hourly"
+        order.append("partition")
+        return _partition(identity, selected=identity["resources"])
 
     async def reconcile():
         assert importer._lock.locked()
@@ -139,7 +596,7 @@ async def test_hourly_route_reconciles_before_source_and_writes_under_entry_lock
         order.append("source")
         return coordinator.data
 
-    async def write(series, identity, *, ordinary_start):
+    async def write(series, identity, *, ordinary_start, eligible_resources):
         assert importer._lock.locked()
         assert ordinary_start == END - timedelta(days=1)
         order.append("verified_write")
@@ -152,33 +609,46 @@ async def test_hourly_route_reconciles_before_source_and_writes_under_entry_lock
             "sensor_id": None,
             "quantity": "fan_runtime_hours",
         }
+        assert eligible_resources[FAN_ID] == identity["resources"][FAN_ID]
         return {
             "imported_series": 1,
             "imported_rows": 1,
             "latest_start_by_statistic_id": {},
         }
 
-    manager.async_mode.side_effect = mode
+    manager.async_writer_partition.side_effect = partition
     manager.async_reconcile.side_effect = reconcile
     manager.async_import.side_effect = write
     coordinator.async_refresh_runtime.side_effect = refresh
     legacy = AsyncMock(side_effect=AssertionError("Legacy preparation reached"))
     monkeypatch.setattr(importer, "_async_prepare_import", legacy)
     result = await importer.async_import_statistics(skip_sync=True)
-    assert order == ["mode", "reconcile", "source", "verified_write"]
+    assert order == [
+        "partition",
+        "reconcile",
+        "source",
+        "partition",
+        "verified_write",
+        "partition",
+    ]
     assert result.summary_mode == "hourly"
     assert result.imported_rows == 1
     await entry._async_process_on_unload(hass)
     manager.close.assert_called_once()
 
 
-@pytest.mark.parametrize("blocked_at", ["async_mode", "async_reconcile"])
+@pytest.mark.parametrize("blocked_at", ["async_writer_partition", "async_reconcile"])
 async def test_blocked_hourly_admission_does_not_refresh_source(
     hass, freezer, monkeypatch, blocked_at
 ):
     entry, coordinator, client, importer, manager = _runtime(hass, freezer, monkeypatch)
-    getattr(manager, blocked_at).side_effect = RuntimeError("Retained state conflict")
-    with pytest.raises(RuntimeError, match="Retained state conflict"):
+    error = (
+        HourlyImportError("Retained state conflict")
+        if blocked_at == "async_writer_partition"
+        else RuntimeError("Retained state conflict")
+    )
+    getattr(manager, blocked_at).side_effect = error
+    with pytest.raises(type(error), match="Retained state conflict"):
         await importer.async_import_statistics(skip_sync=True)
     coordinator.async_refresh_runtime.assert_not_awaited()
     client.async_read_runtime_thermostat.assert_not_awaited()
@@ -325,6 +795,7 @@ async def test_unmapped_sensor_remains_in_unavailable_preview_denominator(
         config=BeestatConfig(coordinator.data.config.thermostats, (sensor,)),
         sensor_rows=({"sensor_id": 10},),
     )
+    coordinator.data = data
     prepared = await importer._async_prepare_hourly(
         data, lookback_days=1, epoch_start=START
     )

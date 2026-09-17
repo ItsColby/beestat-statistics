@@ -95,7 +95,7 @@ jobs:
   home_assistant_current:
     needs: plan
     if: ${{ needs.plan.outputs.current == 'true' }}
-    name: Home Assistant current integration tests (Core 2026.9.1)
+    name: Home Assistant current integration tests (Core 2026.9.2)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

@@ -9,6 +9,9 @@
     "get_configuration": {
       "service": "mdi:code-json"
     },
+    "get_raw_points": {
+      "service": "mdi:code-json"
+    },
     "import_statistics": {
       "service": "mdi:database-import"
     },

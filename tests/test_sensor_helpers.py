@@ -319,7 +319,6 @@ class SensorHelpersTest(unittest.TestCase):
         snapshot = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
         repeated = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
 
-        self.assertIsNotNone(snapshot)
         assert snapshot is not None
         self.assertEqual(snapshot, repeated)
         self.assertEqual(snapshot["changed_at"], changed_at.isoformat())
@@ -339,7 +338,6 @@ class SensorHelpersTest(unittest.TestCase):
         )
         changed = self.sensor._filter_forecast_snapshot_attributes(coordinator, 1)
 
-        self.assertIsNotNone(changed)
         assert changed is not None
         self.assertNotEqual(changed["forecast_revision"], original_revision)
 

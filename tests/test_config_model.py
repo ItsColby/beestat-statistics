@@ -998,14 +998,12 @@ class ConfigModelTest(unittest.TestCase):
             config_data={},
         )
 
-        self.assertTrue(
-            all(thermostat.device_id is None for thermostat in config.thermostats)
-        )
-        self.assertTrue(
-            all(
-                thermostat.climate_entity_id is None
-                for thermostat in config.thermostats
-            )
+        self.assertCountEqual(
+            [
+                (item.thermostat_id, item.device_id, item.climate_entity_id)
+                for item in config.thermostats
+            ],
+            [(1001, None, None), (1002, None, None)],
         )
 
     def test_named_thermostat_match_wins_over_competing_strong_fallback(
@@ -1078,9 +1076,12 @@ class ConfigModelTest(unittest.TestCase):
             config_data={},
         )
 
-        self.assertTrue(all(sensor.device_id is None for sensor in config.sensors))
-        self.assertTrue(
-            all(sensor.temperature_entity_id is None for sensor in config.sensors)
+        self.assertCountEqual(
+            [
+                (item.sensor_id, item.device_id, item.temperature_entity_id)
+                for item in config.sensors
+            ],
+            [(2001, None, None), (2002, None, None)],
         )
 
     def test_explicit_mapping_reserves_device_from_automatic_match(self) -> None:
@@ -1195,7 +1196,10 @@ class ConfigModelTest(unittest.TestCase):
             config_data=config_data,
         )
 
-        self.assertTrue(all(item.device_id is None for item in config.thermostats))
+        self.assertCountEqual(
+            [(item.thermostat_id, item.device_id) for item in config.thermostats],
+            [(1001, None), (1002, None)],
+        )
         conflicts = config_model.configured_mapping_device_conflicts(
             config_data,
             FakeEntityRegistry(entries),
@@ -1292,7 +1296,10 @@ class ConfigModelTest(unittest.TestCase):
             config_data=config_data,
         )
 
-        self.assertTrue(all(item.device_id is None for item in config.thermostats))
+        self.assertCountEqual(
+            [(item.thermostat_id, item.device_id) for item in config.thermostats],
+            [(1001, None), (1002, None)],
+        )
         self.assertEqual(
             config_model.configured_mapping_device_conflicts(
                 config_data,
@@ -1398,7 +1405,10 @@ class ConfigModelTest(unittest.TestCase):
             config_data=config_data,
         )
 
-        self.assertTrue(all(item.device_id is None for item in config.sensors))
+        self.assertCountEqual(
+            [(item.sensor_id, item.device_id) for item in config.sensors],
+            [(2001, None), (2002, None)],
+        )
         self.assertEqual(
             config_model.configured_mapping_device_conflicts(
                 config_data,

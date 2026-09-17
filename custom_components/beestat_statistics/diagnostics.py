@@ -144,6 +144,14 @@ async def async_get_config_entry_diagnostics(
             )
             if runtime
             else None,
+            "last_import_writers": {
+                key: _redacted_text(value, redaction_values)
+                if isinstance(value, str)
+                else value
+                for key, value in runtime.coordinator.last_import_writers.items()
+            }
+            if runtime and runtime.coordinator.last_import_writers is not None
+            else None,
             "last_filter_alert_dismiss_attempt_at": _isoformat(
                 runtime.coordinator.last_filter_alert_dismiss_attempt_at
             )

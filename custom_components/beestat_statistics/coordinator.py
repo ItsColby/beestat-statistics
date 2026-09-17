@@ -243,6 +243,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days: int | None = None
         self.last_import_summary_fallback_reason: str | None = None
         self.last_import_cumulative_seed_count: int | None = None
+        self.last_import_writers: dict[str, int | str | None] | None = None
         self.last_filter_alert_dismiss_attempt_at: datetime | None = None
         self.last_filter_alert_dismiss_thermostat_id: int | None = None
         self.last_filter_alert_dismiss_matched: int | None = None
@@ -670,6 +671,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_fallback_reason: str | None,
         cumulative_seed_count: int,
         coverage_incomplete: bool = False,
+        writer_result: dict[str, int | str | None] | None = None,
     ) -> None:
         """Record the latest Recorder import metrics for diagnostic sensors."""
 
@@ -692,6 +694,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = summary_overlap_days
         self.last_import_summary_fallback_reason = summary_fallback_reason
         self.last_import_cumulative_seed_count = cumulative_seed_count
+        self.last_import_writers = (
+            dict(writer_result) if writer_result is not None else None
+        )
         self.async_update_listeners()
 
     @callback
@@ -704,6 +709,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = None
         self.last_import_summary_fallback_reason = "import_failed"
         self.last_import_cumulative_seed_count = None
+        self.last_import_writers = None
         self._async_record_error(err)
 
     async def _async_fetch_runtime_data(

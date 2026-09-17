@@ -269,17 +269,18 @@ class FilterRuntimeTest(unittest.TestCase):
     def test_recent_rate_excludes_current_missing_and_incomplete_days(self) -> None:
         rate = runtime.build_recent_runtime_rate(
             [
+                {"date": "2026-07-03", "count": 144, "sum_fan": 18000},
                 {"date": "2026-07-04", "count": 288, "sum_fan": 3600},
                 {"date": "2026-07-05", "count": 288, "sum_fan": 7200},
                 {"date": "2026-07-06", "count": 144, "sum_fan": 10000},
             ],
             today=date(2026, 7, 6),
             local_tz=ZoneInfo("UTC"),
-            window_days=3,
+            window_days=4,
         )
         self.assertEqual(rate.hours_per_day, 1.5)
         self.assertEqual(rate.complete_days, 2)
-        self.assertEqual(rate.excluded_days, 1)
+        self.assertEqual(rate.excluded_days, 2)
         self.assertEqual(rate.window_end, date(2026, 7, 5))
 
     def test_dst_day_completeness_uses_elapsed_utc_slots(self) -> None:

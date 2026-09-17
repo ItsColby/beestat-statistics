@@ -160,7 +160,6 @@ class PublicSafetyGuardTests(unittest.TestCase):
             count, failures = run_guard(root)
             self.assertEqual(1, count)
             self.assertEqual(["<sensitive path>: GitHub token in filename"], failures)
-            self.assertNotIn(filename, str(failures))
 
     def test_git_enumeration_failure_cannot_fall_back_to_filtered_export(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

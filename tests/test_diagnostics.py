@@ -206,6 +206,11 @@ class DiagnosticsTest(unittest.TestCase):
                 last_import_summary_overlap_days=7,
                 last_import_summary_fallback_reason=None,
                 last_import_cumulative_seed_count=5,
+                last_import_writers={
+                    "legacy_imported_rows": 2,
+                    "hourly_imported_rows": 0,
+                    "hourly_blocked_reason": "secret-key",
+                },
                 last_filter_alert_dismiss_attempt_at=None,
                 last_filter_alert_dismiss_thermostat_id=1001,
                 last_filter_alert_dismiss_matched=1,
