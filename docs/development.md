@@ -78,8 +78,8 @@ name instead of `all` in the shell command.
 The minimum is Core `2026.8.0` in
 [`requirements-ha-test.txt`](../requirements-ha-test.txt), paired with harness
 `pytest-homeassistant-custom-component==0.13.354`. The current target is Core
-`2026.9.1` in [`requirements-ha-current.txt`](../requirements-ha-current.txt),
-paired with harness `0.13.364`. Each lane installs Core after its matching
+`2026.9.2` in [`requirements-ha-current.txt`](../requirements-ha-current.txt),
+paired with harness `0.13.365`. Each lane installs Core after its matching
 harness and runs `python -m pip check` after the final dependency installation.
 The HA environments require Linux and Python 3.14.2 or later; native Windows
 Python cannot replace them. Hosted jobs select Python 3.14.

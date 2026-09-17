@@ -3,6 +3,49 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.17.1
+
+- Add opt-in qualified hourly history for runtime, degree days and measurements, with stable physical identities and a versioned logical query contract. Runtime and degree-day amounts use native arithmetic means rather than cumulative sums; measurements retain actual sample mean, minimum and maximum.
+- Admit immutable original source chunks through Home Assistant's authenticated upload route, including the native REST raw-export envelope. Retain the complete original response bytes and validate the nested export's identity, bounds and completeness. Preserve ordered corrections, explicit tombstones and qualified archive coverage; leave missing or conflicting observations unavailable.
+- Add read-only history planning and explicit application of an exact reviewed plan. One durable writer reserves each selected quantity, applies bounded Recorder batches, verifies native rows and metadata, and resumes interrupted work from retained intent.
+- Refresh adopted quantities through the existing import cadence and expose committed revisions to compatible consumers. Logical queries distinguish complete hourly observations, provisional or partial periods, and eligible legacy daily fallback.
+- Preserve existing daily history, v2 selections and unselected legacy writers. Installing this release does not adopt quantities or repair history. Hourly VOC remains unavailable until its source-unit contract is established.
+- Select validation jobs when their commands, action inputs or environment settings change. Shared workflow environment/default changes select their affected lanes; YAML comments and display names do not trigger unrelated product lanes.
+
+Home Assistant Core 2026.8.0 remains the minimum; the current tested lane is Core 2026.9.2. Existing configuration entries remain version 1.5. The integration now declares Home Assistant's built-in `file_upload` dependency.
+
+Hourly adoption and historical repair require separately reviewed source coverage, compatible consumers and a consistent recovery set. After v3 adoption, restoring component code alone does not restore the entry marker, journal, immutable evidence, Recorder state and consumer bindings.
+
+## Beestat Statistics v2026.9.17
+
+- Add explicit hourly successor statistics with per-quantity UTC epochs,
+  source-quality checks, coverage, durable checkpoints and recoverable Recorder
+  writes. Existing daily history remains in place. Installing the release does
+  not select quantities or migrate them to hourly statistics.
+- Preserve the legacy writer for enabled, unselected quantities while selected
+  quantities retain exclusive hourly ownership across renames, disabled settings,
+  interrupted work and reloads. Report partial progress and blocked hourly work
+  explicitly. VOC continues through its existing legacy path; hourly VOC remains
+  unavailable until its source-unit contract is established.
+- Add the admin-only `get_raw_points` response action for bounded, read-only
+  thermostat or sensor history acquisition. Preserve source order, duplicates,
+  tombstones and response provenance, and reject oversized, incomplete or
+  malformed responses without inventing complete history.
+- Preserve connection form input after validation errors, honor cleared optional
+  mappings, and require confirmation when a changed connection cannot safely
+  establish account continuity. Improve recovery from interrupted setup.
+- Reject invalid absolute temperatures before building imported statistics.
+  Missing or rejected observations remain unknown.
+- Support Home Assistant Core 2026.9.2 device-registry results while preserving
+  exclusive device ownership. The minimum remains Core 2026.8.0, and existing
+  configuration entries remain version 1.5.
+
+Hourly selection and historical repair are separate explicit operations. Review
+source coverage, recovery state and consumers before adopting a quantity. A
+selection preview can reconcile pending work; it is not a read-only history
+export. Downgrading code after hourly adoption alone does not restore consistent
+journal, Recorder and legacy-writer state.
+
 ## Beestat Statistics v2026.9.10.4
 
 - Preserve previously imported stage and accessory series when Beestat corrects

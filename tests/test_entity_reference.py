@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -293,10 +294,10 @@ class EntityReferenceTest(unittest.TestCase):
                 None,
             ]
         }
-        self.assertEqual(
-            entity_reference.migrate_option_entity_references(registry, options),
-            options,
-        )
+        expected = deepcopy(options)
+        migrated = entity_reference.migrate_option_entity_references(registry, options)
+        self.assertEqual(migrated, expected)
+        self.assertEqual(options, expected)
 
 
 if __name__ == "__main__":

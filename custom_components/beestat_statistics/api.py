@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import aiohttp
 
@@ -35,6 +36,43 @@ class BeestatPermanentError(_BeestatNonRetryableError):
     """Raised when retries or narrower history windows cannot correct the error."""
 
 
+@dataclass(frozen=True, slots=True)
+class BeestatReadAttempt:
+    """Safe evidence for one transport attempt, without URL or remote error text."""
+
+    attempt: int
+    http_status: int | None
+    response_bytes: int
+    outcome: str
+
+
+@dataclass(slots=True)
+class _ReadTrace:
+    """Per-call receipt; never stored on the shared authenticated client."""
+
+    attempts: list[BeestatReadAttempt] = field(default_factory=list)
+    response_bytes: int = 0
+    pagination_indicated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BeestatRawResponse:
+    """Unnormalized point data with bounded, credential-free transport evidence."""
+
+    data: object
+    attempts: tuple[BeestatReadAttempt, ...]
+    response_bytes: int
+    pagination_indicated: bool
+
+
+class BeestatRawReadError(BeestatApiError):
+    """A failed raw read with safe attempt evidence and no substitute rows."""
+
+    def __init__(self, message: str, attempts: tuple[BeestatReadAttempt, ...]) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+
+
 def _reject_http_redirect(status: int, resource: str, method: str) -> None:
     """Fail closed instead of forwarding API-key query parameters."""
 
@@ -42,6 +80,18 @@ def _reject_http_redirect(status: int, resource: str, method: str) -> None:
         raise BeestatPermanentError(
             f"{resource}.{method} refused HTTP redirect {status}"
         )
+
+
+def _check_http_status(status: int, resource: str, method: str) -> None:
+    if status in (401, 403):
+        raise BeestatAuthError(
+            f"{resource}.{method} authentication failed with HTTP {status}"
+        )
+    if 400 <= status < 500 and status not in _RETRYABLE_HTTP_STATUSES:
+        raise BeestatPermanentError(f"{resource}.{method} returned HTTP {status}")
+    _reject_http_redirect(status, resource, method)
+    if status >= 400:
+        raise BeestatApiError(f"{resource}.{method} returned HTTP {status}")
 
 
 def exception_fingerprint(err: BaseException) -> str:
@@ -151,7 +201,9 @@ def _normalize_rows(
     raise BeestatApiError(f"Unexpected response data shape: {type(data).__name__}")
 
 
-def _unwrap_response(payload: Any, resource: str, method: str) -> Any:
+def _unwrap_response(
+    payload: Any, resource: str, method: str, *, require_envelope_data: bool = False
+) -> Any:
     if not isinstance(payload, dict):
         return payload
     if payload.get("error"):
@@ -169,7 +221,47 @@ def _unwrap_response(payload: Any, resource: str, method: str) -> Any:
         raise BeestatApiError(f"{resource}.{method} returned an unsuccessful response")
     if "data" in payload:
         return payload["data"]
+    if require_envelope_data and "success" in payload:
+        raise BeestatPermanentError(
+            f"{resource}.{method} returned a success envelope without data"
+        )
     return payload
+
+
+def _record_attempt(
+    trace: _ReadTrace | None,
+    attempt: int,
+    status: int | None,
+    outcome: str,
+    payload: object = None,
+) -> None:
+    if trace is not None:
+        if outcome == "success":
+            trace.pagination_indicated = _pagination_indicated(payload)
+        trace.attempts.append(
+            BeestatReadAttempt(attempt, status, trace.response_bytes, outcome)
+        )
+
+
+def _read_failure_kind(err: Exception) -> str:
+    if isinstance(err, TimeoutError):
+        return "timeout"
+    if isinstance(err, aiohttp.ClientError):
+        return "network_failure"
+    if isinstance(err, ValueError):
+        return "invalid_json"
+    return "provider_failure"
+
+
+def _pagination_indicated(payload: object) -> bool:
+    """Notice pagination without exposing opaque tokens or assuming completeness."""
+
+    if not isinstance(payload, dict) or "data" not in payload:
+        return False
+    return any(
+        payload.get(key) not in (None, False, "", 0)
+        for key in ("has_more", "next", "next_page", "next_cursor", "truncated")
+    )
 
 
 class BeestatClient:
@@ -234,6 +326,25 @@ class BeestatClient:
     ) -> Any:
         """Call Beestat and return the unnormalized response data."""
 
+        return await self._async_call_raw(resource, method, arguments)
+
+    async def _async_call_raw(
+        self,
+        resource: str,
+        method: str,
+        arguments: dict[str, Any] | None,
+        *,
+        max_response_bytes: int | None = None,
+        trace: _ReadTrace | None = None,
+    ) -> Any:
+        """Run the common transport with an optional isolated bounded receipt."""
+
+        limit = self._max_response_bytes
+        if max_response_bytes is not None:
+            if max_response_bytes <= 0:
+                raise ValueError("max_response_bytes must be positive")
+            limit = min(limit, max_response_bytes)
+
         params: dict[str, str] = {
             "api_key": self._api_key,
             "resource": resource,
@@ -244,6 +355,9 @@ class BeestatClient:
 
         last_error: Exception | None = None
         for attempt in range(1, self._retries + 1):
+            status: int | None = None
+            if trace is not None:
+                trace.response_bytes = 0
             try:
                 async with asyncio.timeout(self._timeout):
                     async with self._session.get(
@@ -251,33 +365,23 @@ class BeestatClient:
                         params=params,
                         allow_redirects=False,
                     ) as response:
-                        if response.status in (401, 403):
-                            raise BeestatAuthError(
-                                f"{resource}.{method} authentication failed "
-                                f"with HTTP {response.status}"
-                            )
-                        if (
-                            400 <= response.status < 500
-                            and response.status not in _RETRYABLE_HTTP_STATUSES
-                        ):
-                            raise BeestatPermanentError(
-                                f"{resource}.{method} returned HTTP {response.status}"
-                            )
-                        _reject_http_redirect(response.status, resource, method)
-                        if response.status >= 400:
-                            raise BeestatApiError(
-                                f"{resource}.{method} returned HTTP {response.status}"
-                            )
-                        payload = await self._async_read_json(response)
-                data = _unwrap_response(payload, resource, method)
+                        status = response.status
+                        _check_http_status(response.status, resource, method)
+                        payload = await self._async_read_json(response, limit, trace)
+                data = _unwrap_response(
+                    payload, resource, method, require_envelope_data=trace is not None
+                )
                 if method == "sync" and data is False:
                     raise BeestatApiError(
                         f"{resource}.{method} returned an unsuccessful response"
                     )
+                _record_attempt(trace, attempt, status, "success", payload)
                 return data
             except BeestatAuthError:
+                _record_attempt(trace, attempt, status, "authentication_failed")
                 raise
             except _BeestatNonRetryableError as err:
+                _record_attempt(trace, attempt, status, "non_retryable_failure")
                 raise type(err)(
                     f"Failed Beestat call {resource}.{method}: {self.redact_error(err)}"
                 ) from None
@@ -287,6 +391,7 @@ class BeestatClient:
                 ValueError,
                 BeestatApiError,
             ) as err:
+                _record_attempt(trace, attempt, status, _read_failure_kind(err))
                 last_error = err
                 if attempt == self._retries:
                     break
@@ -301,18 +406,25 @@ class BeestatClient:
             f"Failed Beestat call {resource}.{method}: {detail}"
         ) from None
 
-    async def _async_read_json(self, response: aiohttp.ClientResponse) -> Any:
+    async def _async_read_json(
+        self,
+        response: aiohttp.ClientResponse,
+        limit: int,
+        trace: _ReadTrace | None,
+    ) -> Any:
         """Decode one response without retaining an unbounded remote body."""
 
         content_length = response.content_length
-        if content_length is not None and content_length > self._max_response_bytes:
+        if content_length is not None and content_length > limit:
             raise _BeestatNonRetryableError("Beestat response exceeded the size limit")
 
         chunks: list[bytes] = []
         size = 0
         async for chunk in response.content.iter_chunked(_RESPONSE_CHUNK_BYTES):
             size += len(chunk)
-            if size > self._max_response_bytes:
+            if trace is not None:
+                trace.response_bytes = size
+            if size > limit:
                 raise _BeestatNonRetryableError(
                     "Beestat response exceeded the size limit"
                 )
@@ -370,17 +482,41 @@ class BeestatClient:
             },
         )
 
+    @overload
     async def async_read_runtime_sensor(
         self,
         sensor_id: int,
         start: str,
         end: str,
-    ) -> list[dict[str, Any]]:
+        *,
+        raw_response: Literal[False] = False,
+        max_response_bytes: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    @overload
+    async def async_read_runtime_sensor(
+        self,
+        sensor_id: int,
+        start: str,
+        end: str,
+        *,
+        raw_response: Literal[True],
+        max_response_bytes: int | None = None,
+    ) -> BeestatRawResponse: ...
+
+    async def async_read_runtime_sensor(
+        self,
+        sensor_id: int,
+        start: str,
+        end: str,
+        *,
+        raw_response: bool = False,
+        max_response_bytes: int | None = None,
+    ) -> list[dict[str, Any]] | BeestatRawResponse:
         """Read runtime_sensor rows for one Beestat sensor and timestamp window."""
 
-        return await self.async_call(
+        return await self._async_read_points(
             "runtime_sensor",
-            "read",
             {
                 "attributes": {
                     "sensor_id": sensor_id,
@@ -390,19 +526,45 @@ class BeestatClient:
                     },
                 }
             },
+            raw_response=raw_response,
+            max_response_bytes=max_response_bytes,
         )
+
+    @overload
+    async def async_read_runtime_thermostat(
+        self,
+        thermostat_id: int,
+        start: str,
+        end: str,
+        *,
+        raw_response: Literal[False] = False,
+        max_response_bytes: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    @overload
+    async def async_read_runtime_thermostat(
+        self,
+        thermostat_id: int,
+        start: str,
+        end: str,
+        *,
+        raw_response: Literal[True],
+        max_response_bytes: int | None = None,
+    ) -> BeestatRawResponse: ...
 
     async def async_read_runtime_thermostat(
         self,
         thermostat_id: int,
         start: str,
         end: str,
-    ) -> list[dict[str, Any]]:
+        *,
+        raw_response: bool = False,
+        max_response_bytes: int | None = None,
+    ) -> list[dict[str, Any]] | BeestatRawResponse:
         """Read runtime_thermostat rows for one thermostat and timestamp window."""
 
-        return await self.async_call(
+        return await self._async_read_points(
             "runtime_thermostat",
-            "read",
             {
                 "attributes": {
                     "thermostat_id": thermostat_id,
@@ -412,4 +574,42 @@ class BeestatClient:
                     },
                 }
             },
+            raw_response=raw_response,
+            max_response_bytes=max_response_bytes,
+        )
+
+    async def _async_read_points(
+        self,
+        resource: str,
+        arguments: dict[str, Any],
+        *,
+        raw_response: bool,
+        max_response_bytes: int | None,
+    ) -> list[dict[str, Any]] | BeestatRawResponse:
+        if not raw_response:
+            if max_response_bytes is None:
+                return await self.async_call(resource, "read", arguments)
+            return _normalize_rows(
+                await self._async_call_raw(
+                    resource, "read", arguments, max_response_bytes=max_response_bytes
+                )
+            )
+        trace = _ReadTrace()
+        try:
+            data = await self._async_call_raw(
+                resource,
+                "read",
+                arguments,
+                max_response_bytes=max_response_bytes,
+                trace=trace,
+            )
+        except BeestatApiError as err:
+            raise BeestatRawReadError(
+                self.redact_error(err), tuple(trace.attempts)
+            ) from None
+        return BeestatRawResponse(
+            data,
+            tuple(trace.attempts),
+            trace.response_bytes,
+            trace.pagination_indicated,
         )

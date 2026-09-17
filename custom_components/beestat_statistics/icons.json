@@ -1,6 +1,24 @@
 {
   "services": {
+    "stage_hourly_source": {
+      "service": "mdi:database-import-outline"
+    },
+    "plan_hourly_history": {
+      "service": "mdi:clipboard-search-outline"
+    },
+    "apply_hourly_history": {
+      "service": "mdi:database-check-outline"
+    },
+    "select_hourly_statistics": {
+      "service": "mdi:chart-timeline-variant"
+    },
+    "get_hourly_coverage": {
+      "service": "mdi:chart-box-outline"
+    },
     "get_configuration": {
+      "service": "mdi:code-json"
+    },
+    "get_raw_points": {
       "service": "mdi:code-json"
     },
     "import_statistics": {

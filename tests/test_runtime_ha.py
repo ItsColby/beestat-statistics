@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import types
 from dataclasses import replace
@@ -21,6 +22,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import EntityPlatform
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed_exact,
@@ -55,8 +57,15 @@ from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, 
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
 )
+from custom_components.beestat_statistics.diagnostics import (
+    async_get_config_entry_diagnostics,
+)
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
+from custom_components.beestat_statistics.sensor import (
+    GLOBAL_SENSOR_DESCRIPTIONS,
+    BeestatSensor,
+)
 from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
 from tests.test_api_response import _FakeResponse, _FakeSession
 
@@ -69,6 +78,86 @@ async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
     assert _row_float(42.5) == 42.5
     assert _row_float("NaN") is None
     assert _row_float("Infinity") is None
+
+
+async def test_import_writer_status_is_detached_projected_and_cleared(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Writer-level progress reaches native status and never survives whole failure."""
+
+    now = datetime(2026, 7, 1, 12, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    client.redact_error = lambda error: "Import failed"
+    status = BeestatSensor(
+        coordinator,
+        next(item for item in GLOBAL_SENSOR_DESCRIPTIONS if item.key == "status"),
+        None,
+    )
+    status.entity_id = "sensor.beestat_import_status"
+    platform = EntityPlatform(
+        hass=hass,
+        logger=logging.getLogger(__name__),
+        domain="sensor",
+        platform_name=DOMAIN,
+        platform=None,
+        scan_interval=timedelta(seconds=30),
+        entity_namespace=None,
+    )
+    platform.config_entry = entry
+    metrics = {
+        "imported_series": 1,
+        "imported_rows": 2,
+        "source_rows": 24,
+        "skipped_windows": 0,
+        "skipped_runtime_thermostat_windows": 0,
+        "skipped_runtime_sensor_windows": 0,
+        "skipped_window_examples": (),
+        "summary_mode": "windowed",
+        "summary_window_start": None,
+        "summary_window_end": None,
+        "summary_overlap_days": 7,
+        "summary_fallback_reason": None,
+        "cumulative_seed_count": 0,
+    }
+    writers = {
+        "legacy_imported_series": 1,
+        "legacy_imported_rows": 2,
+        "hourly_imported_series": 0,
+        "hourly_imported_rows": 0,
+        "hourly_blocked_reason": "incomplete_coverage",
+    }
+    expected = dict(writers)
+    try:
+        await platform.async_add_entities([status])
+        assert coordinator.last_import_writers is None
+        coordinator.async_record_import_result(
+            **metrics, writer_result=writers, coverage_incomplete=True
+        )
+        writers["legacy_imported_rows"] = 999
+        await hass.async_block_till_done()
+        state = hass.states.get(status.entity_id)
+        assert state.attributes["last_import_writers"] == expected
+        assert state.attributes["last_import_partial"] is True
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+        assert diagnostics["coordinator"]["last_import_writers"] == expected
+        diagnostics["coordinator"]["last_import_writers"]["legacy_imported_rows"] = 888
+        assert coordinator.last_import_writers == expected
+
+        coordinator.async_record_import_error(RuntimeError("whole import failed"))
+        await hass.async_block_till_done()
+        assert (
+            hass.states.get(status.entity_id).attributes["last_import_writers"] is None
+        )
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+        assert diagnostics["coordinator"]["last_import_writers"] is None
+        coordinator.async_record_import_result(**metrics)
+        assert coordinator.last_import_writers is None
+        assert client.calls == []
+    finally:
+        await platform.async_reset()
+        await entry._async_process_on_unload(hass)
 
 
 async def test_recorder_seed_starts_reject_nonfinite_and_unrepresentable_values() -> (
@@ -1149,7 +1238,9 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
         force_full_summary,
         temporal_context,
         existing_statistic_ids,
+        allowed_legacy_ids,
     ):
+        assert "beestat:zone_a_fan_runtime_hours" in allowed_legacy_ids
         attempts.append(
             (
                 "summary",
@@ -1196,7 +1287,7 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
         attempts.append(("build", local_tz, now))
         return [
             StatisticsSeries(
-                metadata={"statistic_id": "beestat:test"},
+                metadata={"statistic_id": "beestat:zone_a_fan_runtime_hours"},
                 statistics=[{"start": now}],
                 source_rows=0,
             )
@@ -1266,7 +1357,7 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
         sensor_rows_by_id={},
         series=[
             StatisticsSeries(
-                metadata={"statistic_id": "beestat:test"},
+                metadata={"statistic_id": "beestat:zone_a_fan_runtime_hours"},
                 statistics=[{"start": now}],
                 source_rows=0,
             )
@@ -1289,7 +1380,10 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
             "custom_components.beestat_statistics.async_add_external_statistics",
             side_effect=lambda *_args: writes.append(object()),
         ),
-        pytest.raises(RuntimeError, match="timezone changed repeatedly"),
+        pytest.raises(
+            RuntimeError,
+            match="timezone or writer configuration changed repeatedly",
+        ),
     ):
         await importer.async_import_statistics(skip_sync=True)
 

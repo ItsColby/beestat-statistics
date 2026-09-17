@@ -243,6 +243,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days: int | None = None
         self.last_import_summary_fallback_reason: str | None = None
         self.last_import_cumulative_seed_count: int | None = None
+        self.last_import_writers: dict[str, int | str | None] | None = None
+        self.hourly_history_revision: int = 0
+        self.hourly_history_status: str = "legacy"
         self.last_filter_alert_dismiss_attempt_at: datetime | None = None
         self.last_filter_alert_dismiss_thermostat_id: int | None = None
         self.last_filter_alert_dismiss_matched: int | None = None
@@ -669,6 +672,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_overlap_days: int | None,
         summary_fallback_reason: str | None,
         cumulative_seed_count: int,
+        coverage_incomplete: bool = False,
+        writer_result: dict[str, int | str | None] | None = None,
     ) -> None:
         """Record the latest Recorder import metrics for diagnostic sensors."""
 
@@ -678,7 +683,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_imported_series = imported_series
         self.last_imported_rows = imported_rows
         self.last_import_source_rows = source_rows
-        self.last_import_partial = skipped_windows > 0
+        self.last_import_partial = skipped_windows > 0 or coverage_incomplete
         self.last_import_skipped_windows = skipped_windows
         self.last_import_skipped_runtime_thermostat_windows = (
             skipped_runtime_thermostat_windows
@@ -691,6 +696,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = summary_overlap_days
         self.last_import_summary_fallback_reason = summary_fallback_reason
         self.last_import_cumulative_seed_count = cumulative_seed_count
+        self.last_import_writers = (
+            dict(writer_result) if writer_result is not None else None
+        )
         self.async_update_listeners()
 
     @callback
@@ -703,6 +711,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_overlap_days = None
         self.last_import_summary_fallback_reason = "import_failed"
         self.last_import_cumulative_seed_count = None
+        self.last_import_writers = None
         self._async_record_error(err)
 
     async def _async_fetch_runtime_data(

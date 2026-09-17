@@ -376,7 +376,7 @@ class BinarySensorHelpersTest(unittest.TestCase):
                 sensors=(),
             ),
             fetched_at=datetime(2026, 7, 5, 12, tzinfo=UTC),
-            projected_at=datetime(2026, 7, 6, 4, tzinfo=UTC),
+            projected_at=datetime(2026, 7, 6, 3, tzinfo=UTC),
             sync_success_at=None,
             metadata_sync_success_at=None,
             summary_rows=(),
@@ -390,11 +390,16 @@ class BinarySensorHelpersTest(unittest.TestCase):
             thermostat_metadata={},
             sensor_metadata={},
         )
+        coordinator = _FakeCoordinator(data)
         entity = self.binary_sensor.BeestatFilterDueProblemBinarySensor(
-            _FakeCoordinator(data),
+            coordinator,
             thermostat,
         )
 
+        self.assertFalse(entity.is_on)
+        coordinator.data = replace(
+            data, projected_at=datetime(2026, 7, 6, 4, tzinfo=UTC)
+        )
         self.assertTrue(entity.is_on)
 
     def _install_fake_homeassistant_modules(self) -> None:

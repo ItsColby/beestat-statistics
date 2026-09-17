@@ -95,7 +95,7 @@ jobs:
   home_assistant_current:
     needs: plan
     if: ${{ needs.plan.outputs.current == 'true' }}
-    name: Home Assistant current integration tests (Core 2026.9.1)
+    name: Home Assistant current integration tests (Core 2026.9.2)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -125,6 +125,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - name: Run product-owned Hassfest validation
         run: |
           if [[ "$VALIDATION_FULL" == true ]]; then
