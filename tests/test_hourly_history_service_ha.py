@@ -141,6 +141,41 @@ def _content():
     ).encode()
 
 
+def _native_rest_export(runtime):
+    manifest = _manifest(runtime)
+    return {
+        "changed_states": [],
+        "service_response": {
+            "schema_version": 1,
+            "status": "success",
+            "identity": {
+                key: manifest[key]
+                for key in (
+                    "config_entry_id",
+                    "resource",
+                    "resource_id",
+                    "thermostat_id",
+                )
+            },
+            "request": {
+                "resource": manifest["resource"],
+                "resource_id": manifest["resource_id"],
+                "method": "read",
+                "timestamp_operator": "between",
+                "boundary": "inclusive",
+                "start": manifest["start"],
+                "end": manifest["end"],
+            },
+            "completeness": {
+                "transport_complete": True,
+                "truncated": False,
+                "pagination_indicated": False,
+            },
+            "data": json.loads(_content()),
+        },
+    }
+
+
 def _plan_request(runtime, source_id="0" * 64):
     return {
         "config_entry_id": runtime.entry.entry_id,
@@ -369,19 +404,29 @@ async def test_apply_rejects_nested_entry_mismatch_before_journal_access(
     await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.parametrize("transport", ["rows", "native_rest_export"])
 async def test_stage_upload_lease_and_cleanup_run_in_executor_after_durable_retention(
-    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, transport
 ):
     runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
-    content = _content()
+    content = (
+        json.dumps(_native_rest_export(runtime), indent=2).encode() + b"\n"
+        if transport == "native_rest_export"
+        else _content()
+    )
     upload_path, events = _upload(
         runtime, monkeypatch, tmp_path, content, verify_retained=True
+    )
+    request = _request(runtime, "stage_hourly_source")
+    request["sha256"] = sha256(content).hexdigest()
+    request["manifest"].update(
+        original_sha256=request["sha256"], original_byte_count=len(content)
     )
     before_entry = deepcopy(dict(runtime.entry.data))
     response = await _call(
         runtime,
         "stage_hourly_source",
-        _request(runtime, "stage_hourly_source"),
+        request,
         Context(user_id=hass_admin_user.id),
     )
     assert events == ["entered", "durably_retained", "cleaned"]
@@ -389,12 +434,67 @@ async def test_stage_upload_lease_and_cleanup_run_in_executor_after_durable_rete
     assert response["contract_version"] == 3
     assert response["sha256"] == sha256(content).hexdigest()
     assert response["row_count"] == 12
+    assert response["observed_start"] == START.isoformat()
+    assert response["observed_end"] == (END - timedelta(minutes=5)).isoformat()
+    assert response["manifest"]["original_sha256"] == sha256(content).hexdigest()
+    assert response["manifest"]["original_byte_count"] == len(content)
     assert (
         await runtime.store.async_read_object("source", response["sha256"]) == content
     )
+    if transport == "native_rest_export":
+        plan = await _call(
+            runtime,
+            "plan_hourly_history",
+            _plan_request(runtime, response["source_id"]),
+            Context(user_id=hass_admin_user.id),
+        )
+        assert plan["status"] == "planned"
+        assert plan["numeric_rows"] == 1
+        assert plan["batches"][0]["dispositions"] == {"ready": 1}
     assert not Path(runtime.store.path).exists()
     assert runtime.entry.data == before_entry
     assert runtime.importer.hourly._state is None
+    runtime.submit.assert_not_called()
+    _assert_no_source_io(runtime)
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("rejected", ["identity", "window", "incomplete", "shape"])
+async def test_native_rest_upload_rejects_invalid_inner_export_before_retention(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, rejected
+):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    envelope = _native_rest_export(runtime)
+    export = envelope["service_response"]
+    if rejected == "identity":
+        export["identity"]["config_entry_id"] = "different-fixture-entry"
+    elif rejected == "window":
+        export["request"]["end"] = (END + timedelta(hours=1)).isoformat()
+    elif rejected == "incomplete":
+        export["completeness"]["transport_complete"] = False
+    else:
+        envelope["service_response"] = []
+    content = json.dumps(envelope).encode()
+    upload_path, events = _upload(
+        runtime, monkeypatch, tmp_path, content, verify_retained=False
+    )
+    request = _request(runtime, "stage_hourly_source")
+    request["sha256"] = sha256(content).hexdigest()
+    request["manifest"].update(
+        original_sha256=request["sha256"], original_byte_count=len(content)
+    )
+    before_entry = deepcopy(dict(runtime.entry.data))
+    with pytest.raises(HomeAssistantError):
+        await _call(
+            runtime, "stage_hourly_source", request, Context(user_id=hass_admin_user.id)
+        )
+    assert events == ["entered", "cleaned"]
+    assert not upload_path.exists()
+    assert not Path(f"{runtime.store.path}.objects").exists()
+    assert not Path(runtime.store.path).exists()
+    assert runtime.entry.data == before_entry
+    assert runtime.importer.hourly._state is None
+    runtime.snapshots.assert_not_awaited()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
     await runtime.entry._async_process_on_unload(hass)

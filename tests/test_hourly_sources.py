@@ -73,6 +73,39 @@ def original_manifest(content, **changes):
     )
 
 
+def raw_export():
+    declaration = manifest()
+    return {
+        "schema_version": 1,
+        "status": "success",
+        "identity": {
+            key: declaration[key]
+            for key in (
+                "config_entry_id",
+                "resource",
+                "resource_id",
+                "thermostat_id",
+            )
+        },
+        "request": {
+            **{
+                key: declaration[key]
+                for key in ("resource", "resource_id", "start", "end")
+            },
+            "method": "read",
+            "timestamp_operator": "between",
+            "boundary": "inclusive",
+        },
+        "completeness": {
+            "transport_complete": True,
+            "truncated": False,
+            "pagination_indicated": False,
+            "provider_complete": None,
+        },
+        "data": [row(), row(timestamp=declaration["end"])],
+    }
+
+
 class ObjectStore:
     def __init__(self):
         self.objects = {}
@@ -203,47 +236,112 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.objects)
 
     async def test_raw_success_export_matches_identity_and_inclusive_bounds(self):
-        declaration = manifest()
-        envelope = {
-            "schema_version": 1,
-            "status": "success",
-            "identity": {
-                key: declaration[key]
-                for key in (
-                    "config_entry_id",
-                    "resource",
-                    "resource_id",
-                    "thermostat_id",
-                )
-            },
-            "request": {
-                **{
-                    key: declaration[key]
-                    for key in ("resource", "resource_id", "start", "end")
-                },
-                "method": "read",
-                "timestamp_operator": "between",
-                "boundary": "inclusive",
-            },
-            "completeness": {
-                "transport_complete": True,
-                "truncated": False,
-                "pagination_indicated": False,
-                "provider_complete": None,
-            },
-            "data": [row(), row(timestamp=declaration["end"])],
-        }
-        receipt = await self.stage(envelope)
+        for wrapped in (False, True):
+            with self.subTest(wrapped=wrapped):
+                envelope = raw_export()
+
+                def transport(value, wrapped=wrapped):
+                    return (
+                        {"changed_states": [], "service_response": value}
+                        if wrapped
+                        else value
+                    )
+
+                receipt = await self.stage(transport(envelope))
+                self.assertEqual(receipt["row_count"], 2)
+                cases = [
+                    (("status",), "error", "incomplete_export"),
+                    (
+                        ("completeness", "transport_complete"),
+                        False,
+                        "incomplete_export",
+                    ),
+                    (("completeness", "truncated"), True, "incomplete_export"),
+                    (
+                        ("completeness", "pagination_indicated"),
+                        True,
+                        "incomplete_export",
+                    ),
+                    (("request", "boundary"), "exclusive", "export_identity"),
+                    (("identity", "config_entry_id"), "other-entry", "export_identity"),
+                    (("request", "end"), "2026-09-01T01:00:00Z", "export_window"),
+                ]
+                for path, value, reason in cases:
+                    with self.subTest(path=path):
+                        changed = deepcopy(envelope)
+                        target = changed
+                        for key in path[:-1]:
+                            target = target[key]
+                        target[path[-1]] = value
+                        with self.assertRaisesRegex(ValueError, reason):
+                            await self.stage(transport(changed))
+
+    async def test_native_rest_export_retains_outer_bytes_and_resolves_points(self):
+        envelope = raw_export()
+        content = (
+            json.dumps({"changed_states": [], "service_response": envelope}, indent=2)
+            + "\n"
+        ).encode()
+        receipt = sources.stage_source(
+            self.store,
+            content,
+            original_manifest(content),
+            sha256(content).hexdigest(),
+            identity(),
+        )
         self.assertEqual(receipt["row_count"], 2)
-        for field in ("truncated", "pagination_indicated"):
-            changed = deepcopy(envelope)
-            changed["completeness"][field] = True
-            with self.assertRaisesRegex(ValueError, "incomplete_export"):
-                await self.stage(changed)
-        changed = deepcopy(envelope)
-        changed["request"]["boundary"] = "exclusive"
-        with self.assertRaisesRegex(ValueError, "export_identity"):
-            await self.stage(changed)
+        self.assertEqual(self.store.objects["source", receipt["sha256"]], content)
+        self.assertEqual(
+            receipt["manifest"]["original_sha256"], sha256(content).hexdigest()
+        )
+        self.assertEqual(receipt["manifest"]["original_byte_count"], len(content))
+        merged = await self.merged([receipt])
+        resource = merged["resources"]["runtime_sensor:10"]
+        self.assertEqual(resource["rows"], envelope["data"])
+        self.assertEqual(resource["blocked_windows"], [])
+        self.assertEqual(resource["conflict_hours"], [])
+
+    async def test_native_rest_empty_read_preserves_earlier_points(self):
+        first = await self.stage([row()])
+        export = {**raw_export(), "data": []}
+        empty = await self.stage(
+            {"changed_states": [], "service_response": export},
+            manifest(acquisition_id="read-two"),
+        )
+        self.assertEqual(empty["row_count"], 0)
+        merged = await self.merged([first, empty])
+        resource = merged["resources"]["runtime_sensor:10"]
+        self.assertEqual(resource["rows"], [row()])
+        self.assertEqual(resource["blocked_windows"], [])
+
+    async def test_malformed_native_rest_wrappers_fail_before_retention(self):
+        envelope = raw_export()
+        cases = [
+            {"service_response": envelope},
+            {"changed_states": []},
+            {"changed_states": None, "service_response": envelope},
+            {"changed_states": {}, "service_response": envelope},
+            {"changed_states": [row()], "service_response": envelope},
+            {"changed_states": [], "service_response": []},
+            {"changed_states": [], "service_response": None},
+            {"changed_states": [], "service_response": envelope, "data": []},
+            {
+                "changed_states": [],
+                "service_response": {
+                    "changed_states": [],
+                    "service_response": envelope,
+                },
+            },
+        ]
+        for index, value in enumerate(cases):
+            with (
+                self.subTest(index=index),
+                self.assertRaisesRegex(
+                    ValueError, "rest_export_shape|incomplete_export"
+                ),
+            ):
+                await self.stage(value)
+        self.assertFalse(self.store.objects)
 
     async def test_complete_ordered_chunks_preserve_last_provider_correction(self):
         first = await self.stage([row(temperature=72)], manifest(chunk_count=2))

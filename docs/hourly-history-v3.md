@@ -234,7 +234,13 @@ observed interval start, not the download time.
 Each original UTF-8 chunk is bounded to 8 MiB, 10,000 rows and JSON depth 16.
 An assembled bundle is bounded to 2,048 chunks, 128 resources and 512 MiB;
 the writer also preserves 256 MiB of free disk beyond an admitted object.
-JSON supports point arrays/maps or a successful untruncated raw-point export;
+JSON supports point arrays/maps or a successful untruncated raw-point export,
+including the exact native REST shape
+`{"changed_states": [], "service_response": <raw-point export>}`. The changed-state
+list must be empty, no additional outer fields are accepted, and the nested export
+must pass the same status, completeness, identity and request-bound checks as a
+root export. The original-byte hash and byte count bind the entire outer REST
+response; the nested export is neither extracted nor reserialized for storage.
 JSONL contains one original point object per nonempty line. JSON originals must
 fit one chunk. JSONL originals of up to 128 MiB may be split only after existing
 LF bytes, preserving whitespace, CRLF and every original byte. The final chunk

@@ -415,6 +415,17 @@ def _delta_incoming(
     return size
 
 
+def _rest_envelope(value: dict[str, Any], manifest: dict[str, Any]) -> Any:
+    """Validate a native read-only wrapper while retaining its outer bytes."""
+    if (
+        set(value) != {"changed_states", "service_response"}
+        or value["changed_states"] != []
+        or not isinstance(value["service_response"], dict)
+    ):
+        raise ValueError("history_source_rest_export_shape")
+    return _raw_envelope(value["service_response"], manifest)
+
+
 def _source_payload(
     text: str, manifest: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -429,7 +440,12 @@ def _source_payload(
         rows = _rows(values)
     else:
         value = _parse_json(text)
-        if isinstance(value, dict) and value.get("format") == "integration_delta_v1":
+        if (
+            isinstance(value, dict)
+            and {"changed_states", "service_response"} & value.keys()
+        ):
+            value = _rest_envelope(value, manifest)
+        elif isinstance(value, dict) and value.get("format") == "integration_delta_v1":
             value, delta = _delta_envelope(value, manifest)
         elif isinstance(value, dict) and (
             "status" in value or "schema_version" in value
