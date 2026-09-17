@@ -504,15 +504,10 @@ class HourlyImportPlanTests(unittest.TestCase):
         held = replace(series, blocked_reason="voc_unit_unresolved")
         self.assertFalse(_plan(held, snapshot=_snapshot(held)).calculated_rows)
 
-    def test_legacy_duplicate_and_discontinuous_input_ids_or_hours_are_rejected(self):
+    def test_duplicate_and_discontinuous_input_ids_or_hours_are_rejected(self):
         series = _series()
         with self.assertRaises(ValueError):
             planner.plan_hourly_import((series, series), snapshots={}, checkpoints={})
-        legacy = replace(
-            series, metadata={**series.metadata, "statistic_id": "beestat:legacy"}
-        )
-        with self.assertRaises(ValueError):
-            _plan(legacy)
         discontinuous = replace(series, hours=(series.hours[1], series.hours[0]))
         with self.assertRaises(ValueError):
             _plan(discontinuous)

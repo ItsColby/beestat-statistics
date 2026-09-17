@@ -464,6 +464,5 @@ async def test_early_correction_requires_rewriting_native_cumulative_suffix(hass
     assert not full_plan.stale_starts
     _submit_plan(hass, corrected, full_plan)
     complete_update = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    assert len(complete_update) == 3
     assert [row["sum"] for row in complete_update] == [0.5, 1.0, 1.125]
     assert [row["change"] for row in complete_update] == [0.5, 0.5, 0.125]

@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
-import math
 import sys
 import types
 import unittest
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -85,6 +85,7 @@ class Store:
         self.fail = None
         self.gate = None
         self.gate_call = None
+        self.gate_entered = asyncio.Event()
 
     async def async_load(self):
         return deepcopy(self.value)
@@ -92,6 +93,7 @@ class Store:
     async def async_save(self, value):
         self.calls += 1
         if self.gate is not None and self.gate_call in (None, self.calls):
+            self.gate_entered.set()
             await self.gate.wait()
         if self.calls == self.fail:
             raise OSError("synthetic disk failure")
@@ -131,15 +133,101 @@ class Recorder:
 class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store, self.recorder = Store(), Recorder()
+        self.store_tasks = []
+        self.operation_tasks = []
         self.entry = types.SimpleNamespace(entry_id="test-entry", data={})
         self.hass = types.SimpleNamespace(
             data={},
-            async_create_task=asyncio.create_task,
+            async_create_task=self.create_store_task,
             config_entries=types.SimpleNamespace(
                 async_update_entry=lambda entry, data: setattr(entry, "data", data)
             ),
         )
         self.writer = self.fresh()
+
+    def create_store_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self.store_tasks.append(task)
+        return task
+
+    def create_operation_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self.operation_tasks.append(task)
+        return task
+
+    async def settle_gated_tasks(self, tasks, *, timeout, cancel):
+        """Retrieve all outcomes, allowing shielded saves time to finish first."""
+        if not tasks:
+            return []
+        if cancel:
+            for task in tasks:
+                task.cancel()
+        done, pending = await asyncio.wait(tasks, timeout=timeout)
+        if pending:
+            for task in pending:
+                task.cancel()
+            settled, pending = await asyncio.wait(pending, timeout=timeout)
+            done |= settled
+        errors = (
+            [AssertionError(f"{len(pending)} fixture tasks survived cleanup")]
+            if pending
+            else []
+        )
+        errors.extend(
+            error
+            for task in done
+            if not task.cancelled() and (error := task.exception()) is not None
+        )
+        return errors
+
+    @asynccontextmanager
+    async def gated_import(self, *, gate_call, timeout=5):
+        """Reach a selected Store save or fail, then settle every owned task."""
+        self.store.gate = asyncio.Event()
+        self.store.gate_entered.clear()
+        self.store.gate_call = gate_call
+        operation_start, store_start = len(self.operation_tasks), len(self.store_tasks)
+        importing = self.create_operation_task(
+            self.writer.async_import((source(),), identity())
+        )
+        entered = self.create_operation_task(self.store.gate_entered.wait())
+        primary_error = None
+        try:
+            done, _ = await asyncio.wait(
+                (importing, entered),
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if importing in done:
+                importing.result()
+                self.fail("Import completed before the selected Store gate")
+            if entered not in done:
+                self.fail("Timed out waiting for the selected Store gate")
+            async with asyncio.timeout(timeout):
+                yield importing
+        except BaseException as err:
+            primary_error = err
+            raise
+        finally:
+            self.store.gate.set()
+            cleanup_errors = await self.settle_gated_tasks(
+                self.operation_tasks[operation_start:], timeout=timeout, cancel=True
+            )
+            # Import cancellation does not cancel a shielded Store save. Include
+            # every save created before importer/recovery operations settled.
+            cleanup_errors += await self.settle_gated_tasks(
+                self.store_tasks[store_start:], timeout=timeout, cancel=False
+            )
+            cleanup_errors = [
+                error for error in cleanup_errors if error is not primary_error
+            ]
+            if cleanup_errors:
+                if primary_error is None:
+                    raise BaseExceptionGroup(
+                        "Gated import cleanup failed", cleanup_errors
+                    )
+                for error in cleanup_errors:
+                    primary_error.add_note(f"Gated import cleanup: {error!r}")
 
     def fresh(self):
         return manager.HourlyImportManager(
@@ -898,24 +986,86 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancelled_store_save_is_drained_before_replacement_load(self):
         await self.adopt()
-        self.store.gate = asyncio.Event()
-        importing = asyncio.create_task(
-            self.writer.async_import((source(),), identity())
-        )
-        while self.store.calls < 3:
+        async with self.gated_import(gate_call=3) as importing:
+            self.writer.close()
+            importing.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await importing
+            replacement = self.fresh()
+            recovery = self.create_operation_task(replacement.async_reconcile())
             await asyncio.sleep(0)
-        self.writer.close()
-        importing.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await importing
-        replacement = self.fresh()
-        recovery = asyncio.create_task(replacement.async_reconcile())
-        await asyncio.sleep(0)
-        self.assertFalse(recovery.done())
-        self.assertFalse(self.recorder.submissions)
-        self.store.gate.set()
-        await recovery
-        self.assertEqual(0.75, self.recorder.rows[ID][START + HOUR].sum)
+            self.assertFalse(recovery.done())
+            self.assertFalse(self.recorder.submissions)
+            self.store.gate.set()
+            await recovery
+            self.assertEqual(0.75, self.recorder.rows[ID][START + HOUR].sum)
+
+    async def test_gated_import_rejects_early_success_and_settles_tasks(self):
+        async def completed(*args):
+            return {"imported_rows": 0}
+
+        with (
+            patch.object(self.writer, "async_import", completed),
+            self.assertRaisesRegex(AssertionError, "Import completed before"),
+        ):
+            async with self.gated_import(gate_call=1):
+                self.fail("Premature success must not enter the gated body")
+        self.assertTrue(self.operation_tasks)
+        self.assertTrue(
+            all(task.done() for task in self.operation_tasks + self.store_tasks)
+        )
+
+    async def test_gated_import_preserves_early_exception_and_cleanup_failure(self):
+        original = RuntimeError("synthetic early importer failure")
+
+        async def failed_save():
+            await self.store.gate.wait()
+            raise OSError("synthetic cleanup save failure")
+
+        async def failed(*args):
+            self.hass.async_create_task(failed_save())
+            raise original
+
+        with (
+            patch.object(self.writer, "async_import", failed),
+            self.assertRaises(RuntimeError) as caught,
+        ):
+            async with self.gated_import(gate_call=1):
+                self.fail("An early exception must not enter the gated body")
+        self.assertIs(original, caught.exception)
+        self.assertIn("synthetic cleanup save failure", " ".join(original.__notes__))
+        self.assertTrue(self.store_tasks)
+        self.assertTrue(
+            all(task.done() for task in self.operation_tasks + self.store_tasks)
+        )
+
+    async def test_gated_import_deadline_settles_recovery_and_shielded_save(self):
+        async def delayed_save():
+            # Cannot reach Store's selected gate until failure cleanup releases it.
+            await self.store.gate.wait()
+            await self.store.async_save({"cleanup_completed": True})
+
+        async def blocked(*args):
+            save = self.hass.async_create_task(delayed_save())
+
+            async def recovery():
+                await asyncio.shield(save)
+
+            self.create_operation_task(recovery())
+            await asyncio.shield(save)
+
+        with (
+            patch.object(self.writer, "async_import", blocked),
+            self.assertRaisesRegex(AssertionError, "Timed out waiting"),
+        ):
+            async with self.gated_import(gate_call=1, timeout=0.02):
+                self.fail("A missed gate must not enter the gated body")
+        self.assertEqual({"cleanup_completed": True}, self.store.value)
+        self.assertEqual(3, len(self.operation_tasks))
+        self.assertEqual(1, len(self.store_tasks))
+        self.assertTrue(
+            all(task.done() for task in self.operation_tasks + self.store_tasks)
+        )
 
     async def test_measurement_gap_is_missing_and_mean_uses_observed_hours(self):
         item = source((70, None, 72), cumulative=False)
@@ -1049,7 +1199,6 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(expected_mean, result["observed_hour_average"])
                 if expected_mean is not None:
-                    self.assertTrue(math.isfinite(result["observed_hour_average"]))
                     self.assertIsInstance(result["observed_hour_average"], float)
                 self.assertEqual(
                     response, json.loads(json.dumps(response, allow_nan=False))
@@ -1497,64 +1646,53 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
 
     async def test_final_checkpoint_save_keeps_pending_coverage_until_verified(self):
         await self.adopt()
-        self.store.gate = asyncio.Event()
-        self.store.gate_call = self.store.calls + 2
-        importing = asyncio.create_task(
-            self.writer.async_import((source(),), identity())
-        )
-        while self.store.calls < self.store.gate_call:
-            await asyncio.sleep(0)
-        self.assertIsNotNone(self.store.value["pending"])
-        self.assertEqual(0.75, self.recorder.rows[ID][START + HOUR].sum)
-        self.assertTrue(self.writer.status()["pending"])
-        self.assertEqual(
-            0,
-            self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
-                "complete_observed_hours"
-            ],
-        )
-        self.store.gate.set()
-        await importing
-        self.assertFalse(self.writer.status()["pending"])
-        self.assertEqual(
-            2,
-            self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
-                "complete_observed_hours"
-            ],
-        )
+        async with self.gated_import(gate_call=self.store.calls + 2) as importing:
+            self.assertIsNotNone(self.store.value["pending"])
+            self.assertEqual(0.75, self.recorder.rows[ID][START + HOUR].sum)
+            self.assertTrue(self.writer.status()["pending"])
+            self.assertEqual(
+                0,
+                self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
+                    "complete_observed_hours"
+                ],
+            )
+            self.store.gate.set()
+            await importing
+            self.assertFalse(self.writer.status()["pending"])
+            self.assertEqual(
+                2,
+                self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
+                    "complete_observed_hours"
+                ],
+            )
 
     async def test_cancelled_final_save_keeps_suppression_until_replacement_readback(
         self,
     ):
         await self.adopt()
-        self.store.gate = asyncio.Event()
-        self.store.gate_call = self.store.calls + 2
-        importing = asyncio.create_task(
-            self.writer.async_import((source(),), identity())
-        )
-        while self.store.calls < self.store.gate_call:
-            await asyncio.sleep(0)
-        self.writer.close()
-        importing.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await importing
-        self.assertTrue(self.writer.status()["pending"])
-        self.assertEqual(
-            0,
-            self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
-                "complete_observed_hours"
-            ],
-        )
-        self.store.gate.set()
-        replacement = self.fresh()
-        await replacement.async_reconcile()
-        self.assertFalse(replacement.status()["pending"])
-        self.assertEqual(
-            2,
-            replacement.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
-                "complete_observed_hours"
-            ],
-        )
+        async with self.gated_import(gate_call=self.store.calls + 2) as importing:
+            self.writer.close()
+            importing.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await importing
+            self.assertTrue(self.writer.status()["pending"])
+            self.assertEqual(
+                0,
+                self.writer.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
+                    "complete_observed_hours"
+                ],
+            )
+            self.store.gate.set()
+            replacement = self.fresh()
+            recovery = self.create_operation_task(replacement.async_reconcile())
+            await recovery
+            self.assertFalse(replacement.status()["pending"])
+            self.assertEqual(
+                2,
+                replacement.coverage(start=START, end=START + 2 * HOUR)["series"][ID][
+                    "complete_observed_hours"
+                ],
+            )
 
     async def test_rolling_window_preserves_earliest_unresolved_boundary(self):
         await self.adopt(source((0.25, 0.5, 0.75)))

@@ -271,7 +271,6 @@ async def test_known_hourly_failure_continues_only_unselected_legacy_quantities(
         call.args[1]["statistic_id"]: call.args[2] for call in write.call_args_list
     }
     assert LEGACY_FAN_ID not in written
-    assert {LEGACY_COOL_ID, LEGACY_VOC_ID} <= written.keys()
     assert written[LEGACY_COOL_ID][0]["sum"] == 2.0
     assert written[LEGACY_VOC_ID][0]["mean"] == 123.0
     assert result.hourly_blocked_reason == reason
@@ -485,7 +484,6 @@ async def test_legacy_planner_excludes_frozen_inventory_latest_seeds_and_new_sta
         hass, freezer, monkeypatch
     )
     cool_stage_1 = "beestat:zone_a_cool_stage_1_runtime_hours"
-    cool_stage_2 = "beestat:zone_a_cool_stage_2_runtime_hours"
     allowed = frozenset({LEGACY_COOL_ID, cool_stage_1})
     with patch.object(
         integration, "get_metadata", wraps=integration.get_metadata
@@ -533,7 +531,6 @@ async def test_legacy_planner_excludes_frozen_inventory_latest_seeds_and_new_sta
     assert plan.mode == "windowed"
     assert plan.window_start == date(2026, 9, 3)
     assert set(plan.seeds) == allowed
-    assert {LEGACY_FAN_ID, cool_stage_2}.isdisjoint(plan.seeds)
     assert plan.rows[0]["sum_compressor_cool_2"] == 3600
     full.assert_not_awaited()
     await entry._async_process_on_unload(hass)

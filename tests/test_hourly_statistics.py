@@ -404,17 +404,11 @@ class HourlyStatisticsTest(unittest.TestCase):
             "start_by_statistic_id": {successor: self.end},
             "source_end_by_thermostat": {1: stop - timedelta(minutes=5)},
         }
-        self.assertNotIn(
-            successor, {item.statistic_id for item in self.build(**options)}
-        )
+        series = self.build(**options)
+        self.assertNotIn(successor, {item.statistic_id for item in series})
         # Discovery of another quantity on the same resource keeps its own range.
         self.assertEqual(
-            len(
-                self.item(
-                    self.build(**options), "zone_a_cool_stage_1_runtime_hours"
-                ).hours
-            ),
-            2,
+            len(self.item(series, "zone_a_cool_stage_1_runtime_hours").hours), 2
         )
         for retained in (f"beestat:{suffix}", successor):
             with self.subTest(retained=retained):

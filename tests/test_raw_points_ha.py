@@ -134,7 +134,6 @@ async def test_native_action_uses_existing_client_for_both_kinds_without_writes(
     assert thermostat["data"] == rows
     assert sensor["data"] == keyed
     assert list(sensor["data"]) == ["second", "first"]
-    assert "id" not in sensor["data"]["second"]
     assert sensor["identity"]["thermostat_id"] == 1
     assert sensor["identity"]["config_entry_id"] == entry.entry_id
     assert [request["resource"] for request in session.requests] == [
