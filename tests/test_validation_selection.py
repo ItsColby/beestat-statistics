@@ -186,6 +186,18 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertTrue(plan["ha_tests"])
         self.assertEqual([], plan["unresolved"])
 
+    def test_config_flow_change_reaches_framework_loaded_native_consumer(self):
+        path = planner.PRODUCT + "/config_flow.py"
+        native_test = "tests/test_config_flow_ha.py"
+        plan = planner.build_plan([path])
+        self.assertEqual([], plan["unresolved"])
+        self.assertEqual([native_test], plan["ha_tests"])
+        for lane in ("minimum", "current"):
+            self.assertTrue(plan["jobs"][lane])
+            self.assertEqual([native_test], plan["lane_tests"][lane])
+        self.assertIn("tests/test_config_flow_helpers.py", plan["unit_tests"])
+        self.assertIn(planner.METADATA_TEST, plan["unit_tests"])
+
     def test_test_only_change_uses_its_native_lane(self):
         path = "tests/test_runtime_ha.py"
         plan = planner.build_plan([path])

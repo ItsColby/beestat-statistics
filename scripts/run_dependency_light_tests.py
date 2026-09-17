@@ -171,6 +171,8 @@ TOOL_TESTS = {
 }
 METADATA_TEST = "tests/test_ha_quality_static.py"
 EXTRA_DEPENDENCIES: dict[str, set[str]] = {
+    # HA's flow manager loads this module dynamically.
+    "tests/test_config_flow_ha.py": {f"{PRODUCT}/config_flow.py"},
     "tests/test_ha_quality_static.py": {
         path.relative_to(ROOT).as_posix() for path in (ROOT / PRODUCT).rglob("*.py")
     }
