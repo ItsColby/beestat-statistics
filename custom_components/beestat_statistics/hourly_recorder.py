@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from math import isfinite
 from typing import Any, Literal, cast
@@ -27,6 +27,7 @@ from homeassistant.helpers.recorder import get_instance
 from .hourly_import_plan import HourlyStatisticRow, RecorderSnapshot
 
 MAX_SNAPSHOT_ROWS = 366 * 24 + 1  # A maximum source window plus its exact predecessor.
+MAX_BOUNDED_SNAPSHOT_HOURS = 31 * 24
 _FIELDS = ("mean", "min", "max", "state", "sum")
 _METADATA_FIELDS = (
     "statistic_id",
@@ -87,6 +88,26 @@ class HourlyRecorder:
             _metadata_value(statistic_id, value)
         return set(native)
 
+    async def async_snapshot_range(
+        self, statistic_id: str, start: datetime, end: datetime
+    ) -> RecorderSnapshot:
+        """Read exactly the requested UTC hours, with an exclusive end bound.
+
+        A v3 quantity/month batch has at most 744 slots. Its proof does not
+        require a cumulative predecessor or any later retained row. Empty
+        ranges of stored data still return metadata when the ID exists.
+        """
+
+        _validate_id(statistic_id)
+        start, end = _utc_hour(start), _utc_hour(end)
+        hours = (end - start) // timedelta(hours=1)
+        if not 1 <= hours <= MAX_BOUNDED_SNAPSHOT_HOURS:
+            raise HourlyRecorderError("invalid_snapshot_range")
+        await self.async_barrier()
+        return await get_instance(self._hass).async_add_executor_job(
+            partial(self._snapshot, statistic_id, start, end, hours)
+        )
+
     def submit(
         self, metadata: dict[str, Any], rows: tuple[HourlyStatisticRow, ...]
     ) -> None:
@@ -117,7 +138,13 @@ class HourlyRecorder:
                 self._hass, cast(StatisticMetaData, metadata), payload
             )
 
-    def _snapshot(self, statistic_id: str, start: datetime) -> RecorderSnapshot:
+    def _snapshot(
+        self,
+        statistic_id: str,
+        start: datetime,
+        end: datetime | None = None,
+        max_rows: int = MAX_SNAPSHOT_ROWS,
+    ) -> RecorderSnapshot:
         """Keep metadata, projection and metadata recheck in one executor job."""
 
         native_metadata = get_metadata(self._hass, statistic_ids={statistic_id})
@@ -130,35 +157,48 @@ class HourlyRecorder:
             and metadata["unit_of_measurement"] is not None
             else None
         )
+        requested = fields | {"last_reset"} if end is not None else fields
         native_rows = statistics_during_period(
             self._hass,
             start,
-            None,
+            end,
             {statistic_id},
             "hour",
             units,
-            cast(set[_NativeStatisticType], fields),
+            cast(set[_NativeStatisticType], requested),
         )
         if not isinstance(native_rows, Mapping) or set(native_rows) - {statistic_id}:
             raise HourlyRecorderError("invalid_statistics_projection")
         rows = native_rows.get(statistic_id, [])
         if not isinstance(rows, list):
             raise HourlyRecorderError("invalid_statistics_projection")
-        if len(rows) > MAX_SNAPSHOT_ROWS:
+        if len(rows) > max_rows:
             raise HourlyRecorderError("recorder_snapshot_too_large")
         if metadata is None and rows:
             raise HourlyRecorderError("rows_without_metadata")
+        if end is not None:
+            _validate_no_reset(rows)
         detached = tuple(_detached_row(row, fields) for row in rows)
         previous: datetime | None = None
         for row in detached:
             if row.start < start or (previous is not None and row.start <= previous):
                 raise HourlyRecorderError("unordered_recorder_snapshot")
+            if end is not None and row.start >= end:
+                raise HourlyRecorderError("out_of_range_recorder_snapshot")
             previous = row.start
         # A metadata change while reading cannot authorize a mixed projection.
         after = get_metadata(self._hass, statistic_ids={statistic_id})
         if _single_metadata(statistic_id, after) != metadata:
             raise HourlyRecorderError("metadata_changed_during_snapshot")
         return RecorderSnapshot(detached, metadata, complete=True)
+
+
+def _validate_no_reset(rows: list[Any]) -> None:
+    for row in rows:
+        if not isinstance(row, Mapping) or "last_reset" not in row:
+            raise HourlyRecorderError("incomplete_statistics_projection")
+        if row["last_reset"] is not None:
+            raise HourlyRecorderError("unexpected_statistic_reset")
 
 
 def _single_metadata(statistic_id: str, native: Any) -> dict[str, Any] | None:

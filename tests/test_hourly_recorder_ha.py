@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -29,6 +30,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
+from custom_components.beestat_statistics import hourly_recorder
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredThermostat,
@@ -38,6 +40,11 @@ from custom_components.beestat_statistics.hourly_import_plan import (
     HourlyStatisticRow,
     RecorderSnapshot,
     plan_hourly_import,
+)
+from custom_components.beestat_statistics.hourly_recorder import (
+    MAX_BOUNDED_SNAPSHOT_HOURS,
+    HourlyRecorder,
+    HourlyRecorderError,
 )
 from custom_components.beestat_statistics.hourly_statistics import (
     HourlySeries,
@@ -50,6 +57,7 @@ START = datetime(2026, 9, 10, 16, tzinfo=UTC)  # New York noon.
 DAY_START = START - 12 * HOUR
 NOW = datetime(2026, 9, 13, tzinfo=UTC)
 RUNTIME_ID = "beestat:contract_fan_runtime_hours_hourly_v2"
+RATE_ID = "beestat:contract_heat_runtime_rate_hourly_v3"
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +95,18 @@ def _counter_rows(start, totals):
         {"start": start + index * HOUR, "state": total, "sum": total}
         for index, total in enumerate(totals)
     ]
+
+
+def _rate_metadata(statistic_id=RATE_ID, *, temperature_delta=False):
+    return {
+        "statistic_id": statistic_id,
+        "source": "beestat",
+        "name": "Independent hourly rate fixture",
+        "unit_of_measurement": "°F" if temperature_delta else "%",
+        "unit_class": "temperature_delta" if temperature_delta else "unitless",
+        "mean_type": 1,
+        "has_sum": False,
+    }
 
 
 def _runtime_series(start, increments, *, slug="contract") -> HourlySeries:
@@ -466,3 +486,157 @@ async def test_early_correction_requires_rewriting_native_cumulative_suffix(hass
     complete_update = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
     assert [row["sum"] for row in complete_update] == [0.5, 1.0, 1.125]
     assert [row["change"] for row in complete_update] == [0.5, 0.5, 0.125]
+
+
+async def test_bounded_month_snapshot_includes_all_slots_without_predecessor_or_tail(
+    hass,
+):
+    adapter = HourlyRecorder(hass)
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 1, tzinfo=UTC)
+    missing = await adapter.async_snapshot_range(RATE_ID, start, end)
+    assert missing.complete and missing.metadata is None and not missing.rows
+    rows = tuple(
+        HourlyStatisticRow(start + index * HOUR, mean=125 + index / 10)
+        for index in range(-1, MAX_BOUNDED_SNAPSHOT_HOURS + 2)
+    )
+    adapter.submit(_rate_metadata(), rows)
+    original = hourly_recorder.statistics_during_period
+    with patch.object(
+        hourly_recorder, "statistics_during_period", wraps=original
+    ) as read:
+        snapshot = await adapter.async_snapshot_range(RATE_ID, start, end)
+    assert snapshot.complete
+    assert snapshot.rows == rows[1:-2]
+    assert len(snapshot.rows) == MAX_BOUNDED_SNAPSHOT_HOURS
+    assert read.call_args.args[1:5] == (start, end, {RATE_ID}, "hour")
+    assert read.call_args.args[5:7] == (
+        {"unitless": "%"},
+        {"mean", "min", "max", "last_reset"},
+    )
+    assert all(row.min is None and row.max is None for row in snapshot.rows)
+    assert all(row.sum is None and row.state is None for row in snapshot.rows)
+    # Existing v2 callers continue to get the full retained tail.
+    assert (await adapter.async_snapshot(RATE_ID, end)).rows == rows[-2:]
+    empty = await adapter.async_snapshot_range(RATE_ID, end + 2 * HOUR, end + 3 * HOUR)
+    assert empty.complete and not empty.rows and empty.metadata == snapshot.metadata
+
+
+async def test_mean_only_rate_correction_and_clear_leave_adjacent_hours_unchanged(hass):
+    adapter = HourlyRecorder(hass)
+    rows = tuple(
+        HourlyStatisticRow(START + index * HOUR, mean=value)
+        for index, value in enumerate((125.0, 175.0, 50.0))
+    )
+    metadata = _rate_metadata()
+    adapter.submit(metadata, rows)
+    initial = await adapter.async_snapshot_range(RATE_ID, START, START + 3 * HOUR)
+    assert initial.rows == rows
+    for corrected in (
+        HourlyStatisticRow(START + HOUR, mean=150),
+        HourlyStatisticRow(START + HOUR),
+    ):
+        adapter.submit(metadata, (corrected,))
+        actual = await adapter.async_snapshot_range(RATE_ID, START, START + 3 * HOUR)
+        assert actual.rows == (rows[0], corrected, rows[2])
+        assert actual.metadata == initial.metadata
+        one_hour = await adapter.async_snapshot_range(
+            RATE_ID, START + HOUR, START + 2 * HOUR
+        )
+        assert one_hour.rows == (corrected,)
+
+
+async def test_temperature_departure_uses_delta_conversion_and_native_mean_only_rows(
+    hass,
+):
+    adapter = HourlyRecorder(hass)
+    statistic_id = "beestat:contract_heating_temperature_departure_hourly_v3"
+    metadata = _rate_metadata(statistic_id, temperature_delta=True)
+    rows = (
+        HourlyStatisticRow(START, mean=9),
+        HourlyStatisticRow(START + HOUR, mean=18),
+    )
+    adapter.submit(metadata, rows)
+    native = await adapter.async_snapshot_range(statistic_id, START, START + 2 * HOUR)
+    assert native.rows == rows
+    assert native.metadata["unit_class"] == "temperature_delta"
+    assert native.metadata["unit_of_measurement"] == "°F"
+    converted = await get_instance(hass).async_add_executor_job(
+        partial(
+            statistics_during_period,
+            hass,
+            START,
+            START + 2 * HOUR,
+            {statistic_id},
+            "hour",
+            {"temperature_delta": "°C"},
+            {"mean", "min", "max"},
+        )
+    )
+    assert [row["mean"] for row in converted[statistic_id]] == pytest.approx([5, 10])
+    assert all(
+        row["min"] is None and row["max"] is None for row in converted[statistic_id]
+    )
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "error"),
+    [
+        (START, START, "invalid_snapshot_range"),
+        (START, START - HOUR, "invalid_snapshot_range"),
+        (START, START + 745 * HOUR, "invalid_snapshot_range"),
+        (START + timedelta(minutes=1), START + HOUR, "invalid_statistic_timestamp"),
+        (START, START + HOUR + timedelta(minutes=1), "invalid_statistic_timestamp"),
+        (START.replace(tzinfo=None), START + HOUR, "invalid_statistic_timestamp"),
+    ],
+)
+async def test_bounded_snapshot_rejects_invalid_bounds_before_native_work(
+    hass, start, end, error
+):
+    adapter = HourlyRecorder(hass)
+    with (
+        patch.object(adapter, "async_barrier") as barrier,
+        pytest.raises(HourlyRecorderError, match=error),
+    ):
+        await adapter.async_snapshot_range(RATE_ID, start, end)
+    barrier.assert_not_called()
+
+
+async def test_bounded_snapshot_does_not_certify_out_of_range_native_result(hass):
+    adapter = HourlyRecorder(hass)
+    adapter.submit(_rate_metadata(), (HourlyStatisticRow(START, mean=125),))
+    with (
+        patch.object(
+            hourly_recorder,
+            "statistics_during_period",
+            return_value={
+                RATE_ID: [
+                    {
+                        "start": (START + HOUR).timestamp(),
+                        "mean": 125,
+                        "min": None,
+                        "max": None,
+                        "last_reset": None,
+                    }
+                ]
+            },
+        ),
+        pytest.raises(HourlyRecorderError, match="out_of_range_recorder_snapshot"),
+    ):
+        await adapter.async_snapshot_range(RATE_ID, START, START + HOUR)
+
+
+async def test_bounded_snapshot_rejects_explicit_reset_but_v2_read_stays_compatible(
+    hass,
+):
+    adapter = HourlyRecorder(hass)
+    async_add_external_statistics(
+        hass,
+        _metadata(),
+        [{"start": START, "sum": 2, "state": 2, "last_reset": START}],
+    )
+    with pytest.raises(HourlyRecorderError, match="unexpected_statistic_reset"):
+        await adapter.async_snapshot_range(RUNTIME_ID, START, START + HOUR)
+    assert (await adapter.async_snapshot(RUNTIME_ID, START)).rows == (
+        HourlyStatisticRow(START, sum=2, state=2),
+    )

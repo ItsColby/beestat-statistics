@@ -130,8 +130,9 @@ select_hourly_statistics:
 get_hourly_coverage:
   name: Get hourly Beestat coverage
   description: >-
-    Read cached hourly coverage and selected identities without contacting Beestat,
-    importing statistics, or changing retained state.
+    Read cached v2 coverage or, with contract version 3, qualified logical history
+    and bounded Recorder verification. Does not contact Beestat, import statistics,
+    reconcile pending work, or change retained state.
   fields:
     config_entry_id:
       name: Configuration entry
@@ -153,10 +154,234 @@ get_hourly_coverage:
         datetime: {}
     statistic_ids:
       name: Statistic IDs
-      description: Omit to inspect all selected hourly series.
+      description: V2 only. Omit to inspect all selected hourly series. For contract version 3 use quantity IDs.
       selector:
         text:
           multiple: true
+    contract_version:
+      name: Contract version
+      description: Set to 3 for qualified logical history. Omit to retain the v2 coverage response.
+      selector:
+        number:
+          min: 3
+          max: 3
+          step: 1
+          mode: box
+    quantity_ids:
+      name: Quantity IDs
+      description: Required for contract version 3. Select 1–40 distinct physical quantity IDs from Get Beestat configuration.
+      selector:
+        text:
+          multiple: true
+    period:
+      name: Bucket period
+      description: Contract version 3 only. Hourly UTC buckets or local calendar days; defaults to hour.
+      selector:
+        select:
+          options:
+            - hour
+            - day
+    daily_policy:
+      name: Daily history policy
+      description: Contract version 3 only. Prefer complete point days, then qualified closed legacy days, then partial point subtotals. Never adds the sources.
+      selector:
+        select:
+          options:
+            - complete_points_else_legacy_day
+    page_size:
+      name: Page size
+      description: Contract version 3 only. Maximum returned buckets across all quantities, from 1 to 4096; defaults to 4096.
+      selector:
+        number:
+          min: 1
+          max: 4096
+          step: 1
+          mode: box
+    offset:
+      name: Page offset
+      description: Contract version 3 only. Zero-based bucket offset; defaults to 0. For later pages use the returned next_offset.
+      selector:
+        number:
+          min: 0
+          step: 1
+          mode: box
+    view_token:
+      name: View token
+      description: Contract version 3 only. Repeat the returned 64-character SHA-256 view token on later pages to reject changed history.
+      selector:
+        text: {}
+    evaluated_at:
+      name: Evaluation timestamp
+      description: Contract version 3 only. Repeat the returned evaluation timestamp, including its UTC offset, on later pages.
+      selector:
+        text: {}
+stage_hourly_source:
+  name: Stage hourly Beestat source
+  description: >-
+    Retain one verified original JSON or JSONL source chunk and its sealed manifest.
+    Requires an active administrator. Does not select quantities, change writer
+    reservations, or write Recorder statistics.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Loaded Beestat Statistics entry whose physical source identity matches the manifest.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    file_id:
+      name: Source file
+      description: Original UTF-8 JSON or JSONL chunk, at most 8 MiB and 10,000 rows. Uses the native upload handle; paths and URLs are not accepted.
+      required: true
+      selector:
+        file:
+          accept: application/json,application/x-ndjson,.json,.jsonl
+    sha256:
+      name: Original file digest
+      description: Exact 64-character lowercase SHA-256 digest of the original uploaded bytes.
+      required: true
+      selector:
+        text: {}
+    manifest:
+      name: Source manifest
+      description: Contract 3 source manifest containing entry/account/resource identity, acquisition and chunk order, format, explicit-offset timestamps, source kind, and beestat_points_v1 unit contract.
+      required: true
+      selector:
+        object: {}
+plan_hourly_history:
+  name: Plan hourly Beestat history
+  description: >-
+    Read sealed source evidence, current ownership, and bounded Recorder rows to
+    prepare an exact adoption or repair plan. Requires an active administrator.
+    Does not fetch source data, reconcile pending work, or change state.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Loaded Beestat Statistics entry to plan.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    source_ids:
+      name: Sealed source IDs
+      description: From 1 to 2048 distinct source manifest SHA-256 IDs returned by Stage hourly Beestat source.
+      required: true
+      selector:
+        text:
+          multiple: true
+    quantity_ids:
+      name: Quantity IDs
+      description: From 1 to 40 distinct physical quantity IDs from Get Beestat configuration.
+      required: true
+      selector:
+        text:
+          multiple: true
+    start:
+      name: Start hour
+      description: Inclusive whole UTC hour with an explicit offset.
+      required: true
+      selector:
+        text: {}
+    end:
+      name: End hour
+      description: Exclusive whole UTC hour with an explicit offset, at most 366 elapsed days after start.
+      required: true
+      selector:
+        text: {}
+    archive_policy:
+      name: Archive admission policy
+      description: Reject archives, or explicitly qualify archive-only points before the first provider point. Conflicting observations remain blocked.
+      required: true
+      selector:
+        select:
+          options:
+            - reject
+            - before_first_provider
+    daily_policy:
+      name: Daily history policy
+      description: Prefer complete point days, then qualified closed legacy days, then partial point subtotals. Never adds the sources.
+      required: true
+      selector:
+        select:
+          options:
+            - complete_points_else_legacy_day
+    operation_id:
+      name: Operation ID
+      description: Unique ID for this exact operation, 1–256 characters. Reuse only for the same intended plan.
+      required: true
+      selector:
+        text: {}
+    expected_revision:
+      name: Expected revision
+      description: Current nonnegative integer history_v3 revision from Get Beestat configuration.
+      required: true
+      selector:
+        number:
+          min: 0
+          step: 1
+          mode: box
+    consumer_contract:
+      name: Consumer contract
+      description: Contract version 3 and 1–16 consumers, each declaring consumer_id, version, history_contract 3, and daily_policy complete_points_else_legacy_day. This declaration does not validate the consumers.
+      required: true
+      selector:
+        object: {}
+    recovery_reference:
+      name: Recovery reference
+      description: Reference to the consistent recovery set, 1–256 characters. This declaration does not create or verify a backup.
+      required: true
+      selector:
+        text: {}
+    evaluated_at:
+      name: Evaluation timestamp
+      description: Omit for the first plan. Repeat the returned timestamp with its UTC offset when requesting more detail pages of that plan.
+      selector:
+        text: {}
+    detail_offset:
+      name: Detail offset
+      description: Zero-based batch detail offset. Does not change the semantic plan digest.
+      default: 0
+      selector:
+        number:
+          min: 0
+          step: 1
+          mode: box
+    detail_limit:
+      name: Detail limit
+      description: Maximum batch details to return, from 1 to 100.
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+          mode: box
+apply_hourly_history:
+  name: Apply hourly Beestat history
+  description: >-
+    Accept the exact reviewed plan and reserve its selected quantities for v3.
+    Requires an active administrator. The entry worker writes and verifies
+    Recorder batches; inspect history status for completion or a blocked operation.
+  fields:
+    config_entry_id:
+      name: Configuration entry
+      description: Loaded Beestat Statistics entry matching the nested plan.
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    plan_digest:
+      name: Plan digest
+      description: Exact 64-character lowercase SHA-256 plan_digest returned by Plan hourly Beestat history.
+      required: true
+      selector:
+        text: {}
+    plan:
+      name: Exact plan request
+      description: Complete unchanged request object returned by Plan hourly Beestat history, including its config_entry_id, evaluated_at, consumer contract, recovery reference, and expected revision.
+      required: true
+      selector:
+        object: {}
 repair_filter_change_boundary:
   name: Repair filter change boundary
   description: >-

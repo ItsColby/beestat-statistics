@@ -632,8 +632,13 @@ def _route_path(
         plan["unit_tests"] = sorted(set(plan["unit_tests"]) | {METADATA_TEST})
         plan["release"] = True
         plan["hacs"] |= path == "hacs.json" or path.endswith("manifest.json")
-    elif PurePosixPath(path).parent == PurePosixPath("docs") and path.endswith(".md"):
-        # Include removed documents consumed by retained navigation/link contracts.
+    elif (
+        PurePosixPath(path).parent == PurePosixPath("docs") and path.endswith(".md")
+    ) or (
+        PurePosixPath(path).parent == PurePosixPath("docs/examples")
+        and path.endswith(".json")
+    ):
+        # Static consumers check retained navigation and parse shipped JSON examples.
         plan["unit_tests"] = sorted(set(plan["unit_tests"]) | {METADATA_TEST})
     elif path == "pyproject.toml":
         plan["unresolved"].append(

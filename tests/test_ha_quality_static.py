@@ -766,6 +766,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "unknown_thermostat_id",
                 "statistics_import_failed",
                 "hourly_statistics_failed",
+                "hourly_history_admin_required",
                 "raw_points_admin_required",
                 "raw_points_invalid",
                 "raw_points_failed",
@@ -916,6 +917,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                         }
                         self.assertIn(anchor, anchors)
 
+    def test_documentation_json_examples_parse(self) -> None:
+        for path in (ROOT / "docs/examples").glob("*.json"):
+            with self.subTest(example=path.name):
+                json.loads(path.read_text(encoding="utf-8"))
+
     def test_repository_support_templates_reduce_secret_leak_risk(self) -> None:
         bug_template = (ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(
             encoding="utf-8"
@@ -981,7 +987,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             )
             service_block = services_text[match.end() : block_end]
             field_keys = set(
-                re.findall(r"^    ([a-z_]+):$", service_block, re.MULTILINE)
+                re.findall(r"^    ([a-z_][a-z0-9_]*):$", service_block, re.MULTILINE)
             )
             self.assertIn("name", translations["services"][key])
             self.assertIn("description", translations["services"][key])

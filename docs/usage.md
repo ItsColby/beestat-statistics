@@ -410,6 +410,26 @@ base ID; each item identifies the active statistic ID, including a later segment
 The response covers cached verified observations, not a fresh provider query or a
 union of closed and active segments.
 
+### Qualified independent-hour history
+
+The additive v3 contract keeps each physical quantity on a stable identity and
+returns values with explicit point completeness, source qualification and native
+verification. Read its descriptors from `get_configuration`, then pass explicit
+`quantity_ids` and `contract_version: 3` to `get_hourly_coverage`. Both reads
+leave source, journal and Recorder state unchanged. Current or incomplete
+observations remain visibly unqualified; missing observations are never zero.
+
+An active administrator uses `stage_hourly_source` to retain bounded native
+uploads, `plan_hourly_history` to inspect an exact read-only proposal, and
+`apply_hourly_history` to accept that proposal for the entry's background worker.
+Admission preserves the selected quantity's writer reservation through failures.
+Existing v2 history is not converted automatically. Prepare compatible consumers
+and a consistent recovery set before adoption.
+
+See [the complete v3 contract](hourly-history-v3.md) for staging manifests,
+original-byte limits, request examples, hourly/daily eligibility, stable paging,
+operation progress and interrupted-work recovery.
+
 ### Read source points without importing
 
 An active Home Assistant administrator can call `get_raw_points` for one

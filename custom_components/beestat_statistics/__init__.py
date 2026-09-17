@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable, Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
@@ -16,6 +17,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import voluptuous as vol
+from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.components.recorder.models.statistics import (
     StatisticData,
     StatisticMetaData,
@@ -179,8 +181,34 @@ from .entry_options import (
     saved_filter_boundary,
 )
 from .filter_forecast import build_filter_forecast, filter_forecast_quality_attributes
-from .hourly_import import HourlyImportManager, HourlyReconciliationError
+from .hourly_history_contract import (
+    MAX_SOURCE_BYTES,
+    SERVICE_APPLY_HOURLY_HISTORY,
+    SERVICE_PLAN_HOURLY_HISTORY,
+    SERVICE_STAGE_HOURLY_SOURCE,
+)
+from .hourly_history_contract import (
+    digest as history_digest,
+)
+from .hourly_history_contract import (
+    quantity_id as history_quantity_id,
+)
+from .hourly_history_query import history_response
+from .hourly_history_runtime import async_refresh_history
+from .hourly_history_service import (
+    APPLY_HISTORY_SCHEMA,
+    COVERAGE_HISTORY_SCHEMA,
+    PLAN_HISTORY_SCHEMA,
+    STAGE_HISTORY_SCHEMA,
+)
+from .hourly_history_values import build_history_series
+from .hourly_import import (
+    HourlyImportError,
+    HourlyImportManager,
+    HourlyReconciliationError,
+)
 from .hourly_recorder import HourlyRecorderError
+from .hourly_sources import stage_source
 from .hourly_statistics import HourlySeries, build_hourly_statistics
 from .hourly_storage import HourlyStorageError
 from .import_evidence import SkippedWindowEvidence
@@ -403,13 +431,16 @@ SELECT_HOURLY_SERVICE_SCHEMA = vol.Schema(
     }
 )
 
-GET_HOURLY_COVERAGE_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        vol.Required(ATTR_START): cv.datetime,
-        vol.Required(ATTR_END): cv.datetime,
-        vol.Optional(ATTR_STATISTIC_IDS): vol.All([cv.string], vol.Length(min=1)),
-    }
+GET_HOURLY_COVERAGE_SERVICE_SCHEMA = vol.Any(
+    COVERAGE_HISTORY_SCHEMA,
+    vol.Schema(
+        {
+            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+            vol.Required(ATTR_START): cv.datetime,
+            vol.Required(ATTR_END): cv.datetime,
+            vol.Optional(ATTR_STATISTIC_IDS): vol.All([cv.string], vol.Length(min=1)),
+        }
+    ),
 )
 
 GET_RAW_POINTS_SERVICE_SCHEMA = vol.Schema(
@@ -620,6 +651,7 @@ class BeestatStatisticsImporter:
         self._point_lookback_days = point_lookback_days
         self._lock = asyncio.Lock()
         self._unloaded = False
+        self._history_worker: asyncio.Task[None] | None = None
         self.hourly = HourlyImportManager(hass, coordinator.beestat_config_entry)
         coordinator.beestat_config_entry.async_on_unload(self._async_unload)
 
@@ -629,6 +661,243 @@ class BeestatStatisticsImporter:
 
         self._unloaded = True
         self.hourly.close()
+
+    def _history_context(self) -> dict[str, Any]:
+        """Detach identity/configuration without acquiring or changing anything."""
+        entry = self._coordinator.beestat_config_entry
+        runtime = getattr(entry, "runtime_data", None)
+        data = self._coordinator.data
+        if (
+            self._unloaded
+            or data is None
+            or entry.state is not ConfigEntryState.LOADED
+            or runtime is None
+            or runtime.importer is not self
+            or runtime.client is not self._client
+        ):
+            raise ValueError("history_entry_unavailable")
+        temporal = self._coordinator.capture_temporal_context()
+        identity = _writer_identity(entry, data)
+        configuration = configuration_response(
+            entry_id=entry.entry_id,
+            entry_data=entry.data,
+            entry_options=entry.options,
+            config=data.config,
+            point_lookback_days=self._point_lookback_days,
+            scan_interval_seconds=_entry_scan_interval_seconds(entry),
+        )
+        revision = history_digest(configuration)
+        stop = temporal.evaluated_at.replace(minute=0, second=0, microsecond=0)
+        inventory = build_hourly_statistics(
+            {},
+            {},
+            data.config,
+            start=stop - timedelta(hours=1),
+            end=stop,
+            evaluated_at=temporal.evaluated_at,
+            source_end_by_thermostat={},
+            existing_statistic_ids=(
+                *cumulative_statistic_ids(data.config, list(data.summary_rows)),
+                *(
+                    base.removesuffix("_hourly_v2")
+                    for base, resource in identity["resources"].items()
+                    if history_quantity_id(resource)
+                    in self.hourly.history_quantity_ids()
+                ),
+            ),
+        )
+        # Inventory describes method eligibility; it does not claim source data.
+        inventory = tuple(
+            replace(
+                item,
+                hours=(),
+                blocked_reason=(
+                    item.blocked_reason
+                    if item.blocked_reason == "voc_unit_unresolved"
+                    else None
+                ),
+            )
+            for item in inventory
+        )
+
+        def check_current() -> None:
+            current = self._coordinator.data
+            if (
+                self._unloaded
+                or entry.state is not ConfigEntryState.LOADED
+                or getattr(entry, "runtime_data", None) is not runtime
+                or current is None
+                or current.config != data.config
+                or _writer_identity(entry, current) != identity
+                or not self._coordinator.temporal_context_is_current(temporal)
+                or history_digest(
+                    configuration_response(
+                        entry_id=entry.entry_id,
+                        entry_data=entry.data,
+                        entry_options=entry.options,
+                        config=current.config,
+                        point_lookback_days=self._point_lookback_days,
+                        scan_interval_seconds=_entry_scan_interval_seconds(entry),
+                    )
+                )
+                != revision
+            ):
+                raise ValueError("history_context_changed")
+
+        return {
+            "identity": deepcopy(identity),
+            "config": deepcopy(data.config),
+            "config_revision": revision,
+            "timezone": temporal.local_tz.key,
+            "timezone_revision": temporal.timezone_revision,
+            "evaluated_at": temporal.evaluated_at.isoformat(),
+            "descriptors": [
+                item.descriptor for item in build_history_series(inventory, identity)
+            ],
+            "check_current": check_current,
+        }
+
+    def history_configuration(self) -> dict[str, Any]:
+        """Project cached capability and status without a provider/Recorder read."""
+        return self.hourly.history_configuration(self._history_context())
+
+    async def async_stage_hourly_source(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        async with self._lock:
+            context = self._history_context()
+            receipt = await self._hass.async_add_executor_job(
+                self._stage_uploaded_source, deepcopy(request), context["identity"]
+            )
+            context["check_current"]()
+            return receipt
+
+    def _stage_uploaded_source(
+        self, request: dict[str, Any], identity: dict[str, Any]
+    ) -> dict[str, Any]:
+        # The native context includes cleanup and must remain off the event loop.
+        # Both immutable objects are durably verified before the upload is freed.
+        with process_uploaded_file(self._hass, request["file_id"]) as path:
+            with path.open("rb") as source:
+                content = source.read(MAX_SOURCE_BYTES + 1)
+            return stage_source(
+                self.hourly._store,
+                content,
+                request["manifest"],
+                request["sha256"],
+                identity,
+            )
+
+    async def async_plan_hourly_history(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        async with self._lock:
+            context = self._history_context()
+            response = await self.hourly.async_plan_history(request, context=context)
+            context["check_current"]()
+            return response
+
+    async def async_apply_hourly_history(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        if request["plan"]["config_entry_id"] != request["config_entry_id"]:
+            raise ValueError("history_plan_entry_mismatch")
+        # Service cancellation cannot cancel durably accepted work or prevent its
+        # entry worker from being scheduled after acceptance.
+        task = self._coordinator.beestat_config_entry.async_create_background_task(
+            self._hass,
+            self._async_accept_hourly_history(request),
+            f"{DOMAIN}_accept_hourly_history",
+        )
+        return await asyncio.shield(task)
+
+    async def _async_accept_hourly_history(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        async with self._lock:
+            context = self._history_context()
+            response = await self.hourly.async_accept_history(
+                {**request["plan"], "plan_digest": request["plan_digest"]},
+                context=context,
+            )
+            self._ensure_history_worker()
+            self._notify_history_changed()
+            return response
+
+    def _ensure_history_worker(self) -> None:
+        if self._unloaded or not self.hourly.has_pending_history:
+            return
+        if self._history_worker is None or self._history_worker.done():
+            self._history_worker = (
+                self._coordinator.beestat_config_entry.async_create_background_task(
+                    self._hass,
+                    self._async_run_hourly_history_operation(),
+                    f"{DOMAIN}_hourly_history",
+                )
+            )
+
+    def _notify_history_changed(self) -> None:
+        """Reuse status-entity updates for corrections to closed history."""
+        status = self.hourly.status().get("history_v3", {})
+        self._coordinator.hourly_history_revision = status.get("root_revision", 0)
+        self._coordinator.hourly_history_status = status.get("status", "legacy")
+        self._coordinator.async_update_listeners()
+
+    async def _async_run_hourly_history_operation(self) -> None:
+        try:
+            while not self._unloaded and self.hourly.has_pending_history:
+                async with self._lock:
+                    context = self._history_context()
+                    result = await self.hourly.async_advance_history(context=context)
+                    self._notify_history_changed()
+                if result.get("status") in {"blocked", "completed"}:
+                    break
+                await asyncio.sleep(0)
+        except Exception as err:  # noqa: BLE001 - journal retains exact recovery intent
+            _LOGGER.warning("History operation paused (%s)", exception_fingerprint(err))
+            self._notify_history_changed()
+
+    async def async_get_hourly_history(self, request: dict[str, Any]) -> dict[str, Any]:
+        # A read must see pending suppression while a writer awaits native work.
+        context = self._history_context()
+        material = await self.hourly.async_history_material(request, context=context)
+        context["check_current"]()
+        return history_response(request, material, context)
+
+    async def _async_refresh_hourly_history(
+        self, *, lookback_days: int, rebuilding: bool
+    ) -> str | None:
+        """Refresh adopted v3 quantities on the existing locked import cadence."""
+        status = self.hourly.history_status()
+        if status["status"] == "unselected":
+            return None
+        if rebuilding:
+            # An explicit historical repair needs its own sealed plan and bounds.
+            return "history_rebuild_requires_plan"
+        if status["status"] != "completed":
+            self._ensure_history_worker()
+            return "history_operation_pending"
+        try:
+            result = await async_refresh_history(
+                self, self._history_context(), lookback_days=lookback_days
+            )
+        except (
+            ValueError,
+            HourlyImportError,
+            HourlyRecorderError,
+            HourlyStorageError,
+            BeestatApiError,
+        ) as err:
+            _LOGGER.warning("History refresh paused (%s)", exception_fingerprint(err))
+            return "history_refresh_unverified"
+        finally:
+            self._ensure_history_worker()
+            self._notify_history_changed()
+        return (
+            "history_operation_pending"
+            if result.get("status") in {"accepted", "in_progress", "blocked"}
+            else None
+        )
 
     async def async_get_raw_points(self, request: RawPointRequest) -> dict[str, Any]:
         """Run a bounded source read under the loaded entry's task lifecycle."""
@@ -726,6 +995,7 @@ class BeestatStatisticsImporter:
                     self._coordinator.beestat_config_entry, self._coordinator.data
                 )
             )
+            self._ensure_history_worker()
             blocked = partition.hourly_blocked_reason
             if partition.hourly_ready:
                 try:
@@ -768,6 +1038,11 @@ class BeestatStatisticsImporter:
                     HourlyStorageError,
                 ):
                     blocked = "hourly_effect_unverified"
+            history_blocked = await self._async_refresh_hourly_history(
+                lookback_days=lookback_days,
+                rebuilding=rebuild_start is not None or rebuild_end is not None,
+            )
+            blocked = blocked or history_blocked
             # A failed save can invalidate the manager's in-memory state, and
             # settings may change during an await. Never reuse an old partition.
             if self._unloaded:
@@ -1727,7 +2002,10 @@ async def _async_handle_get_configuration(
             for thermostat in data.config.thermostats
         },
         hourly_statistics=(
-            runtime.importer.hourly.status()
+            {
+                **runtime.importer.hourly.status(),
+                "history_v3": runtime.importer.history_configuration(),
+            }
             if getattr(runtime, "importer", None) is not None
             else None
         ),
@@ -1757,6 +2035,8 @@ async def _async_handle_hourly_service(
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
     ids = call.data.get(ATTR_STATISTIC_IDS)
     try:
+        if call.data.get("contract_version") == 3:
+            return await importer.async_get_hourly_history(dict(call.data))
         if call.service == SERVICE_SELECT_HOURLY_STATISTICS:
             return await importer.async_select_hourly_statistics(
                 epoch_start=call.data[ATTR_EPOCH_START],
@@ -1777,6 +2057,36 @@ async def _async_handle_hourly_service(
     except Exception as err:  # noqa: BLE001 - sanitize the service boundary
         _LOGGER.warning(
             "Hourly statistics action did not complete (%s)", exception_fingerprint(err)
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="hourly_statistics_failed"
+        ) from None
+
+
+async def _async_handle_history_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    """Keep evidence admission and history effects behind an active admin."""
+    user = (
+        await hass.auth.async_get_user(call.context.user_id)
+        if call.context.user_id is not None
+        else None
+    )
+    if user is None or not user.is_active or not user.is_admin:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="hourly_history_admin_required"
+        )
+    importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
+    try:
+        request = dict(call.data)
+        if call.service == SERVICE_STAGE_HOURLY_SOURCE:
+            return await importer.async_stage_hourly_source(request)
+        if call.service == SERVICE_PLAN_HOURLY_HISTORY:
+            return await importer.async_plan_hourly_history(request)
+        return await importer.async_apply_hourly_history(request)
+    except Exception as err:  # noqa: BLE001 - no private payload or raw errors in output
+        _LOGGER.warning(
+            "History action did not complete (%s)", exception_fingerprint(err)
         )
         raise HomeAssistantError(
             translation_domain=DOMAIN, translation_key="hourly_statistics_failed"
@@ -2057,6 +2367,19 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         schema=GET_RAW_POINTS_SERVICE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+
+    for service, schema in (
+        (SERVICE_STAGE_HOURLY_SOURCE, STAGE_HISTORY_SCHEMA),
+        (SERVICE_PLAN_HOURLY_HISTORY, PLAN_HISTORY_SCHEMA),
+        (SERVICE_APPLY_HOURLY_HISTORY, APPLY_HISTORY_SCHEMA),
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            service,
+            partial(_async_handle_history_service, hass),
+            schema=schema,
+            supports_response=SupportsResponse.ONLY,
+        )
 
     hass.services.async_register(
         DOMAIN,

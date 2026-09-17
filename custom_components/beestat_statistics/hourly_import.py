@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from math import fsum, isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .const import (
     DETAILED_RUNTIME_FIELDS,
@@ -33,6 +33,9 @@ from .hourly_import_plan import (
     segment_id,
 )
 from .hourly_statistics import HourlySeries
+
+if TYPE_CHECKING:
+    from .hourly_history_writer import HistoryWriter
 
 MARKER = "hourly_import_contract"
 _VERSION = 1
@@ -256,9 +259,174 @@ class HourlyImportManager:
 
     @property
     def _document(self) -> dict[str, Any]:
-        if self._state is None:
+        state = self._legacy_state
+        if state is None:
             raise HourlyImportError("Hourly state has not been adopted")
+        return state
+
+    @property
+    def _legacy_state(self) -> dict[str, Any] | None:
+        if self._state is not None and self._state.get("version") == 3:
+            from .hourly_history_writer import legacy_document  # noqa: PLC0415
+
+            return legacy_document(self._state)
         return self._state
+
+    def _history_writer(self) -> HistoryWriter:
+        from .hourly_history_writer import HistoryWriter  # noqa: PLC0415
+
+        return HistoryWriter(self)
+
+    @property
+    def has_pending_history(self) -> bool:
+        """Tell the entry worker whether an accepted v3 operation can advance."""
+        return bool(self.history_status().get("has_pending"))
+
+    def history_status(self) -> dict[str, Any]:
+        from .hourly_history_writer import status  # noqa: PLC0415
+
+        result = status(self._state)
+        state = self._state
+        if state is None and (self._entry.data.get(MARKER) or {}).get("version") == 3:
+            result.update(
+                status="blocked",
+                error=self._error or "history_state_unavailable",
+                has_pending=False,
+            )
+        if state and state.get("version") == 3:
+            if self.has_pending_store_save():
+                result.update(
+                    status="blocked",
+                    error="history_store_write_pending",
+                    has_pending=False,
+                )
+            if state["token"] == getattr(self, "_invalidated_history_token", None):
+                result.update(
+                    status="blocked",
+                    error="history_root_invalidated",
+                    has_pending=False,
+                )
+            marker = self._entry.data.get(MARKER)
+            expected = {"version": 3, "token": state["token"]}
+            prepared = state["phase"] == "prepared" and marker == state.get(
+                "previous_marker"
+            )
+            if marker != expected and not prepared:
+                result.update(
+                    status="blocked", error="history_marker_mismatch", has_pending=False
+                )
+        return result
+
+    async def async_plan_history(
+        self, request: dict[str, Any], *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Read sealed source and bounded native snapshots without effects."""
+        return await self._history_writer().plan_response(request, context)
+
+    async def async_accept_history(
+        self, request: dict[str, Any], *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Durably accept the exact reviewed manifest; the entry worker advances it."""
+        return await self._history_writer().accept(request, context)
+
+    async def async_advance_history(self, *, context: dict[str, Any]) -> dict[str, Any]:
+        """Reconcile and commit at most one quantity/month under this journal."""
+        return await self._history_writer().advance(context)
+
+    async def async_refresh_history(
+        self, request: dict[str, Any], *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Accept ordinary provider corrections under the adopted bounded policy."""
+        return await self._history_writer().refresh(request, context)
+
+    async def async_history_source_points(
+        self, request: dict[str, Any], *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Read the committed indexed point baseline for bounded delta evaluation."""
+        return await self._history_writer().source_points(request, context)
+
+    async def async_history_material(
+        self, request: dict[str, Any], *, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Read detached proof and native rows for the pure logical query."""
+        return await self._history_writer().material(request, context)
+
+    def history_configuration(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Project capabilities and cached reservations without I/O."""
+        return self._history_writer().configuration(context)
+
+    def history_quantity_ids(self) -> tuple[str, ...]:
+        """Return only cached physically adopted/reserved v3 quantities."""
+        state = self._state or {}
+        if state.get("version") != 3:
+            return ()
+        return tuple(sorted(state["history"]["selections"]))
+
+    def has_pending_store_save(self) -> bool:
+        """Keep the sole save-task owner inside the journal manager."""
+        task = self._hass.data.get(_SAVES, {}).get(self._entry.entry_id)
+        return task is not None and not task.done()
+
+    async def _check_history_root_fence(self, state: dict[str, Any] | None) -> None:
+        """A durable immutable fence rejects a predecessor even with an old marker."""
+        if state is None or state.get("version") != 3:
+            return
+        if self.has_pending_store_save():
+            raise HourlyImportError("history_store_write_pending")
+        previous = self._hass.data.get(_SAVES, {}).get(self._entry.entry_id)
+        if (
+            previous is not None
+            and getattr(previous, "_beestat_history_fence", None) == state["token"]
+        ):
+            self._invalidated_history_token = state["token"]
+            if previous.cancelled() or previous.exception() is not None:
+                raise HourlyImportError("history_invalidation_fence_unverified")
+        fence = {"kind": "history_invalidated_root", "token": state["token"]}
+        try:
+            raw = await self._store.async_read_object("operation", _digest(fence))
+        except FileNotFoundError:
+            self._admit()
+            return
+        except Exception as err:
+            self._invalidated_history_token = state["token"]
+            raise HourlyImportError("history_invalidation_fence_unreadable") from err
+        self._admit()
+        self._invalidated_history_token = state["token"]
+        if sha256(raw).hexdigest() != _digest(fence):
+            raise HourlyImportError("history_invalidation_fence_corrupt")
+        raise HourlyImportError("history_root_invalidated")
+
+    async def _invalidate_history_root(self, token: str) -> str:
+        """Persist a deterministic fence in the existing immutable operation owner."""
+        self._admit()
+        if self.has_pending_store_save():
+            raise HourlyImportError("history_store_write_pending")
+        fence = {"kind": "history_invalidated_root", "token": token}
+        raw = json.dumps(
+            fence, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        expected = _digest(fence)
+        self._invalidated_history_token = token
+        task = self._hass.async_create_task(self._persist_history_fence(raw, expected))
+        task._beestat_history_fence = token
+        self._hass.data.setdefault(_SAVES, {})[self._entry.entry_id] = task
+        try:
+            await asyncio.shield(task)
+            self._admit()
+        except BaseException:
+            self._loaded = False
+            self._error = "history_invalidation_fence_unverified"
+            raise
+        return expected
+
+    async def _persist_history_fence(self, raw: bytes, expected: str) -> None:
+        """One tracked task owns write plus readback even if its caller cancels."""
+        reference = await self._store.async_write_object("operation", raw)
+        self._admit()
+        stored = await self._store.async_read_object("operation", expected)
+        self._admit()
+        if reference != expected or stored != raw:
+            raise HourlyImportError("history_invalidation_fence_unverified")
 
     def close(self) -> None:
         """Stop admission immediately; surviving storage/Recorder work is drained."""
@@ -271,6 +439,7 @@ class HourlyImportManager:
     async def _load(self) -> None:
         self._admit()
         if self._loaded:
+            await self._check_history_root_fence(self._state)
             return
         saves = self._hass.data.setdefault(_SAVES, {})
         previous = saves.get(self._entry.entry_id)
@@ -279,13 +448,17 @@ class HourlyImportManager:
                 await asyncio.shield(previous)
             except Exception:  # noqa: BLE001 - prior uncertain save is resolved from disk
                 self._error = "previous_hourly_save_unverified"
-            if saves.get(self._entry.entry_id) is previous:
+            if (
+                saves.get(self._entry.entry_id) is previous
+                and getattr(previous, "_beestat_history_fence", None) is None
+            ):
                 saves.pop(self._entry.entry_id)
         self._admit()
         try:
             state = await self._store.async_load()
             if state is not None:
                 self._validate(state)
+                await self._check_history_root_fence(state)
             if state is None and self._entry.data.get(MARKER) is not None:
                 raise HourlyImportError(
                     "Adopted hourly state is missing; legacy writes are blocked"
@@ -300,6 +473,14 @@ class HourlyImportManager:
             ) from err
 
     def _validate(self, state: Any) -> None:
+        if isinstance(state, dict) and state.get("version") == 3:
+            from .hourly_history_writer import validate_root  # noqa: PLC0415
+
+            validate_root(self, state)
+            return
+        self._validate_legacy(state)
+
+    def _validate_legacy(self, state: Any) -> None:
         try:
             body = {key: value for key, value in state.items() if key != "integrity"}
             valid = (
@@ -430,13 +611,23 @@ class HourlyImportManager:
 
     async def _save(self, value: dict[str, Any]) -> None:
         self._admit()
+        if value.get("version") == _VERSION and (self._state or {}).get("version") == 3:
+            from .hourly_history_writer import wrap_legacy_save  # noqa: PLC0415
+
+            assert self._state is not None
+            value = wrap_legacy_save(self._state, value)
         state = deepcopy(value)
         state.pop("integrity", None)
         state["integrity"] = _digest(state)
         self._validate(state)
         # A new intent must suppress before yielding. Completion, including
         # removal of that suppression, is visible only after verified persistence.
-        if state.get("pending") or state.get("pending_selection"):
+        if (
+            state.get("pending")
+            or state.get("pending_selection")
+            or (state.get("legacy_v2") or {}).get("pending_selection")
+            or (state.get("version") == 3 and state.get("phase") == "prepared")
+        ):
             self._state = state
         task = self._hass.async_create_task(self._store.async_save(deepcopy(state)))
         self._hass.data.setdefault(_SAVES, {})[self._entry.entry_id] = task
@@ -455,6 +646,21 @@ class HourlyImportManager:
         marker = self._entry.data.get(MARKER)
         if self._state is None:
             return "legacy"
+        if self._state.get("version") == 3:
+            if (
+                marker != {"version": 3, "token": self._state["token"]}
+                or self._state["phase"] != "hourly"
+            ):
+                raise HourlyImportError("History marker and journal disagree")
+            if self._legacy_state is None:
+                return "history"
+            if (
+                self.has_pending_history
+                or (self._state.get("pending") or {}).get("generation") == 3
+                or self._document.get("pending_selection")
+            ):
+                raise HourlyImportError("History operation owns the shared writer")
+            return "hourly"
         if self._state.get("pending_selection") or self._document["phase"] != "hourly":
             raise HourlyImportError(
                 "An interrupted explicit hourly selection must be retried"
@@ -477,6 +683,13 @@ class HourlyImportManager:
         reserves its quantities immediately; unrelated legacy quantities remain eligible.
         """
         await self._load()
+        if self._state is not None and self._state.get("version") == 3:
+            from .hourly_history_writer import partition  # noqa: PLC0415
+
+            return partition(self, identity)
+        return self._legacy_writer_partition(identity)
+
+    def _legacy_writer_partition(self, identity: dict[str, Any]) -> WriterPartition:
         if self._state is not None:
             self._identity(identity, require_resources=False)
         elif identity.get("entry_id") != self._entry.entry_id:
@@ -544,7 +757,7 @@ class HourlyImportManager:
             raise HourlyImportError("Writer partition identity is invalid") from err
 
     def base_statistic_ids(self) -> tuple[str, ...]:
-        return tuple((self._state or {}).get("series", {}))
+        return tuple((self._legacy_state or {}).get("series", {}))
 
     def bootstrap_start(
         self,
@@ -556,7 +769,7 @@ class HourlyImportManager:
         eligible = _eligible_keys(eligible_resources)
         epochs = [
             _time(record["epoch_start"])
-            for record in (self._state or {}).get("series", {}).values()
+            for record in (self._legacy_state or {}).get("series", {}).values()
             if record["metadata"].get("has_sum")
             and record["checkpoint"] is None
             and (eligible is None or _resource(record["resource"]) in eligible)
@@ -580,7 +793,7 @@ class HourlyImportManager:
         ordinary = start if ordinary_start is None else _time(ordinary_start)
         records = {
             _resource(record["resource"]): record
-            for record in (self._state or {}).get("series", {}).values()
+            for record in (self._legacy_state or {}).get("series", {}).values()
         }
         return {
             statistic_id: min(
@@ -597,8 +810,9 @@ class HourlyImportManager:
 
     def status(self) -> dict[str, Any]:
         """Return a detached cached status; never fetch provider or Recorder data."""
-        state = self._state or {}
+        state = self._legacy_state or {}
         return {
+            "history_v3": self.history_status(),
             "mode": state.get("phase", "unloaded" if not self._loaded else "legacy"),
             "revision": state.get("revision", 0),
             "pending": bool(state.get("pending") or state.get("pending_selection")),
@@ -642,7 +856,7 @@ class HourlyImportManager:
                 "Hourly imports require a verified account and resource identity"
             )
         if compare and self._state is not None:
-            old = self._document["identity"]
+            old = self._state["identity"]
             if (
                 old["entry_id"] != identity["entry_id"]
                 or old["api_base"] != identity["api_base"]
@@ -696,6 +910,14 @@ class HourlyImportManager:
     async def async_reconcile(self) -> None:
         """Drain and reconcile a saved batch before acquiring fresh source data."""
         await self._load()
+        if self._state is not None and self._state.get("version") == 3:
+            pending = self._state.get("pending")
+            if pending and pending.get("generation") == 3:
+                raise HourlyImportError(
+                    "Use the guarded history worker to reconcile v3"
+                )
+            if self._legacy_state is None or not self._legacy_state.get("pending"):
+                return
         if self._state is None or self._state.get("pending") is None:
             return
         if await self.async_mode() != "hourly":
@@ -1044,6 +1266,30 @@ class HourlyImportManager:
             boundaries.append(next_unverified)
         return min(boundaries)
 
+    def _admit_legacy_selection(
+        self, ids: tuple[str, ...], identity: dict[str, Any]
+    ) -> None:
+        if self._state is not None and self._state.get("version") == 3:
+            from .hourly_history_contract import quantity_id  # noqa: PLC0415
+
+            if (
+                self._state["operation"]["status"] != "completed"
+                or (self._state.get("pending") or {}).get("generation") == 3
+            ):
+                raise HourlyImportError("History operation owns the shared writer")
+            if self._entry.data.get(MARKER) != {
+                "version": 3,
+                "token": self._state["token"],
+            }:
+                raise HourlyImportError("History marker and journal disagree")
+            selected = self._state["history"]["selections"]
+            if any(
+                quantity_id(identity["resources"][base]) in selected
+                for base in ids
+                if base in identity["resources"]
+            ):
+                raise HourlyImportError("Physical quantity already has a v3 owner")
+
     async def async_select(
         self,
         series: tuple[HourlySeries, ...],
@@ -1056,6 +1302,7 @@ class HourlyImportManager:
     ) -> dict[str, Any]:
         """Preview or apply an explicit exact selection, never infer an epoch."""
         await self._load()
+        self._admit_legacy_selection(statistic_ids, identity)
         self._identity(identity)
         epoch = _time(epoch_start)
         if epoch >= datetime.now(UTC).replace(minute=0, second=0, microsecond=0):
@@ -1084,13 +1331,16 @@ class HourlyImportManager:
                 snapshots[base] = snapshot
             preview.append(projection)
         adopted = {
-            **({} if self._state is None else _validated_records(self._state)),
+            **(
+                {} if self._legacy_state is None else _validated_records(self._document)
+            ),
             **records,
         }
         frozen_resources = {
             _resource(record["resource"]) for record in adopted.values()
         }
         frozen_legacy_ids = {base.removesuffix(_SUCCESSOR) for base in adopted}
+        self._include_history_reservations(frozen_resources, frozen_legacy_ids)
         continuing_legacy_ids = set()
         for base, resource in identity["resources"].items():
             if _resource(resource) in frozen_resources:
@@ -1127,7 +1377,7 @@ class HourlyImportManager:
         await self._clear_closed_suffixes(snapshots)
         state = (
             deepcopy(self._document)
-            if self._state is not None
+            if self._legacy_state is not None
             else {
                 "version": _VERSION,
                 "entry_id": self._entry.entry_id,
@@ -1148,6 +1398,16 @@ class HourlyImportManager:
         }
         await self._save(state)
         return await self._finish_selection()
+
+    def _include_history_reservations(
+        self, resources: set[tuple[Any, ...]], aliases: set[str]
+    ) -> None:
+        for selection in (
+            (self._state or {}).get("history", {}).get("selections", {}).values()
+        ):
+            descriptor = selection["descriptor"]
+            resources.add(_resource(descriptor))
+            aliases.update(descriptor["legacy_statistic_ids"])
 
     async def _clear_closed_suffixes(
         self, snapshots: dict[str, RecorderSnapshot]
@@ -1185,7 +1445,7 @@ class HourlyImportManager:
         resources = identities["resources"]
         owned = {
             _resource(record["resource"]): base
-            for base, record in (self._state or {}).get("series", {}).items()
+            for base, record in (self._legacy_state or {}).get("series", {}).items()
         }
         available = {}
         for item in series:
@@ -1205,7 +1465,7 @@ class HourlyImportManager:
         self, series: tuple[HourlySeries, ...], identity: dict[str, Any]
     ) -> None:
         """An explicit retry cannot rebind its saved resources or quantity units."""
-        pending = (self._state or {}).get("pending_selection")
+        pending = (self._legacy_state or {}).get("pending_selection")
         if pending is None:
             return
         current = {
@@ -1227,10 +1487,10 @@ class HourlyImportManager:
         self, epoch: datetime, ids: tuple[str, ...], revision: int, digest: str | None
     ) -> dict[str, Any] | None:
         """Resume only the exact explicit selection after either owner's interruption."""
-        if self._state is None:
+        if self._legacy_state is None:
             return None
-        pending = self._state.get("pending_selection")
-        previous = pending or self._state.get("last_selection")
+        pending = self._document.get("pending_selection")
+        previous = pending or self._document.get("last_selection")
         matches = bool(
             previous
             and digest == previous["digest"]
@@ -1287,7 +1547,7 @@ class HourlyImportManager:
             raise HourlyImportError(
                 "Selected epoch needs a complete observed hour with trusted units"
             )
-        old = (self._state or {}).get("series", {}).get(base)
+        old = (self._legacy_state or {}).get("series", {}).get(base)
         target = base
         if old is not None:
             if (
@@ -1360,6 +1620,8 @@ class HourlyImportManager:
                 )
         self._admit()
         marker = {"version": _VERSION, "token": self._document["token"]}
+        if self._state is not None and self._state.get("version") == 3:
+            marker = {"version": 3, "token": self._state["token"]}
         current = self._entry.data.get(MARKER)
         if current is not None and current != marker:
             raise HourlyImportError("Hourly adoption marker changed")
@@ -1391,7 +1653,7 @@ class HourlyImportManager:
             raise HourlyImportError(
                 "Coverage needs a positive window of at most 366 days"
             )
-        state = self._state or {}
+        state = self._legacy_state or {}
         pending = state.get("pending")
         pending_starts = (
             set() if pending is None else {row["start"] for row in pending["rows"]}

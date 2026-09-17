@@ -21,6 +21,56 @@ from scripts import run_dependency_light_tests as planner
 
 
 class ValidationSelectionTests(unittest.TestCase):
+    def _planning_fixture(self, directory: Path, *, snapshot: bool) -> tuple[Path, str]:
+        """Give CLI tests their own baseline, including the runner's unborn snapshot."""
+        source = directory / "source"
+        for relative in (
+            planner.PLANNER,
+            "scripts/verify-release-local.sh",
+            "tests/test_runtime_ha.py",
+            planner.METADATA_TEST,
+            "README.md",
+        ):
+            target = source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+        env = dict(
+            os.environ,
+            GIT_AUTHOR_NAME="Validation",
+            GIT_COMMITTER_NAME="Validation",
+            GIT_AUTHOR_EMAIL="validation@example.com",
+            GIT_COMMITTER_EMAIL="validation@example.com",
+            GIT_CONFIG_GLOBAL=os.devnull,
+            GIT_CONFIG_NOSYSTEM="1",
+        )
+
+        def git(root, *args):
+            return subprocess.check_output(
+                ["git", "-C", str(root), *args], env=env, text=True
+            ).strip()
+
+        git(source, "-c", "init.templateDir=", "init", "-q")
+        git(source, "add", "-A", "-f")
+        baseline = git(source, "commit-tree", git(source, "write-tree"), "-m", "base")
+        git(source, "update-ref", "HEAD", baseline)
+        if not snapshot:
+            return source, ""
+        target = directory / "snapshot"
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns(".git"))
+        git(target, "-c", "init.templateDir=", "init", "-q")
+        git(target, "add", "-A", "-f")
+        self.assertNotEqual(
+            0,
+            subprocess.run(
+                ["git", "-C", str(target), "rev-parse", "--verify", "HEAD"],
+                env=env,
+                capture_output=True,
+                check=False,
+            ).returncode,
+        )
+        # Snapshots have an index, but planning must bind an explicit source baseline.
+        return target, str(source / ".git")
+
     def test_docs_do_not_run_product_or_environment_suites(self):
         plan = planner.build_plan(["README.md"])
         self.assertTrue(plan["jobs"]["unit"])
@@ -178,6 +228,37 @@ class ValidationSelectionTests(unittest.TestCase):
                 self.assertFalse(plan["jobs"][other])
                 self.assertTrue(plan["ha_tests"])
                 self.assertFalse(plan["jobs"]["release"])
+
+    def test_documentation_json_examples_select_parse_and_public_safety_checks(self):
+        for path in (
+            "docs/examples/hourly-history-v3.json",
+            "docs/examples/removed.json",
+        ):
+            with self.subTest(path=path):
+                plan = planner.build_plan([path])
+                self.assertEqual([], plan["unresolved"])
+                self.assertEqual([planner.METADATA_TEST], plan["unit_tests"])
+                self.assertEqual([], plan["ha_tests"])
+                self.assertTrue(plan["safety"])
+                self.assertFalse(plan["workflow"])
+                self.assertFalse(plan["shell"])
+                self.assertEqual(
+                    {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
+                )
+                self.assertIn(
+                    "scripts/check_public_safety.py", planner.lane_command(plan, "unit")
+                )
+
+    def test_unknown_json_configuration_remains_unresolved(self):
+        for path in (
+            "config.json",
+            "docs/config.json",
+            "docs/examples/config/settings.json",
+            "docs/examples/settings.yaml",
+        ):
+            with self.subTest(path=path):
+                plan = planner.build_plan([path])
+                self.assertEqual([path], plan["unresolved"])
 
     def test_runtime_change_reaches_real_import_consumers(self):
         plan = planner.build_plan([planner.PRODUCT + "/const.py"])
@@ -578,38 +659,67 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertTrue(plan["jobs"]["hacs"])
         self.assertFalse(plan["jobs"]["current"])
 
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
     def test_plan_cli_rejects_unresolved_paths_without_launching_jobs(self):
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts/run_dependency_light_tests.py"),
-                *["--plan"],
-                "--path",
-                "unknown.input",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(2, result.returncode)
-        self.assertIn("Unresolved applicability", result.stderr)
-        self.assertEqual("", result.stdout)
+        for snapshot in (False, True):
+            with (
+                self.subTest(snapshot=snapshot),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root, git_directory = self._planning_fixture(
+                    Path(directory), snapshot=snapshot
+                )
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(root / planner.PLANNER),
+                        "--plan",
+                        "--path",
+                        "unknown.input",
+                        *(["--git-directory", git_directory] if git_directory else []),
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(2, result.returncode)
+                self.assertIn("Unresolved applicability", result.stderr)
+                self.assertEqual("", result.stdout)
 
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
     def test_plan_cli_is_json_and_needs_no_ha_import(self):
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "scripts/run_dependency_light_tests.py"),
-                *["--plan"],
-                "--path",
-                "README.md",
-                "--plan-only",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        self.assertEqual([], json.loads(result.stdout)["ha_tests"])
+        for snapshot in (False, True):
+            with (
+                self.subTest(snapshot=snapshot),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root, git_directory = self._planning_fixture(
+                    Path(directory), snapshot=snapshot
+                )
+                command = [
+                    sys.executable,
+                    str(root / planner.PLANNER),
+                    "--plan",
+                    "--path",
+                    "README.md",
+                    "--plan-only",
+                ]
+                if snapshot:
+                    unbound = subprocess.run(
+                        command, cwd=root, capture_output=True, text=True, check=False
+                    )
+                    self.assertEqual(2, unbound.returncode)
+                    self.assertIn("Validation plan failed", unbound.stderr)
+                    self.assertEqual("", unbound.stdout)
+                    command.extend(["--git-directory", git_directory])
+                result = subprocess.run(
+                    command, cwd=root, capture_output=True, text=True, check=False
+                )
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                plan = json.loads(result.stdout)
+                self.assertEqual(["README.md"], plan["paths"])
+                self.assertEqual([], plan["ha_tests"])
 
     def test_selected_test_rejects_wrong_lane_and_missing_files(self):
         for paths, ha in (
@@ -673,13 +783,21 @@ if os.environ.get("SELECTION_FAIL") == "dependencies" and "--upgrade" in args:
 if os.environ.get("SELECTION_FAIL") == "tests" and ("pytest" in args or "unittest" in args or "--home-assistant" in args):
     raise SystemExit(23)
 """
-        script = ROOT / "scripts/verify-release-local.sh"
-        for failure in ("", "harness", "dependencies", "tests"):
+        for snapshot, failure in (
+            (snapshot, failure)
+            for snapshot in (False, True)
+            for failure in ("", "harness", "dependencies", "tests")
+        ):
             with (
-                self.subTest(failure=failure),
+                self.subTest(snapshot=snapshot, failure=failure),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 temporary = Path(directory)
+                root, git_directory = self._planning_fixture(
+                    temporary, snapshot=snapshot
+                )
+                scratch = temporary / "scratch"
+                scratch.mkdir()
                 binary = temporary / "bin"
                 binary.mkdir()
                 fake = binary / "python"
@@ -689,7 +807,7 @@ if os.environ.get("SELECTION_FAIL") == "tests" and ("pytest" in args or "unittes
                 env = dict(
                     os.environ,
                     PATH=str(binary) + os.pathsep + os.environ["PATH"],
-                    TMPDIR=directory,
+                    TMPDIR=str(scratch),
                     SELECTION_LOG=str(log),
                     SELECTION_REAL_PYTHON=sys.executable,
                     VALIDATION_PYTHON=sys.executable,
@@ -698,15 +816,16 @@ if os.environ.get("SELECTION_FAIL") == "tests" and ("pytest" in args or "unittes
                 result = subprocess.run(
                     [
                         "bash",
-                        str(script),
+                        str(root / "scripts/verify-release-local.sh"),
                         "affected",
                         "native",
-                        "",
+                        git_directory,
                         "--path",
                         "tests/test_runtime_ha.py",
                         "--only",
                         "current",
                     ],
+                    cwd=root,
                     env=env,
                     capture_output=True,
                     text=True,
@@ -724,6 +843,7 @@ if os.environ.get("SELECTION_FAIL") == "tests" and ("pytest" in args or "unittes
                 ]
                 self.assertEqual(1, len(environments))
                 self.assertTrue(all(not path.exists() for path in environments))
+                self.assertEqual([], list(scratch.iterdir()))
                 self.assertEqual(
                     failure != "harness",
                     any("requirements-ha-current.txt" in call for call in calls),
@@ -749,30 +869,46 @@ if os.environ.get("SELECTION_FAIL") == "tests" and ("pytest" in args or "unittes
         os.name == "posix" and shutil.which("bash"), "requires native Bash"
     )
     def test_native_plan_and_unselected_lane_stop_before_environment_creation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            env = dict(os.environ, TMPDIR=directory, VALIDATION_PYTHON=sys.executable)
-            for extra, expected in ((["--plan-only"], 0), (["--only", "current"], 2)):
-                result = subprocess.run(
-                    [
-                        "bash",
-                        str(ROOT / "scripts/verify-release-local.sh"),
-                        "affected",
-                        "native",
-                        "",
-                        "--path",
-                        "README.md",
-                        *extra,
-                    ],
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=30,
+        for snapshot in (False, True):
+            with (
+                self.subTest(snapshot=snapshot),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                temporary = Path(directory)
+                root, git_directory = self._planning_fixture(
+                    temporary, snapshot=snapshot
                 )
-                self.assertEqual(
-                    expected, result.returncode, result.stdout + result.stderr
+                scratch = temporary / "scratch"
+                scratch.mkdir()
+                env = dict(
+                    os.environ, TMPDIR=str(scratch), VALIDATION_PYTHON=sys.executable
                 )
-                self.assertEqual([], list(Path(directory).iterdir()))
+                for extra, expected in (
+                    (["--plan-only"], 0),
+                    (["--only", "current"], 2),
+                ):
+                    result = subprocess.run(
+                        [
+                            "bash",
+                            str(root / "scripts/verify-release-local.sh"),
+                            "affected",
+                            "native",
+                            git_directory,
+                            "--path",
+                            "README.md",
+                            *extra,
+                        ],
+                        cwd=root,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=30,
+                    )
+                    self.assertEqual(
+                        expected, result.returncode, result.stdout + result.stderr
+                    )
+                    self.assertEqual([], list(scratch.iterdir()))
 
 
 if __name__ == "__main__":

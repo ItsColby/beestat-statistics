@@ -9,7 +9,14 @@ serialization and drains surviving save tasks before replacing the writer.
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
+import tempfile
+from collections.abc import Callable
 from copy import deepcopy
+from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 from homeassistant.core import CoreState, HomeAssistant
@@ -18,6 +25,10 @@ from homeassistant.util.json import load_json
 
 _VERSION = 1
 _MINOR_VERSION = 1
+_OBJECT_KINDS = frozenset({"source", "manifest", "proof", "operation"})
+_MAX_OBJECT_BYTES = 8 * 1024 * 1024
+_FREE_RESERVE = 256 * 1024 * 1024
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
 class HourlyStorageError(ValueError):
@@ -63,6 +74,96 @@ class HourlyStore:
         detached = deepcopy(data)
         await self._store.async_save(detached)
         await self._hass.async_add_executor_job(self._verify_data, detached)
+
+    async def async_write_object(self, kind: str, content: bytes) -> str:
+        """Retain immutable bytes without touching the hourly journal or marker.
+
+        The entry's existing writer serializes staging/adoption. Atomic exclusive
+        installation also makes an identical replay safe after cancellation.
+        """
+        if self._hass.state in (CoreState.stopping, CoreState.stopped):
+            raise HourlyStorageError("hourly_store_stopping")
+        if not isinstance(content, bytes) or len(content) > _MAX_OBJECT_BYTES:
+            raise HourlyStorageError("hourly_object_size_invalid")
+        return await self._hass.async_add_executor_job(self.write_object, kind, content)
+
+    async def async_read_object(self, kind: str, digest: str) -> bytes:
+        """Read one bounded, hash-verified object from this entry's namespace."""
+        return await self._hass.async_add_executor_job(self._read_object, kind, digest)
+
+    async def async_process_source_job[T](
+        self, function: Callable[..., T], *args: Any
+    ) -> T:
+        """Run detached source parsing/hashing on HA's existing bounded executor."""
+        return await self._hass.async_add_executor_job(function, *args)
+
+    def _object_path(self, kind: str, digest: str) -> Path:
+        if kind not in _OBJECT_KINDS or not isinstance(digest, str):
+            raise HourlyStorageError("hourly_object_identity_invalid")
+        if _DIGEST.fullmatch(digest) is None:
+            raise HourlyStorageError("hourly_object_identity_invalid")
+        root = Path(f"{self.path}.objects")
+        path = root / kind / digest
+        # Never follow an injected link/junction outside this owned namespace.
+        for part in (root, root / kind, path):
+            if part.is_symlink() or part.is_junction():
+                raise HourlyStorageError("hourly_object_path_invalid")
+        return path
+
+    def _read_object(self, kind: str, digest: str) -> bytes:
+        path = self._object_path(kind, digest)
+        with path.open("rb") as source:
+            content = source.read(_MAX_OBJECT_BYTES + 1)
+        if len(content) > _MAX_OBJECT_BYTES or sha256(content).hexdigest() != digest:
+            raise HourlyStorageError("hourly_object_read_unverified")
+        return content
+
+    def write_object(self, kind: str, content: bytes) -> str:
+        """Retain bytes in an executor, including inside a native upload lease."""
+        if not isinstance(content, bytes) or len(content) > _MAX_OBJECT_BYTES:
+            raise HourlyStorageError("hourly_object_size_invalid")
+        digest = sha256(content).hexdigest()
+        path = self._object_path(kind, digest)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._object_path(kind, digest)
+        self._sync_directory(path.parent.parent)
+        self._sync_directory(path.parent.parent.parent)
+        if path.exists():
+            if self._read_object(kind, digest) != content:
+                raise HourlyStorageError("hourly_object_write_unverified")
+            return digest
+        if shutil.disk_usage(path.parent).free < len(content) + _FREE_RESERVE:
+            raise HourlyStorageError("hourly_object_disk_reserve")
+        descriptor, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+        temporary_path = Path(temporary)
+        try:
+            with os.fdopen(descriptor, "wb") as target:
+                target.write(content)
+                target.flush()
+                os.fsync(target.fileno())
+            try:
+                # Hard-link installation is atomic and refuses to replace even
+                # an identical destination; readback proves concurrent replay.
+                os.link(temporary_path, path)
+            except FileExistsError:
+                pass
+            self._sync_directory(path.parent)
+            if self._read_object(kind, digest) != content:
+                raise HourlyStorageError("hourly_object_write_unverified")
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return digest
+
+    @staticmethod
+    def _sync_directory(path: Path) -> None:
+        # HA runs on POSIX. Windows lacks directory fsync; its atomic link still
+        # receives exact uncached readback in dependency-light development.
+        if os.name == "posix":
+            descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
 
     def _read_data(self) -> dict[str, Any] | None:
         # A distinct parsed empty object or JSON null must not masquerade as an
