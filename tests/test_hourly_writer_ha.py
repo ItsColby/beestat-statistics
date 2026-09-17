@@ -715,6 +715,154 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
     await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.parametrize("corruption", ["off_grid", "wrong_resource"])
+async def test_real_importer_scopes_expanded_source_validation_per_quantity(
+    hass, freezer, tmp_path, corruption
+):
+    end = START + 48 * HOUR
+    evaluation = end + timedelta(minutes=10)
+    freezer.move_to(evaluation)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=evaluation)
+    coordinator.data = coordinator._build_runtime_data(
+        [],
+        [{"id": 1, "name": "Zone A"}, {"id": 2, "name": "Zone B"}],
+        [],
+        evaluation,
+        evaluation,
+        True,
+        None,
+        None,
+        evaluated_at=evaluation,
+        fetched_at=evaluation,
+    )
+    coordinator.async_refresh_runtime = AsyncMock(return_value=coordinator.data)
+    corrupt = False
+
+    async def read_source(thermostat_id, start, stop):
+        lower = datetime.fromisoformat(start).replace(tzinfo=UTC)
+        upper = datetime.fromisoformat(stop).replace(tzinfo=UTC)
+        rows = [
+            {
+                "thermostat_id": thermostat_id,
+                "timestamp": stamp.isoformat(),
+                "fan": 75,
+                "compressor_mode": "cool",
+                "compressor_1": 75,
+                "compressor_2": 0,
+                "outdoor_temperature": 700,
+            }
+            for index in range(48 * 12)
+            if lower <= (stamp := START + index * timedelta(minutes=5)) < upper
+        ]
+        if corrupt and thermostat_id == 1:
+            # Thermostat 2's earlier bootstrap expands this request beyond even
+            # thermostat 1's new quantity epoch. Its established quantities have
+            # the narrower ordinary one-day scope on the same returned rows.
+            stamp = START + 6 * HOUR
+            if corruption == "off_grid":
+                stamp += timedelta(minutes=1)
+            rows.append(
+                {
+                    "thermostat_id": 2 if corruption == "wrong_resource" else 1,
+                    "timestamp": stamp.isoformat(),
+                    "fan": 75,
+                    "compressor_mode": "cool",
+                    "compressor_1": 75,
+                    "compressor_2": 0,
+                    "outdoor_temperature": 700,
+                }
+            )
+        return rows
+
+    client.async_read_runtime_thermostat = AsyncMock(side_effect=read_source)
+    client.async_read_runtime_sensor = AsyncMock(return_value=[])
+    importer = integration.BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    store, recorder = importer.hourly._store, importer.hourly._recorder
+    native = store._store
+    established_ids = tuple(
+        f"beestat:{zone}_{quantity}_hourly_v2"
+        for zone in ("zone_a", "zone_b")
+        for quantity in ("fan_runtime_hours", "outdoor_temperature")
+    )
+    bootstrap_epochs = {
+        "beestat:zone_a_cool_runtime_hours_hourly_v2": START + 12 * HOUR,
+        "beestat:zone_b_cool_runtime_hours_hourly_v2": START,
+    }
+
+    async def select(ids, epoch):
+        request = {
+            "epoch_start": epoch,
+            "statistic_ids": ids,
+            "expected_revision": importer.hourly.status()["revision"],
+        }
+        preview = await importer.async_select_hourly_statistics(**request)
+        selected = await importer.async_select_hourly_statistics(
+            **request, preview_digest=preview["preview_digest"]
+        )
+        assert selected["status"] == "selected"
+
+    with (
+        patch.object(native, "path", str(tmp_path / "scoped-source-journal.json")),
+        patch.object(native, "_async_write_data", _NATIVE_STORE_WRITE.__get__(native)),
+    ):
+        await select(established_ids, START)
+        await importer.async_import_statistics(skip_sync=True, point_lookback_days=2)
+        for statistic_id, epoch in bootstrap_epochs.items():
+            await select((statistic_id,), epoch)
+        saved_before = (await store.async_load())["series"]
+        native_before = {
+            statistic_id: await recorder.async_snapshot(statistic_id, START)
+            for statistic_id in established_ids
+        }
+        assert all(len(snapshot.rows) == 48 for snapshot in native_before.values())
+        assert all(
+            saved_before[statistic_id]["checkpoint"] is None
+            for statistic_id in bootstrap_epochs
+        )
+
+        corrupt = True
+        client.async_read_runtime_thermostat.reset_mock()
+        result = await importer.async_import_statistics(skip_sync=True)
+        assert result.summary_mode == "hourly" and result.imported_series == 6
+        assert [
+            call.args for call in client.async_read_runtime_thermostat.await_args_list
+        ] == [
+            (
+                thermostat_id,
+                START.strftime("%Y-%m-%d %H:%M:%S"),
+                end.strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            for thermostat_id in (1, 2)
+        ]
+        saved_after = (await store.async_load())["series"]
+        for statistic_id in established_ids:
+            assert saved_after[statistic_id] == saved_before[statistic_id]
+            assert (
+                await recorder.async_snapshot(statistic_id, START)
+                == native_before[statistic_id]
+            )
+        for statistic_id, epoch in bootstrap_epochs.items():
+            expected_hours = int((end - epoch) / HOUR)
+            snapshot = await recorder.async_snapshot(statistic_id, START)
+            assert snapshot.rows == tuple(
+                HourlyStatisticRow(
+                    epoch + index * HOUR, state=(index + 1) / 4, sum=(index + 1) / 4
+                )
+                for index in range(expected_hours)
+            )
+            record = saved_after[statistic_id]
+            assert record["checkpoint"]["start"] == (end - HOUR).isoformat()
+            assert record["checkpoint"]["sum"] == expected_hours / 4
+            assert record["blocked_from"] is None and record["closed"] == []
+            coverage = await importer.async_get_hourly_coverage(
+                start=epoch, end=end, statistic_ids=(statistic_id,)
+            )
+            assert coverage["series"][statistic_id]["complete"]
+    await entry._async_process_on_unload(hass)
+
+
 async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(
     hass, disk_store
 ):

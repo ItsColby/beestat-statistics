@@ -355,6 +355,13 @@ elapsed days; if the epoch ages beyond that bound before initialization, import
 stops for explicit reconciliation rather than moving the epoch. An explicitly
 bounded rebuild retains its requested start.
 
+The expanded first acquisition does not widen other selected quantities' source
+checks. Each quantity uses its saved epoch and applicable import window before
+source quality is assessed, even when it shares a thermostat with the quantity
+being initialized. An invalid timestamp that cannot be placed still blocks the
+affected source; a parseable observation demonstrably outside the quantity's
+window does not.
+
 Illustrative preview only; substitute the actual entry, IDs, epoch and revision:
 
 ```yaml

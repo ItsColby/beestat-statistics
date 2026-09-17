@@ -134,6 +134,15 @@ already checkpointed series keep the ordinary window, and explicit selection or
 rebuild starts retain their requested bounds. After the first verified checkpoint,
 the series returns to the configured rolling lookback.
 
+Each quantity's effective source window is applied before timestamp, resource,
+duplicate and coverage checks, including when several quantities share one
+thermostat or sensor. Saved epochs bind through resource identity even after a
+display name changes. Parseable observations outside that quantity's window do
+not contribute quality flags or reveal optional runtime quantities; in-window
+invalid observations and timestamps that cannot be placed remain rejected.
+Measurement rebuild end dates also bound source validation, while cumulative
+rebuilds retain the full affected suffix.
+
 ### Segments and native recovery
 
 Use the same adopted ID when actual observations and a trusted exact predecessor

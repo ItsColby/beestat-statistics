@@ -821,6 +821,21 @@ class BeestatStatisticsImporter:
                 ),
             )
         retained = (*self.hourly.base_statistic_ids(), *statistic_ids)
+        ordinary_start = (
+            end - timedelta(days=lookback_days)
+            if epoch_start is None and rebuild_start is None
+            else None
+        )
+        source_starts = (
+            self.hourly.source_starts(
+                _hourly_resource_identities(config),
+                start=start,
+                end=end,
+                ordinary_start=ordinary_start,
+            )
+            if epoch_start is None
+            else {}
+        )
         series = build_hourly_statistics(
             thermostat_rows,
             sensor_rows,
@@ -833,19 +848,9 @@ class BeestatStatisticsImporter:
                 _thermostat_data_end_map(list(runtime_data.thermostat_rows)),
             ),
             existing_statistic_ids=_hourly_retained_ids(config, retained),
+            start_by_statistic_id=source_starts,
+            measurement_end=measurement_end,
         )
-        if measurement_end is not None:
-            series = tuple(
-                item
-                if item.metadata["has_sum"]
-                else replace(
-                    item,
-                    hours=tuple(
-                        hour for hour in item.hours if hour.start < measurement_end
-                    ),
-                )
-                for item in series
-            )
         return PreparedHourlyImport(
             series,
             _hourly_identity(
@@ -857,9 +862,7 @@ class BeestatStatisticsImporter:
             sum(len(rows) for rows in thermostat_rows.values())
             + sum(len(rows) for rows in sensor_rows.values()),
             skipped,
-            end - timedelta(days=lookback_days)
-            if epoch_start is None and rebuild_start is None
-            else None,
+            ordinary_start,
         )
 
     async def async_select_hourly_statistics(

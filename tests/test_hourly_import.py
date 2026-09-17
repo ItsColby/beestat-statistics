@@ -329,6 +329,75 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         refreshed_identity["resources"][renamed] = refreshed_identity["resources"].pop(
             ID
         )
+        renamed_bootstrap = "beestat:renamed_other_fan_runtime_hours_hourly_v2"
+        optional_id = "beestat:other_temperature_hourly_v2"
+        sensor_id = "beestat:remote_fan_runtime_hours_hourly_v2"
+        resources = {
+            renamed: bound["resources"][ID],
+            renamed_bootstrap: bound["resources"][bootstrap_id],
+            measurement_id: bound["resources"][measurement_id],
+            optional_id: {
+                **bound["resources"][bootstrap_id],
+                "quantity": "temperature",
+            },
+            sensor_id: {
+                **bound["resources"][bootstrap_id],
+                "sensor_id": 9,
+            },
+        }
+        saved_resources = deepcopy(resources)
+        saved_state = deepcopy(self.store.value)
+        saved_status = deepcopy(self.writer.status())
+        # Offsets are hours from START; result order follows the resources above.
+        windows = (
+            (-1, 4, 2, (2, 0, 2, 2, 2)),
+            (-1, 4, None, (0, 0, 0, -1, -1)),
+            (1, 4, None, (1, 1, 1, 1, 1)),
+            (-2, -1, None, (-1, -1, -1, -2, -2)),
+            (-1, 4, 5, (4, 0, 4, 4, 4)),
+            (3, 3, 2, (3, 3, 3, 3, 3)),
+        )
+        with (
+            patch.object(self.store, "async_load") as load,
+            patch.object(self.store, "async_save") as save,
+            patch.object(self.recorder, "async_snapshot") as snapshot,
+            patch.object(self.recorder, "submit") as submit,
+        ):
+            for start, end, ordinary, expected in windows:
+                with self.subTest(start=start, end=end, ordinary_start=ordinary):
+                    self.assertEqual(
+                        {
+                            statistic_id: START + offset * HOUR
+                            for statistic_id, offset in zip(
+                                resources, expected, strict=True
+                            )
+                        },
+                        self.writer.source_starts(
+                            resources,
+                            start=START + start * HOUR,
+                            end=START + end * HOUR,
+                            ordinary_start=(
+                                None if ordinary is None else START + ordinary * HOUR
+                            ),
+                        ),
+                    )
+            self.assertEqual(
+                {renamed_bootstrap: START},
+                self.writer.source_starts(
+                    {renamed_bootstrap: resources[renamed_bootstrap]},
+                    start=START - HOUR,
+                    end=START + 4 * HOUR,
+                    ordinary_start=START + 2 * HOUR,
+                ),
+            )
+            load.assert_not_awaited()
+            save.assert_not_awaited()
+            snapshot.assert_not_awaited()
+            submit.assert_not_called()
+        self.assertEqual(saved_resources, resources)
+        self.assertEqual(saved_state, self.store.value)
+        self.assertEqual(saved_status, self.writer.status())
+
         expanded = (
             source((None, 9, 0.75, 1), statistic_id=renamed),
             source((0.125, 0.25, 0.375, 0.5), statistic_id=bootstrap_id),

@@ -81,6 +81,11 @@ class _Quantity:
     unit_class: str | None
     fields: tuple[str, ...]
     kind: str = "measurement"
+    optional_runtime: bool = False
+
+    @property
+    def statistic_id(self) -> str:
+        return f"{STATISTIC_SOURCE}:{self.suffix}{_SUCCESSOR}"
 
     @property
     def cumulative(self) -> bool:
@@ -106,6 +111,8 @@ def build_hourly_statistics(
     evaluated_at: datetime,
     source_end_by_thermostat: Mapping[int, datetime],
     existing_statistic_ids: Collection[str] = (),
+    start_by_statistic_id: Mapping[str, datetime] | None = None,
+    measurement_end: datetime | None = None,
 ) -> tuple[HourlySeries, ...]:
     """Plan complete closed UTC hours, bounded to at most 366 elapsed days.
 
@@ -114,38 +121,59 @@ def build_hourly_statistics(
     time. A missing horizon blocks eligibility. VOC emits metadata only while
     its source unit is unresolved. Misrouted resource identities block the
     affected series instead of being silently assigned to the mapping key.
+    Per-series bounds restrict quality evidence as well as hourly values;
+    measurement_end does not shorten cumulative source windows.
     """
     start, end, evaluated_at = _bounds(start, end, evaluated_at)
+    starts = {
+        statistic_id: _window_bound(value, start, end)
+        for statistic_id, value in (start_by_statistic_id or {}).items()
+    }
+    measurement_stop = (
+        end if measurement_end is None else _window_bound(measurement_end, start, end)
+    )
+    point_cache: dict[tuple[str, int, datetime, datetime], _Points] = {}
+
+    def quantity_points(
+        quantity: _Quantity,
+        rows: list[dict[str, Any]],
+        id_field: str,
+        resource_id: int,
+    ) -> tuple[_Points, datetime, datetime]:
+        quantity_end = end if quantity.cumulative else measurement_stop
+        quantity_start = min(starts.get(quantity.statistic_id, start), quantity_end)
+        key = (id_field, resource_id, quantity_start, quantity_end)
+        if key not in point_cache:
+            point_cache[key] = _points(
+                rows, id_field, resource_id, quantity_start, quantity_end
+            )
+        return point_cache[key], quantity_start, quantity_end
+
     series: list[HourlySeries] = []
     for thermostat in config.thermostats:
-        points = _points(
-            thermostat_rows_by_id.get(thermostat.thermostat_id, []),
-            "thermostat_id",
-            thermostat.thermostat_id,
-            start,
-            end,
-        )
-        quantities = _thermostat_quantities(
-            thermostat.slug, thermostat.name, points, existing_statistic_ids
-        )
         horizon = source_end_by_thermostat.get(thermostat.thermostat_id)
-        series.extend(
-            _series(quantity, points, start, end, evaluated_at, horizon)
-            for quantity in quantities
-        )
+        for quantity in _thermostat_quantities(thermostat.slug, thermostat.name):
+            points, quantity_start, quantity_end = quantity_points(
+                quantity,
+                thermostat_rows_by_id.get(thermostat.thermostat_id, []),
+                "thermostat_id",
+                thermostat.thermostat_id,
+            )
+            if _retain_quantity(quantity, points, existing_statistic_ids):
+                series.append(
+                    _series(
+                        quantity,
+                        points,
+                        quantity_start,
+                        quantity_end,
+                        evaluated_at,
+                        horizon,
+                    )
+                )
     sensor_thermostats = {
         sensor.sensor_id: sensor.thermostat_id for sensor in config.sensors
     }
-    sensor_points: dict[int, _Points] = {}
     for spec in build_sensor_statistics(config):
-        if spec.sensor_id not in sensor_points:
-            sensor_points[spec.sensor_id] = _points(
-                sensor_rows_by_id.get(spec.sensor_id, []),
-                "sensor_id",
-                spec.sensor_id,
-                start,
-                end,
-            )
         thermostat_id = sensor_thermostats[spec.sensor_id]
         horizon = (
             source_end_by_thermostat.get(thermostat_id)
@@ -160,12 +188,18 @@ def build_hourly_statistics(
             (spec.field,),
             "occupancy" if spec.field == "occupancy" else "measurement",
         )
+        points, quantity_start, quantity_end = quantity_points(
+            quantity,
+            sensor_rows_by_id.get(spec.sensor_id, []),
+            "sensor_id",
+            spec.sensor_id,
+        )
         series.append(
             _series(
                 quantity,
-                sensor_points[spec.sensor_id],
-                start,
-                end,
+                points,
+                quantity_start,
+                quantity_end,
                 evaluated_at,
                 horizon,
                 blocked_reason=(
@@ -174,6 +208,13 @@ def build_hourly_statistics(
             )
         )
     return tuple(series)
+
+
+def _window_bound(value: datetime, start: datetime, end: datetime) -> datetime:
+    value = _aware_utc(value)
+    if value.minute or value.second or value.microsecond or not start <= value <= end:
+        raise ValueError("Series bounds must be exact UTC hours within acquired bounds")
+    return value
 
 
 def _bounds(
@@ -230,10 +271,13 @@ def _points(
     identity_invalid = False
     for row in rows:
         stamp = _timestamp(row.get("timestamp"))
-        if stamp is None or stamp.minute % 5 or stamp.second or stamp.microsecond:
+        if stamp is None:
             rejected += 1
             continue
         if not start <= stamp < end:
+            continue
+        if stamp.minute % 5 or stamp.second or stamp.microsecond:
+            rejected += 1
             continue
         if id_field in row and positive_resource_id(row[id_field]) != resource_id:
             identity_invalid = True
@@ -246,9 +290,7 @@ def _points(
     )
 
 
-def _thermostat_quantities(
-    slug: str, name: str, points: _Points, existing: Collection[str]
-) -> tuple[_Quantity, ...]:
+def _thermostat_quantities(slug: str, name: str) -> tuple[_Quantity, ...]:
     quantities: list[_Quantity] = []
     runtime_fields = (
         *RUNTIME_FIELD_GROUPS,
@@ -256,17 +298,6 @@ def _thermostat_quantities(
     )
     for key, label, fields in runtime_fields:
         suffix = f"{slug}_{key}_runtime_hours"
-        if (
-            key not in {"cool", "heat", "fan"}
-            and f"{STATISTIC_SOURCE}:{suffix}" not in existing
-            and f"{STATISTIC_SOURCE}:{suffix}{_SUCCESSOR}" not in existing
-            and not any(
-                not _deleted(row.get("deleted"))
-                and (_runtime_seconds(row, fields[0]) or 0) > 0
-                for row in points.rows.values()
-            )
-        ):
-            continue
         quantities.append(
             _Quantity(
                 suffix,
@@ -275,6 +306,7 @@ def _thermostat_quantities(
                 STATISTIC_UNIT_CLASS_DURATION,
                 fields,
                 "runtime",
+                optional_runtime=key not in {"cool", "heat", "fan"},
             )
         )
     quantities.extend(
@@ -303,6 +335,21 @@ def _thermostat_quantities(
         for spec in measurement_specs
     )
     return tuple(quantities)
+
+
+def _retain_quantity(
+    quantity: _Quantity, points: _Points, existing: Collection[str]
+) -> bool:
+    return (
+        not quantity.optional_runtime
+        or quantity.statistic_id in existing
+        or quantity.statistic_id.removesuffix(_SUCCESSOR) in existing
+        or any(
+            not _deleted(row.get("deleted"))
+            and (_runtime_seconds(row, quantity.fields[0]) or 0) > 0
+            for row in points.rows.values()
+        )
+    )
 
 
 def _number(value: Any) -> float | None:
@@ -415,7 +462,7 @@ def _series(
         ),
         "name": f"{quantity.name} Hourly",
         "source": STATISTIC_SOURCE,
-        "statistic_id": f"{STATISTIC_SOURCE}:{quantity.suffix}{_SUCCESSOR}",
+        "statistic_id": quantity.statistic_id,
         "unit_class": quantity.unit_class,
         "unit_of_measurement": quantity.unit,
     }

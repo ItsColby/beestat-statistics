@@ -66,6 +66,7 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
         async_select=AsyncMock(return_value={"preview_digest": "reviewed-selection"}),
         base_statistic_ids=Mock(return_value=()),
         bootstrap_start=Mock(return_value=None),
+        source_starts=Mock(return_value={}),
         status=Mock(return_value={"mode": mode, "revision": 0, "series": {}}),
         coverage=Mock(return_value={"series": {}, "revision": 0}),
     )
@@ -410,6 +411,10 @@ async def test_hourly_rebuild_fetches_cumulative_tail_and_bounds_measurements(
     entry, coordinator, client, importer, _manager = _runtime(
         hass, freezer, monkeypatch
     )
+    client.async_read_runtime_thermostat.return_value = [
+        *_rows(),
+        {"thermostat_id": 1, "timestamp": (START + timedelta(minutes=1)).isoformat()},
+    ]
     prepared = await importer._async_prepare_hourly(
         coordinator.data,
         lookback_days=1,
@@ -421,6 +426,8 @@ async def test_hourly_rebuild_fetches_cumulative_tail_and_bounds_measurements(
     measurement = next(item for item in prepared.series if not item.metadata["has_sum"])
     assert fan.hours[-1].start == START
     assert measurement.hours[-1].start == datetime(2026, 9, 10, 3, tzinfo=UTC)
+    assert fan.rejected_timestamps == 1
+    assert measurement.rejected_timestamps == 0
     assert prepared.identity["selected_thermostat_id"] == 1
     client.async_read_runtime_thermostat.assert_awaited_once_with(
         1, "2026-09-09 04:00:00", "2026-09-10 18:00:00"

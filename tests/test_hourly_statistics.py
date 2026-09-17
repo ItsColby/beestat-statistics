@@ -290,6 +290,269 @@ class HourlyStatisticsTest(unittest.TestCase):
         self.assertEqual(bucket.values["mean"], 70)
         self.assertEqual(bucket.duplicate_slots, 0)
 
+    def test_outside_parseable_rows_are_filtered_before_quality_checks(self):
+        rows = self.sensor_rows(temperature=70)
+        for stamp in (
+            self.start - timedelta(minutes=5),
+            self.start - timedelta(seconds=1),
+            self.end,
+            self.end + timedelta(seconds=1),
+        ):
+            rows.extend(
+                {**rows[0], "timestamp": stamp.isoformat(), "sensor_id": identity}
+                for identity in (10, 11)
+            )
+        item = self.item(self.build(sensor_rows=rows), "room_a_temperature")
+        self.assertEqual(item.rejected_timestamps, 0)
+        self.assertIsNone(item.blocked_reason)
+        self.assertEqual(item.source_rows, 20)
+        self.assertEqual(item.hours[0].values, {"mean": 70, "min": 70, "max": 70})
+        self.assertEqual(item.hours[0].duplicate_slots, 0)
+
+    def test_scoped_starts_isolate_quality_for_shared_resource_quantities(self):
+        stop = self.end + timedelta(hours=1)
+        starts = {
+            f"beestat:{suffix}_hourly_v2": self.end
+            for suffix in (
+                "zone_a_cool_runtime_hours",
+                "zone_a_indoor_humidity",
+                "room_a_temperature",
+            )
+        }
+        for off_grid in (False, True):
+            with self.subTest(off_grid=off_grid):
+                stamp = self.start + timedelta(minutes=1 if off_grid else 0)
+                thermostat_rows = self.thermostat_rows(count=24)
+                sensor_rows = self.sensor_rows(count=24)
+                thermostat_rows.append(
+                    {
+                        **thermostat_rows[0],
+                        "timestamp": stamp.isoformat(),
+                        "thermostat_id": 1 if off_grid else 2,
+                    }
+                )
+                sensor_rows.append(
+                    {
+                        **sensor_rows[0],
+                        "timestamp": stamp.isoformat(),
+                        "sensor_id": 10 if off_grid else 11,
+                    }
+                )
+                series = self.build(
+                    thermostat_rows=thermostat_rows,
+                    sensor_rows=sensor_rows,
+                    end=stop,
+                    evaluated_at=stop,
+                    start_by_statistic_id=starts,
+                    source_end_by_thermostat={1: stop - timedelta(minutes=5)},
+                )
+                for suffix in (
+                    "zone_a_cool_runtime_hours",
+                    "zone_a_indoor_humidity",
+                    "room_a_temperature",
+                ):
+                    item = self.item(series, suffix)
+                    self.assertEqual([hour.start for hour in item.hours], [self.end])
+                    self.assertEqual(item.hours[0].reason, "ready")
+                    self.assertEqual(item.rejected_timestamps, 0)
+                    self.assertEqual(item.source_rows, 25)
+                    self.assertIsNone(item.blocked_reason)
+                for suffix in ("zone_a_fan_runtime_hours", "room_a_air_quality"):
+                    item = self.item(series, suffix)
+                    if off_grid:
+                        self.assertEqual(item.rejected_timestamps, 1)
+                    else:
+                        self.assertEqual(
+                            item.blocked_reason, "resource_identity_mismatch"
+                        )
+
+    def test_scoped_start_preserves_in_window_and_unpositionable_rejections(self):
+        stop = self.end + timedelta(hours=1)
+        starts = {"beestat:room_a_temperature_hourly_v2": self.end}
+        for stamp, identity, rejected, blocked in (
+            ((self.end + timedelta(minutes=1)).isoformat(), 10, 1, None),
+            (self.end.isoformat(), 11, 0, "resource_identity_mismatch"),
+            (None, 10, 1, None),
+            ("unpositionable", 10, 1, None),
+        ):
+            with self.subTest(stamp=stamp, identity=identity):
+                rows = self.sensor_rows(count=24)
+                rows.append({**rows[0], "timestamp": stamp, "sensor_id": identity})
+                item = self.item(
+                    self.build(
+                        sensor_rows=rows,
+                        end=stop,
+                        evaluated_at=stop,
+                        start_by_statistic_id=starts,
+                        source_end_by_thermostat={1: stop - timedelta(minutes=5)},
+                    ),
+                    "room_a_temperature",
+                )
+                self.assertEqual(item.rejected_timestamps, rejected)
+                self.assertEqual(item.blocked_reason, blocked)
+
+    def test_optional_runtime_discovery_uses_its_scoped_points(self):
+        stop = self.end + timedelta(hours=1)
+        suffix = "zone_a_ventilator_runtime_hours"
+        successor = f"beestat:{suffix}_hourly_v2"
+        rows = self.thermostat_rows(accessory_type="ventilator")
+        rows.extend(self.thermostat_rows(self.end, accessory_type="off", accessory=0))
+        options = {
+            "thermostat_rows": rows,
+            "end": stop,
+            "evaluated_at": stop,
+            "start_by_statistic_id": {successor: self.end},
+            "source_end_by_thermostat": {1: stop - timedelta(minutes=5)},
+        }
+        self.assertNotIn(
+            successor, {item.statistic_id for item in self.build(**options)}
+        )
+        # Discovery of another quantity on the same resource keeps its own range.
+        self.assertEqual(
+            len(
+                self.item(
+                    self.build(**options), "zone_a_cool_stage_1_runtime_hours"
+                ).hours
+            ),
+            2,
+        )
+        for retained in (f"beestat:{suffix}", successor):
+            with self.subTest(retained=retained):
+                item = self.item(
+                    self.build(**options, existing_statistic_ids=(retained,)), suffix
+                )
+                self.assertEqual([hour.start for hour in item.hours], [self.end])
+                self.assertEqual(item.hours[0].values, {"increment": 0})
+
+    def test_measurement_end_scopes_quality_without_shortening_cumulative(self):
+        stop = self.end + timedelta(hours=1)
+        for off_grid in (False, True):
+            with self.subTest(off_grid=off_grid):
+                stamp = self.end + timedelta(minutes=1 if off_grid else 0)
+                thermostat_rows = self.thermostat_rows(count=24)
+                sensor_rows = self.sensor_rows(count=24)
+                thermostat_rows.append(
+                    {
+                        **thermostat_rows[0],
+                        "timestamp": stamp.isoformat(),
+                        "thermostat_id": 1 if off_grid else 2,
+                    }
+                )
+                sensor_rows.append(
+                    {
+                        **sensor_rows[0],
+                        "timestamp": stamp.isoformat(),
+                        "sensor_id": 10 if off_grid else 11,
+                    }
+                )
+                series = self.build(
+                    thermostat_rows=thermostat_rows,
+                    sensor_rows=sensor_rows,
+                    end=stop,
+                    evaluated_at=stop,
+                    measurement_end=self.end,
+                    source_end_by_thermostat={1: stop - timedelta(minutes=5)},
+                )
+                for suffix in ("zone_a_indoor_humidity", "room_a_temperature"):
+                    item = self.item(series, suffix)
+                    self.assertEqual([hour.start for hour in item.hours], [self.start])
+                    self.assertEqual(item.hours[0].reason, "ready")
+                    self.assertEqual(item.rejected_timestamps, 0)
+                    self.assertIsNone(item.blocked_reason)
+                runtime = self.item(series, "zone_a_fan_runtime_hours")
+                if off_grid:
+                    self.assertEqual(runtime.rejected_timestamps, 1)
+                    self.assertEqual(len(runtime.hours), 2)
+                else:
+                    self.assertEqual(
+                        runtime.blocked_reason, "resource_identity_mismatch"
+                    )
+
+    def test_empty_scopes_and_measurement_end_before_epoch_have_no_hours(self):
+        stop = self.end + timedelta(hours=1)
+        series = self.build(
+            thermostat_rows=self.thermostat_rows(count=24),
+            sensor_rows=self.sensor_rows(count=24),
+            end=stop,
+            evaluated_at=stop,
+            measurement_end=self.end,
+            start_by_statistic_id={
+                "beestat:zone_a_fan_runtime_hours_hourly_v2": stop,
+                "beestat:zone_a_indoor_humidity_hourly_v2": stop,
+                "beestat:room_a_temperature_hourly_v2": self.end,
+            },
+            source_end_by_thermostat={1: stop - timedelta(minutes=5)},
+        )
+        for suffix in (
+            "zone_a_fan_runtime_hours",
+            "zone_a_indoor_humidity",
+            "room_a_temperature",
+        ):
+            item = self.item(series, suffix)
+            self.assertEqual(item.hours, ())
+            self.assertEqual(item.source_rows, 24)
+            self.assertEqual(item.rejected_timestamps, 0)
+            self.assertIsNone(item.blocked_reason)
+        self.assertEqual(len(self.item(series, "zone_a_cool_runtime_hours").hours), 2)
+        self.assertEqual(len(self.item(series, "room_a_air_quality").hours), 1)
+
+    def test_scoped_bounds_validate_acquisition_limits_and_utc_hours(self):
+        statistic_id = "beestat:room_a_temperature_hourly_v2"
+        for value in (
+            self.start.replace(tzinfo=None),
+            self.start - timedelta(hours=1),
+            self.end + timedelta(hours=1),
+            self.start + timedelta(minutes=1),
+        ):
+            for options in (
+                {"start_by_statistic_id": {statistic_id: value}},
+                {"measurement_end": value},
+            ):
+                with self.subTest(options=options), self.assertRaises(ValueError):
+                    self.build(**options)
+        local_start = self.start.astimezone(ZoneInfo("America/New_York"))
+        local_end = self.end.astimezone(ZoneInfo("America/New_York"))
+        item = self.item(
+            self.build(
+                start_by_statistic_id={statistic_id: local_start},
+                measurement_end=local_end,
+            ),
+            "room_a_temperature",
+        )
+        self.assertEqual(item.hours[0].start, self.start)
+        self.assertEqual(item.hours[0].reason, "ready")
+
+    def test_separate_thermostats_do_not_share_quality_cache(self):
+        config = replace(
+            self.config,
+            thermostats=(
+                *self.config.thermostats,
+                config_model.ConfiguredThermostat(2, "zone_b", "Zone B"),
+            ),
+        )
+        bad_rows = self.thermostat_rows()
+        bad_rows.append({**bad_rows[0], "thermostat_id": 3})
+        series = hourly.build_hourly_statistics(
+            {1: bad_rows, 2: self.thermostat_rows(thermostat_id=2)},
+            {},
+            config,
+            start=self.start,
+            end=self.end,
+            evaluated_at=self.end,
+            source_end_by_thermostat={
+                1: self.end - timedelta(minutes=5),
+                2: self.end - timedelta(minutes=5),
+            },
+        )
+        self.assertEqual(
+            self.item(series, "zone_a_fan_runtime_hours").blocked_reason,
+            "resource_identity_mismatch",
+        )
+        valid = self.item(series, "zone_b_fan_runtime_hours")
+        self.assertIsNone(valid.blocked_reason)
+        self.assertEqual(valid.hours[0].reason, "ready")
+        self.assertEqual(valid.hours[0].values, {"increment": 0.5})
+
     def test_zero_samples_and_occupancy_are_valid_without_aqi_rescaling(self):
         series = self.build(
             sensor_rows=self.sensor_rows(

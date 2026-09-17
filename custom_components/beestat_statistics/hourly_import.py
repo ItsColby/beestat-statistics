@@ -84,6 +84,15 @@ def _resource(value: dict[str, Any]) -> tuple[Any, ...]:
     return value.get("thermostat_id"), value.get("sensor_id"), value.get("quantity")
 
 
+def _source_start(record: dict[str, Any], ordinary_start: datetime | None) -> datetime:
+    start = _time(record["epoch_start"])
+    if ordinary_start is not None and not (
+        record["metadata"].get("has_sum") and record["checkpoint"] is None
+    ):
+        start = max(start, _time(ordinary_start))
+    return start
+
+
 class HourlyImportManager:
     """One entry's journal; caller must hold the existing importer lock."""
 
@@ -304,6 +313,34 @@ class HourlyImportManager:
         ]
         return min(epochs, default=None)
 
+    def source_starts(
+        self,
+        resources: Mapping[str, dict[str, Any]],
+        *,
+        start: datetime,
+        end: datetime,
+        ordinary_start: datetime | None = None,
+    ) -> dict[str, datetime]:
+        """Bind current IDs to cached source bounds before quality is computed."""
+        start, end = _time(start), _time(end)
+        ordinary = start if ordinary_start is None else _time(ordinary_start)
+        records = {
+            _resource(record["resource"]): record
+            for record in (self._state or {}).get("series", {}).values()
+        }
+        return {
+            statistic_id: min(
+                end,
+                max(
+                    start,
+                    _source_start(record, ordinary_start)
+                    if (record := records.get(_resource(resource))) is not None
+                    else ordinary,
+                ),
+            )
+            for statistic_id, resource in resources.items()
+        }
+
     def status(self) -> dict[str, Any]:
         """Return a detached cached status; never fetch provider or Recorder data."""
         state = self._state or {}
@@ -383,12 +420,7 @@ class HourlyImportManager:
             if _metadata(metadata) != _metadata(record["metadata"]):
                 self._error = "source_quantity_changed"
                 raise HourlyImportError("Adopted quantity or unit contract changed")
-            epoch = _time(record["epoch_start"])
-            start = epoch
-            if ordinary_start is not None and not (
-                record["metadata"].get("has_sum") and record["checkpoint"] is None
-            ):
-                start = max(start, _time(ordinary_start))
+            start = _source_start(record, ordinary_start)
             result[base] = replace(
                 item,
                 metadata=metadata,
