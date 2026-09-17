@@ -235,6 +235,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             (seed, seed),
             (replace(seed, sum=float("inf")),),
             (replace(seed, sum=10**400),),
+            (replace(seed, sum=None),),
         ):
             with self.subTest(rows=rows):
                 result = _plan(
@@ -242,6 +243,39 @@ class HourlyImportPlanTests(unittest.TestCase):
                 )
                 self.assertIn("invalid_recorder_snapshot", result.blocking_reasons)
                 self.assertFalse(result.unblocked_rows)
+
+    def test_cleared_measurement_can_stay_missing_or_be_replaced_by_actual_data(self):
+        series = _series((70.0, None), cumulative=False)
+        cleared = planner.HourlyStatisticRow(START + HOUR)
+        result = _plan(series, snapshot=_snapshot(series, (cleared,)))
+        self.assertFalse(result.blocking_reasons)
+        self.assertEqual([70], [row.mean for row in result.unblocked_rows])
+        self.assertEqual("missing_slots", result.coverage[1].reason)
+        restored = _series((70.0, 72.0), cumulative=False)
+        result = _plan(restored, snapshot=_snapshot(restored, (cleared,)))
+        self.assertEqual([70, 72], [row.mean for row in result.unblocked_rows])
+
+    def test_cleared_cumulative_predecessor_is_valid_snapshot_but_never_a_seed(self):
+        series = _series()
+        cleared = planner.HourlyStatisticRow(START - HOUR)
+        result = _plan(
+            series, snapshot=_snapshot(series, (cleared,)), epoch=START - 5 * HOUR
+        )
+        self.assertNotIn("invalid_recorder_snapshot", result.blocking_reasons)
+        self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
+        self.assertFalse(result.unblocked_rows)
+
+    def test_cleared_suffix_has_no_stale_numbers_but_does_not_restore_continuity(self):
+        series = _series((1.0, None, 2.0))
+        old = (
+            planner.HourlyStatisticRow(START, state=1.0, sum=1.0),
+            planner.HourlyStatisticRow(START + HOUR),
+            planner.HourlyStatisticRow(START + 2 * HOUR),
+        )
+        result = _plan(series, snapshot=_snapshot(series, old))
+        self.assertFalse(result.stale_starts)
+        self.assertEqual(("cumulative_source_gap",), result.blocking_reasons)
+        self.assertFalse(result.unblocked_rows)
 
     def test_accumulation_overflow_cannot_publish_a_nonfinite_total(self):
         series = _series((1e308, 1e308))

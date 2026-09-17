@@ -132,22 +132,125 @@ automatic resets, gap bridges or new epochs are selected here. An unrecoverable
 gap can therefore stall a cumulative series; that limitation must be resolved
 explicitly before consumer adoption.
 
-Recovery design must compare an explicit deterministic successor segment with
-any supported same-ID contract that remains truthful to native consumers. Carrying
-a known sum across unknown runtime hides missing contributions; a reset can create
-an artificial change. A deliberate segment could resume future coverage while
-retaining the old segment, but requires stable retry identity, an explicit consumer
-transition and bounded lifecycle rather than automatic ID proliferation. The
-native start-only import shape is a candidate for targeted stale-value invalidation,
-not proven recovery: isolated tests must verify clearing, readback, daily reduction
-and coverage on both supported Core lanes before choosing it. Midday origins and
-partial first days also require native proof. No such mutation is implemented by
-the preparation modules.
+### Recovery and persistence contract
+
+Use the same successor ID when actual observations and a trusted exact predecessor
+can reconstruct the complete affected cumulative suffix. Recompute those totals;
+an upsert of only the corrected hour leaves later totals wrong. A missing raw
+prefix is acceptable only when its exact predecessor remains independently
+verified. Source expiry cannot move the epoch, and a row's presence alone is not
+continuity proof. These rules apply separately to each quantity.
+
+An unrecoverable gap stops that cumulative segment. The recovery choice is an
+explicitly selected new segment with its own immutable ID and epoch, preserving
+the old segment. Routine refresh never allocates another ID. A missing hour is
+first a recoverable hold; expiry or a failed request alone does not approve a
+segment transition. Preview must identify the first incomplete hour, the proposed
+complete starting hour, retained rows to invalidate and affected consumers before
+the separate activation decision. Repeated permanent gaps require a new deliberate
+decision rather than an automatic chain of IDs.
+
+Bind a selected segment once to the existing adopted series identity, source
+account/resource identity, quantity/unit contract and whole UTC start. A future
+segment ID uses the adopted base ID plus `_eYYYYMMDDtHHMMSSz`; persisted selection
+owns this exact ID across retries, reloads and display-name changes. A conflicting
+existing ID or metadata blocks adoption. The initial `_hourly_v2` IDs remain the
+first segment; the preparation builder and planner do not allocate or route later
+segment IDs. That integration remains a subsequent source change.
+
+The first row of each new segment contains the first observed hour's increment.
+There is no synthetic preceding zero row. Native hour/day changes within that
+segment describe its covered observations, including a partial first day; a daily
+timestamp does not establish a complete day. Consumers must select the active
+segment explicitly and retain its coverage boundary. They must not splice segments
+into an apparently continuous total or describe their sum across a gap as complete
+runtime. Measurement series can resume under the same ID after missing hours, but
+their native daily means likewise describe only the remaining observations.
+
+Start-only upserts provide the native path to invalidate stale numeric
+values without removing a statistic's identity. A measurement correction targets
+its invalid hour; a cumulative correction targets every stale row from the first
+invalid hour through the retained end. The complete snapshot must include all
+metadata-supported numeric fields and every retained row in that suffix. The pure
+planner recognizes
+fully null rows as cleared, distinct from partially populated malformed rows.
+Cleared rows are never cumulative seeds and do not restore source coverage. Native
+nulls are not a general missing-duration marker: a same-ID counter resumed after a
+null can yield different changes depending on the query's start. Carry-forward,
+resetting `sum`/`state`, or adding `last_reset` therefore cannot establish a truthful
+continuous recovery contract.
+
+At activation, the existing config-entry importer owns one versioned Home
+Assistant `Store` document, keyed by the entry and hourly-import contract. No
+parallel options fields, helper entities or external ledger are needed. Persist:
+
+- the adopted account/resource and quantity/unit identities, immutable segment
+  IDs/epochs, selected active segment and closed-segment boundaries;
+- the last native-verified continuous hour and its exact state/sum, independently
+  of fetch-window bounds, plus the earliest unresolved invalidation boundary;
+- a revision and at most one pending series batch containing detached expected
+  prior values/absence, intended values or clearing operations, compatible metadata,
+  predecessor, target range and a deterministic digest of that complete intent.
+
+Serialize preparation, Store updates, Recorder submission and reconciliation under
+the config-entry writer. Close admission on unload; a replacement runtime first
+drains/reconciles pending work. Recorder and Store do not form a shared transaction:
+
+1. Acquire and verify the native snapshot and identity against the saved revision.
+   On discovering an invalid historical hour, durably lower trusted continuity and
+   record the invalidation boundary before any clearing or further import. Persist
+   the exact pending intent before enqueueing its first native effect. Failure to
+   save means no submission.
+2. Submit the captured batch. Return from submission proves queue acceptance only.
+   Do not advance continuity or report completed repair until the Recorder barrier
+   and exact native readback succeed. Later source corrections cannot mutate the
+   pending payload.
+3. After cancellation, restart or uncertain completion, drain surviving Recorder
+   work and compare each target plus metadata/predecessor with its expected states.
+   Exact intended rows are already applied; exact prior rows/absence may be retried
+   with the identical intent after that reconciliation. Any third state is a
+   conflict and stops the batch. A mixed result is not permission to recompute from
+   newer source data or overwrite an unknown writer.
+4. When all intended rows and required continuity are verified, advance the
+   checkpoint and remove the pending intent in one Store save. A crash before that
+   save is recovered by the same readback, without a new epoch or additive total.
+   Close an old segment only after its stale suffix is reconciled; adopt its explicit
+   successor only with the selected consumer transition.
+
+The existing 366-day calculation bound also bounds one pending series batch.
+Oversized repairs require a separately specified bounded recovery plan; they cannot
+silently truncate the snapshot or stale suffix. Missing, corrupt, future-version or
+independently restored Store state blocks continuation until identities, epochs,
+native rows and pending effects are reconciled. Never infer replacement state from
+the oldest fetchable point or latest Recorder row. Deliberate downgrade must retain
+this state and prevent the old daily writer from targeting hourly successor IDs.
+This section specifies future persistence and writer behavior; neither is activated
+by the pure modules or the isolated native tests.
+
+An hourly runtime consumer needs the verified active statistic/segment, UTC hour
+starts, values in hours, and per-hour coverage for its requested window. A rolling
+24-hour chart can prioritize fan runtime, scale its hours axis to the plotted
+values, and show an average across the observed complete hours with that count
+explicit. Missing or invalid hours cannot become zeros, and a planned row cannot
+stand in for a verified import. The open current hour is expected latency; warnings
+should identify an actual missing, invalid, stale or incompatible source affecting
+the chart. A pending invalidation must suppress the affected display before stale
+native rows finish clearing. Segment boundaries and incomplete window coverage
+remain visible context without presenting every normal refresh as a warning.
+The activation phase must provide this coverage projection; native statistic rows
+alone do not carry it.
 
 The focused tests in [`test_hourly_statistics.py`](../tests/test_hourly_statistics.py)
 and [`test_hourly_import_plan.py`](../tests/test_hourly_import_plan.py) exercise
 the proposed calculation and reconciliation behavior without Home Assistant.
-Native Recorder, rollout and historical-recovery validation remain separate.
+[`test_hourly_recorder_ha.py`](../tests/test_hourly_recorder_ha.py) exercises the
+same builder/planner through real external imports and native hour/day readback in
+disposable synthetic Recorder instances. Its cases cover first-hour increments,
+partial days, cleared rows, gap/reset counterexamples, segment boundaries, queued
+completion/replay, trusted native seeds and corrected suffixes. These checks prove
+the tested Recorder contracts. The future Store writer, persistence failure/restart
+paths, consumer adoption, historical repair and rollout still need their own
+implementation and validation.
 
 ## Filter observation and action contracts
 

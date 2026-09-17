@@ -37,6 +37,15 @@ class HourlyStatisticRow:
     state: float | None = None
     sum: float | None = None
 
+    @property
+    def cleared(self) -> bool:
+        """Identify native start-only invalidation, never a numeric observation."""
+
+        return all(
+            value is None
+            for value in (self.mean, self.min, self.max, self.state, self.sum)
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RecorderSnapshot:
@@ -44,7 +53,10 @@ class RecorderSnapshot:
 
     Complete means all rows from the hour preceding the requested window through
     the latest retained row were acquired. It includes an authoritative empty result
-    for a new ID. A caller must establish this using a serialized native read; the
+    for a new ID. All metadata-supported numeric fields must be acquired, with
+    unsupported fields represented as None. A missing required projection must
+    not be interpreted as a cleared row. A caller must establish this using a
+    serialized native read; the
     pure planner cannot prove that assertion or that the snapshot remains current.
     """
 
@@ -220,7 +232,9 @@ def _snapshot_rows(
         except ValueError:
             reasons.add("invalid_recorder_snapshot")
             continue
-        if start in result or not _valid_row(row, bool(item.metadata.get("has_sum"))):
+        if start in result or (
+            not row.cleared and not _valid_row(row, bool(item.metadata.get("has_sum")))
+        ):
             reasons.add("invalid_recorder_snapshot")
         result[start] = row
     return result
@@ -325,13 +339,16 @@ def _stale_rows(
     first = _utc_hour(item.hours[0].start)
     end = _utc_hour(item.hours[-1].start) + _HOUR
     by_start = {row.start: row for row in calculated}
+    # Native start-only invalidation retains the row identity with null values.
+    # Those rows are not surviving stale numbers and cannot supply a seed.
+    populated = {start: row for start, row in existing.items() if not row.cleared}
     if not item.metadata.get("has_sum"):
         return {
             start
-            for start in existing
+            for start in populated
             if first <= start < end and start not in by_start
         }
-    stale = {start for start in existing if gap is not None and start >= gap}
+    stale = {start for start in populated if gap is not None and start >= gap}
     changed = any(
         start not in existing
         or (row.state, row.sum) != (existing[start].state, existing[start].sum)
@@ -340,7 +357,7 @@ def _stale_rows(
     if changed:
         # A correction is safe only when the complete affected native suffix is
         # recalculated. Never hide a changed increment in a later correction jump.
-        stale.update(start for start in existing if start >= end)
+        stale.update(start for start in populated if start >= end)
     return stale
 
 
