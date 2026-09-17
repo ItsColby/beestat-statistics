@@ -57,6 +57,12 @@ Room-temperature spread combines mapped readings for identity-qualified members 
 
 [`statistics_builder.py`](../custom_components/beestat_statistics/statistics_builder.py) owns pure daily-series construction. Summary rows supply runtime, counters, and summary measurements; thermostat and room-sensor five-minute rows supply daily mean/min/max measurements. Runtime/counter series publish cumulative `state` and `sum`; measurement series publish arithmetic means and available extrema. Local-day timestamps, units, conversion factors, and metadata are part of that contract.
 
+This production format has an interval limitation: Home Assistant's external
+statistics import is hourly, so it represents these daily aggregates as one-hour
+rows. Daily cumulative differences can still be meaningful, but hourly queries
+cannot recover the day's missing intervals. The preparation described below does
+not activate a repair or change the existing importer. [Core import contract](https://github.com/home-assistant/core/blob/2026.9.2/homeassistant/components/recorder/statistics.py#L2670).
+
 Known-unit absolute temperatures share the lower-bound check in [`temperature.py`](../custom_components/beestat_statistics/temperature.py). Historical outdoor, setpoint and room-sensor values are checked after source scaling and before aggregation; summary means and each supplied extremum are checked independently. Their qualified upstream tenths-Fahrenheit representation permits a `0.05 °F` half-step allowance in addition to floating-point roundoff, preserving the rounded absolute-zero value `−459.7 °F` while rejecting `−460 °F`. This source allowance does not apply to precise local HA readings. The pinned Beestat [runtime scaling](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_sensor.php#L113) and [summary rounding](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_thermostat_summary.php#L345) show this representation; the [API inventory](beestat-api-surface.json) records their source identities. Invalid means omit that day's measurement, while an invalid extremum omits only that extremum. Valid negative Celsius/Fahrenheit readings and finite high temperatures remain supported.
 
 Routine cumulative imports read an overlapping summary window and seed it from Recorder immediately before that window. Missing latest rows, missing seeds, or a failed window read cause a full-summary fallback. Seed coverage is checked against the fetched window as well as the cached inventory, so a newly discovered stage cannot restart an existing cumulative total from zero. A rebuild reads the complete available summary baseline even when its write range starts later. Its cumulative series continue through the latest source day because a corrected increment changes every later total; measurement series honor the requested end date.
@@ -66,6 +72,82 @@ Before reading Recorder metadata and seeds, the importer waits for previously qu
 Point requests are divided into bounded windows. Recoverable failures, including oversized responses and server errors, recursively split a window until an unsatisfied window is at most one day, then skip it with evidence. Authentication failures, permanent client errors, and redirects abort without splitting. Partial success therefore remains observable: the importer records skipped-window totals by resource and at most three identifier-free examples. It never represents a skipped window as verified zero activity. The result records submitted row counts, source counts, summary mode, fallback reason, and seed count; it is not independent proof that every upstream interval existed.
 
 Identity normalization removes duplicate source rows before aggregation; the last metadata/summary row wins, including deletion. An omitted optional counter contributes zero; an explicitly invalid counter stops its affected cumulative series. Numeric parsing and accumulation reject negative counters, non-finite or unrepresentable values, including overflow after conversion or seeding. A cumulative series also stops when its running total can no longer be represented instead of publishing a corrupted continuation. See [`test_statistics_builder.py`](../tests/test_statistics_builder.py), [`test_import_evidence.py`](../tests/test_import_evidence.py), and the real Recorder rebuild/seed coverage in [`test_filter_actions_ha.py`](../tests/test_filter_actions_ha.py).
+
+### Hourly repair preparation
+
+[`hourly_statistics.py`](../custom_components/beestat_statistics/hourly_statistics.py)
+and [`hourly_import_plan.py`](../custom_components/beestat_statistics/hourly_import_plan.py)
+are pure preparation modules. Production setup, services, imports, configuration
+and legacy writes do not call them. The proposed successor identity appends
+`_hourly_v2` to the existing statistic suffix; legacy IDs are never renamed or
+mutated by these modules. This naming contract remains subject to the separate
+activation and consumer-migration decision.
+
+The builder uses actual thermostat and sensor five-minute points for all declared
+families, including the quantities currently imported from daily summaries. It
+normalizes UTC instants before duplicate resolution and hour grouping, keeps the
+last row at a repeated instant including deletion/invalidity, and retains coverage
+for every requested hour. The conservative eligibility rule requires twelve
+distinct valid slots, a closed hour and an admitted source horizon. This is an
+explicit product-design tradeoff, not a native Recorder completeness guarantee.
+Missing or invalid slots are never zero-filled. Malformed timestamps remain
+visible as rejected source rows; the planner withholds their affected series
+because their position cannot be established.
+
+Measurement means remain arithmetic means of interval-start samples, distinct
+from Recorder's time-weighted held values. Runtime increments retain Beestat's
+exclusive-stage and fan semantics and convert seconds to hours. Degree-day
+increments use the source's 65°F base and fixed five-minute fraction of a 24-hour
+day; they do not normalize DST or missing samples. The source already normalizes
+AQI to percent. VOC's trusted-unit successor is held pending authoritative unit
+evidence; the existing declaration alone is insufficient. Daily summaries remain
+available to the filter engine and for their explicitly daily uses.
+
+The read-only planner requires an explicit cumulative checkpoint and a complete
+supplied Recorder snapshot, including successor metadata and every row from the
+preceding hour through the latest retained row. An empty query alone does not
+prove completeness. Only an exact preceding successor-hour seed can continue an
+existing cumulative epoch. The checkpoint carries the epoch origin and last
+verified continuous hour independently of the rolling raw-history window. An
+expired raw prefix does not invalidate a trusted exact predecessor; a missing
+seed cannot silently move the epoch forward. At a new epoch, the first row includes
+its actual first complete hour's increment, without a fabricated zero predecessor.
+The caller must establish snapshot coverage, preserve
+identity/unit compatibility, serialize with the writer and revalidate before any
+later effect; the pure planner neither acquires data nor proves those conditions.
+Its detached results expose proposed rows, every hour's coverage, continuity
+breaks, blocking reasons and surviving stale row starts. `unblocked_rows` means
+only that the supplied plan has no local blocker; it grants no authority and is
+not proof of a completed import.
+
+A cumulative gap withholds the affected series' entire proposed batch. A changed
+increment requires recalculating every affected retained successor total. If a
+correction or deletion invalidates a previously published hour, the plan identifies
+the stale measurement or cumulative suffix that an omitted upsert would leave
+behind. Stopping new writes does not repair those rows. Before activation, a
+separate native recovery contract must cover backup and restore, stale-row
+correction/removal, raw-history loss, metadata drift, partial submissions,
+Recorder completion/readback, versioned cutover and deliberate downgrade. No
+automatic resets, gap bridges or new epochs are selected here. An unrecoverable
+gap can therefore stall a cumulative series; that limitation must be resolved
+explicitly before consumer adoption.
+
+Recovery design must compare an explicit deterministic successor segment with
+any supported same-ID contract that remains truthful to native consumers. Carrying
+a known sum across unknown runtime hides missing contributions; a reset can create
+an artificial change. A deliberate segment could resume future coverage while
+retaining the old segment, but requires stable retry identity, an explicit consumer
+transition and bounded lifecycle rather than automatic ID proliferation. The
+native start-only import shape is a candidate for targeted stale-value invalidation,
+not proven recovery: isolated tests must verify clearing, readback, daily reduction
+and coverage on both supported Core lanes before choosing it. Midday origins and
+partial first days also require native proof. No such mutation is implemented by
+the preparation modules.
+
+The focused tests in [`test_hourly_statistics.py`](../tests/test_hourly_statistics.py)
+and [`test_hourly_import_plan.py`](../tests/test_hourly_import_plan.py) exercise
+the proposed calculation and reconciliation behavior without Home Assistant.
+Native Recorder, rollout and historical-recovery validation remain separate.
 
 ## Filter observation and action contracts
 
