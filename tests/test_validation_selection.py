@@ -177,6 +177,93 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertFalse(plan["jobs"]["release"])
         self.assertIn("current", declarations)
 
+        for job, old, new, lane in (
+            ("home_assistant_minimum", "--only minimum", "--only current", "minimum"),
+            ("home_assistant_current", "--only current", "--only minimum", "current"),
+            ("home_assistant_current", "fetch-depth: 0", "fetch-depth: 1", "current"),
+            (
+                "home_assistant_current",
+                "    steps:",
+                '    env:\n      CHECK: "value # data"\n    steps:',
+                "current",
+            ),
+            (
+                "home_assistant_current",
+                "        run: |",
+                "        env:\n          CHECK: |\n            # literal data\n        run: |",
+                "current",
+            ),
+        ):
+            prefix, body = current.split("  " + job + ":\n", 1)
+            previous = prefix + "  " + job + ":\n" + body.replace(old, new, 1)
+            with (
+                self.subTest(job=job, change=new),
+                patch.object(planner, "_git", return_value=previous),
+            ):
+                plan = planner.build_plan([path])
+                self.assertEqual([], plan["unresolved"])
+                for name in ("minimum", "current", "release", "hacs"):
+                    self.assertEqual(name == lane, plan["jobs"][name])
+
+        read_text = Path.read_text
+        for key, scalar in (
+            ("CHECK", '"value # before"'),
+            ("CHECK", "|\n        # before"),
+            ("name", '"value # before"'),
+        ):
+            prefix, body = current.split("  home_assistant_current:\n", 1)
+            candidate = (
+                prefix
+                + "  home_assistant_current:\n"
+                + body.replace(
+                    "    steps:", f"    env:\n      {key}: {scalar}\n    steps:", 1
+                )
+            )
+            previous = candidate.replace("# before", "# after")
+
+            def read_candidate(source, *args, candidate=candidate, **kwargs):
+                return (
+                    candidate
+                    if source == ROOT / path
+                    else read_text(source, *args, **kwargs)
+                )
+
+            with (
+                self.subTest(key=key, scalar=scalar),
+                patch.object(planner, "_git", return_value=previous),
+                patch.object(Path, "read_text", read_candidate),
+            ):
+                plan = planner.build_plan([path])
+                self.assertEqual([], plan["unresolved"])
+                for name in ("minimum", "current", "release", "hacs"):
+                    self.assertEqual(name == "current", plan["jobs"][name])
+
+        # YAML comments do not change execution, but hashes inside scalar data do.
+        previous = current.replace("fetch-depth: 0", "fetch-depth: 0 # explanation")
+        previous = "# workflow explanation\n" + previous.replace(
+            "    steps:", "    # job explanation\n    steps:"
+        )
+        with patch.object(planner, "_git", return_value=previous):
+            plan = planner.build_plan([path])
+        self.assertEqual([], plan["unresolved"])
+        self.assertFalse(
+            any(
+                plan["jobs"][lane] for lane in ("minimum", "current", "release", "hacs")
+            )
+        )
+
+        for previous in (
+            current.replace("VALIDATION_FULL:", "VALIDATION_FULL_PREVIOUS:", 1),
+            "defaults:\n  run:\n    shell: bash\n" + current,
+        ):
+            with (
+                self.subTest(shared=previous[:60]),
+                patch.object(planner, "_git", return_value=previous),
+            ):
+                plan = planner.build_plan([path])
+                self.assertEqual([], plan["unresolved"])
+                self.assertTrue(all(plan["jobs"].values()))
+
     def test_unavailable_dependency_comparison_is_unresolved(self):
         with patch.object(planner, "_git", side_effect=OSError("missing comparison")):
             plan = planner.build_plan(["scripts/verify-release-local.sh"])
