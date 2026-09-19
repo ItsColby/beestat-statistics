@@ -49,8 +49,16 @@ explicit complete-lane requests. Reuse evidence whose source and environment
 have not changed; a merge alone does not invalidate it. Local checks do not
 replace HACS, authorize publication, or establish live behavior.
 
+When both Home Assistant lanes are selected locally, the container runner starts
+them together after selected static checks pass and waits for both before any
+selected Hassfest check or snapshot cleanup. Single-lane selections and native
+runs remain sequential. To limit local concurrency, run selected lanes separately
+with `--only minimum` and `--only current` on the Bash affected route.
 
-## Run the checks
+## Run complete lanes when applicable
+
+The examples below run complete validation lanes. Use them only when the change
+requires that complete scope; use the affected commands above for ordinary changes.
 
 The maintained runner executes the same validation lanes used by CI. On Windows,
 install Ubuntu 24.04 under WSL2 with rootless Podman, then run from the checkout:
