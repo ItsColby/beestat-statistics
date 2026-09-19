@@ -232,13 +232,35 @@ run_lane() {
 }
 
 
+run_parallel_lanes() {
+  # Independent containers share only the immutable payload. Reap every worker
+  # before returning a failure or allowing the parent to remove that payload.
+  local lane lane_pid status=0
+  local lane_pids=()
+  for lane in "$@"; do
+    run_lane "$lane" & lane_pids+=("$!")
+  done
+  for lane_pid in "${lane_pids[@]}"; do
+    wait "$lane_pid" || status=1
+  done
+  return "$status"
+}
+
 run_affected() {
-  local lane selected command
+  local lane selected command ha_matrix_done=false
   for lane in unit minimum current release; do
     [[ -z "$affected_only" || "$lane" == "$affected_only" ]] || continue
     selected="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["jobs"][sys.argv[1]]).lower())' "$lane")"
     if [[ "$selected" != true ]]; then
       if [[ -n "$affected_only" ]]; then echo "Plan did not select $lane" >&2; return 2; fi
+      continue
+    fi
+    # Reuse the isolated matrix only when this plan selects both HA lanes.
+    # Hosted --only and native runs retain their single-lane/sequential behavior.
+    if [[ "$lane" == minimum && "$backend" == container && -z "$affected_only" ]] &&
+       [[ "$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["jobs"]["current"]).lower())')" == true ]]; then
+      run_parallel_lanes minimum current
+      ha_matrix_done=true
       continue
     fi
     case "$lane" in
@@ -250,7 +272,9 @@ run_affected() {
         run_python "$command"
         ;;
       minimum) run_minimum ;;
-      current) run_current ;;
+      current)
+        if [[ "$ha_matrix_done" != true ]]; then run_current; fi
+        ;;
       release) run_release ;;
     esac
   done
@@ -264,15 +288,7 @@ if [[ "$mode" == all ]]; then
 fi
 status=0
 if [[ "$mode" == all && "$backend" == container ]]; then
-  # Independent containers read one immutable payload. Preserve every lane's
-  # result and reap all jobs before the snapshot's EXIT cleanup can run.
-  lane_pids=()
-  for lane in "${lanes[@]}"; do
-    run_lane "$lane" & lane_pids+=("$!")
-  done
-  for lane_pid in "${lane_pids[@]}"; do
-    wait "$lane_pid" || status=1
-  done
+  run_parallel_lanes "${lanes[@]}"
 else
   for lane in "${lanes[@]}"; do
     # Calling run_lane conditionally would suppress its errexit semantics.
