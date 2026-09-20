@@ -509,6 +509,50 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         ):
             await task
 
+    async def test_query_guard_rejects_completed_fence_during_negative_read(self):
+        await self.accept()
+        await self.complete()
+        cold = self.fresh()
+        material = await cold.async_history_material(
+            {
+                "quantity_ids": [KEY],
+                "start": START.isoformat(),
+                "end": (START + HOUR).isoformat(),
+            },
+            context=self.context,
+        )
+        root_before, entry_before = (
+            deepcopy(self.store.value),
+            deepcopy(self.entry.data),
+        )
+        reached, release = asyncio.Event(), asyncio.Event()
+        read = self.store.async_read_object
+
+        async def pause_negative_read(kind, reference):
+            try:
+                return await read(kind, reference)
+            except FileNotFoundError:
+                if kind == "operation" and not reached.is_set():
+                    reached.set()
+                    await release.wait()
+                raise
+
+        self.store.async_read_object = pause_negative_read
+        task = self.create_task(
+            cold.async_check_history_material(material, context=self.context)
+        )
+        try:
+            await asyncio.wait_for(reached.wait(), 3)
+            await self.writer._invalidate_history_root(root_before["token"])
+            self.assertFalse(self.writer.has_pending_store_save())
+            self.assertEqual(self.store.value, root_before)
+            self.assertEqual(self.entry.data, entry_before)
+            self.assertIsNone(cold._state)
+        finally:
+            release.set()
+        with self.assertRaisesRegex(manager.HourlyImportError, "root_changed"):
+            await asyncio.wait_for(task, 3)
+
     async def test_initial_native_identity_collision_blocks_without_saves(self):
         self.recorder.metadata[NATIVE] = {"statistic_id": NATIVE}
         plan = await self.writer.async_plan_history(

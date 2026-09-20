@@ -392,6 +392,15 @@ class HourlyImportManager:
             raw = await self._store.async_read_object("operation", _digest(fence))
         except FileNotFoundError:
             self._admit()
+            # Absence was observed before this await completed. A save or fence
+            # may have finished meanwhile without changing this manager's cache.
+            if (
+                self._hass.data.get(_SAVES, {}).get(self._entry.entry_id)
+                is not previous
+            ):
+                raise HourlyImportError("history_root_changed") from None
+            if state["token"] == getattr(self, "_invalidated_history_token", None):
+                raise HourlyImportError("history_root_invalidated") from None
             return
         except Exception as err:
             self._invalidated_history_token = state["token"]
