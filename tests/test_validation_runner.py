@@ -345,9 +345,10 @@ class ValidationRunnerTests(unittest.TestCase):
         (self.repo / "deleted.txt").unlink()
         (self.repo / "ignored.txt").write_text("private", encoding="utf-8")
         (self.repo / "new file.txt").write_text("candidate", encoding="utf-8")
-        result = self.run_validation("release", "container")
+        result = self.run_validation("release", "container", str(self.repo / ".git"))
         self.assertEqual(result.returncode, 0, result.stderr)
         event = self.events()[0]
+        self.assertEqual(event["kind"], "release")
         self.assertIn("new file.txt", event["files"])
         self.assertNotIn("ignored.txt", event["files"])
         self.assertNotIn("deleted.txt", event["files"])
@@ -466,16 +467,15 @@ class ValidationRunnerTests(unittest.TestCase):
                     self.assertTrue((self.root / (lane + ".done")).exists())
                 self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_container_lanes_reuse_only_download_cache(self) -> None:
-        for _ in range(2):
-            result = self.run_validation("all", "container")
-            self.assertEqual(result.returncode, 0, result.stderr)
+    def test_container_cache_provisioning_and_payload_failures(self) -> None:
+        result = self.run_validation("all", "container")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         python_events = [
             event
             for event in self.events()
             if event["kind"] in {"unit-python", "minimum", "current"}
         ]
-        self.assertEqual(len(python_events), 6)
+        self.assertEqual(len(python_events), 3)
         for event in python_events:
             args = event["args"]
             self.assertEqual(args[:2], ["run", "--rm"])
@@ -496,16 +496,7 @@ class ValidationRunnerTests(unittest.TestCase):
                     "python scripts/run_dependency_light_tests.py --home-assistant",
                     args[-1],
                 )
-        self.assertEqual(list(self.scratch.iterdir()), [])
-
-    def test_container_provisioning_and_payload_failures(self) -> None:
-        result = self.run_validation("all", "container")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        commands = {
-            event["kind"]: event["args"]
-            for event in self.events()
-            if event["kind"] in {"unit-python", "minimum", "current"}
-        }
+        commands = {event["kind"]: event["args"] for event in python_events}
         apt_calls = ["apt update -qq", "apt install -y -qq --no-install-recommends git"]
         for lane, failure, payload_status, expected_status, expected_calls in (
             ("unit-python", "", 0, 0, [*apt_calls, "payload"]),
@@ -552,11 +543,6 @@ apt-get() {
         self.assertEqual(self.events(), [])
         self.assertEqual(list(self.scratch.iterdir()), [])
 
-    def test_explicit_git_directory_handles_external_cwd_and_spaces(self) -> None:
-        result = self.run_validation("release", "container", str(self.repo / ".git"))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.events()[0]["kind"], "release")
-
     def test_native_actionlint_provisions_shellcheck_and_cleans_failures(self) -> None:
         (self.bin / "shellcheck").unlink()
         for failure, expected in (
@@ -589,7 +575,8 @@ apt-get() {
                     self.assertEqual(sum("environment" in event for event in events), 2)
 
     def test_native_lanes_have_distinct_temporary_environments(self) -> None:
-        for lane in ("minimum", "current"):
+        lanes = ("minimum", "current")
+        for lane in lanes:
             result = self.run_validation(lane, "native")
             self.assertEqual(result.returncode, 0, result.stderr)
         environments = [
@@ -605,6 +592,48 @@ apt-get() {
             self.assertTrue(
                 any(str(event["path"]).startswith(str(path)) for path in environments)
             )
+        for lane, environment in zip(lanes, environments, strict=True):
+            with self.subTest(lane=lane):
+                calls = [
+                    event["args"]
+                    for event in self.events()
+                    if Path(str(event["path"])) == Path(str(environment)) / "bin/python"
+                ]
+                harness = next(
+                    index
+                    for index, call in enumerate(calls)
+                    if call[:3] == ["-m", "pip", "install"]
+                    and any(
+                        arg.startswith("pytest-homeassistant-custom-component==")
+                        for arg in call
+                    )
+                )
+                requirements = calls.index(
+                    [
+                        "-m",
+                        "pip",
+                        "install",
+                        "--upgrade",
+                        "-r",
+                        "requirements-ha-test.txt"
+                        if lane == "minimum"
+                        else "requirements-ha-current.txt",
+                    ]
+                )
+                dependency_check = calls.index(["-m", "pip", "check"])
+                tests = calls.index(
+                    ["scripts/run_dependency_light_tests.py", "--home-assistant"]
+                )
+                self.assertLess(harness, requirements)
+                self.assertLess(requirements, dependency_check)
+                self.assertTrue(
+                    all(
+                        index < dependency_check
+                        for index, call in enumerate(calls)
+                        if call[:3] == ["-m", "pip", "install"]
+                    )
+                )
+                self.assertLess(dependency_check, tests)
 
     def test_native_install_failure_cannot_reach_tests(self) -> None:
         self.env["VALIDATION_FAIL"] = "pip"

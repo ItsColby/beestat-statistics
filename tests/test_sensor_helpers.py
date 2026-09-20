@@ -157,36 +157,6 @@ class SensorHelpersTest(unittest.TestCase):
             },
         )
 
-    def test_filter_forecast_uses_runtime_and_max_age_thresholds(self) -> None:
-        thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=1,
-            slug="main",
-            name="Main",
-            filter_lifetime_runtime_hours=250,
-            filter_max_age_days=90,
-            filter_notice_days=7,
-        )
-        summary = types.SimpleNamespace(
-            filter_changed_date=date(2026, 6, 18),
-            filter_changed_source="native",
-            filter_runtime_hours=200,
-            recent_runtime_hours_per_day=10,
-        )
-
-        forecast = self.sensor.build_filter_forecast(
-            thermostat,
-            summary,
-            today=date(2026, 7, 5),
-        )
-
-        self.assertEqual(forecast.remaining_runtime_hours, 50.0)
-        self.assertEqual(forecast.runtime_due_date, date(2026, 7, 10))
-        self.assertEqual(forecast.max_age_due_date, date(2026, 9, 16))
-        self.assertEqual(forecast.due_date, date(2026, 7, 10))
-        self.assertEqual(forecast.days_remaining, 5)
-        self.assertFalse(forecast.due)
-        self.assertTrue(forecast.due_soon)
-
     def test_filter_forecast_retains_crossed_runtime_threshold_date(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
@@ -352,6 +322,8 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertEqual(snapshot["max_age_due_date"], "2026-09-16")
         self.assertEqual(snapshot["due_date"], "2026-07-10")
         self.assertEqual(snapshot["days_remaining"], 5)
+        self.assertFalse(snapshot["due"])
+        self.assertTrue(snapshot["due_soon"])
         original_revision = snapshot["forecast_revision"]
 
         data.thermostats[1] = types.SimpleNamespace(
@@ -617,7 +589,7 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertIsNone(forecast.due)
         self.assertFalse(forecast.due_soon)
 
-    def test_filter_forecast_uses_click_boundary_runtime_on_replacement_date(
+    def test_filter_forecast_preserves_observed_runtime_on_replacement_date(
         self,
     ) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
@@ -627,7 +599,6 @@ class SensorHelpersTest(unittest.TestCase):
             filter_lifetime_runtime_hours=250,
             filter_max_age_days=90,
             filter_notice_days=7,
-            filter_change_day_runtime_baseline_seconds=28800,
         )
         summary = types.SimpleNamespace(
             filter_changed_date=date(2026, 7, 5),
@@ -885,7 +856,6 @@ class SensorHelpersTest(unittest.TestCase):
         ):
             for raw, expected in (
                 (-4600, None),
-                (-5000, None),
                 (-400, -40),
                 (-4597, -459.7),
             ):

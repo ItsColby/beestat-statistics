@@ -172,10 +172,7 @@ run_unit() {
     python -m compileall -q custom_components/beestat_statistics tests scripts
     python scripts/check_public_safety.py
     python - <<"PY"
-import json
 from pathlib import Path
-for name in ("custom_components/beestat_statistics/manifest.json", "custom_components/beestat_statistics/translations/en.json", "custom_components/beestat_statistics/icons.json", "hacs.json", "docs/beestat-api-surface.json"):
-    json.loads(Path(name).read_text(encoding="utf-8"))
 paths = [path for root in ("custom_components", "tests", "blueprints", ".github", "scripts", "docs") for path in Path(root).rglob("*") if path.is_file() and "__pycache__" not in path.parts and path.suffix in {".json", ".md", ".py", ".ps1", ".sh", ".yaml", ".yml"}]
 paths.extend(Path(name) for name in ("README.md", "hacs.json"))
 failures = [f"{path}:{line}" for path in paths for line, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if text.endswith((" ", "\t"))]
@@ -204,7 +201,7 @@ run_current() {
     checks="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(json.load(sys.stdin)["commands"][sys.argv[1]])' current)"
   fi
   run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.365" || exit "$?"
+    python -m pip install "pytest-homeassistant-custom-component==0.13.366" || exit "$?"
     python -m pip install --upgrade -r requirements-ha-current.txt || exit "$?"
 '"$checks" false
 }

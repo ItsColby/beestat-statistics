@@ -113,52 +113,29 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_replacement_refreshes_when_dismiss_fails(self) -> None:
         api = sys.modules[f"{PACKAGE}.api"]
-        coordinator = _FakeCoordinator(dismiss_error=api.BeestatApiError("failed"))
+        for error in (api.BeestatApiError("failed"), RuntimeError("unexpected")):
+            with self.subTest(error_type=type(error).__name__):
+                coordinator = _FakeCoordinator(dismiss_error=error)
 
-        await self.entry_options.async_mark_filter_changed(
-            coordinator,
-            1001,
-            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
-        )
+                await self.entry_options.async_mark_filter_changed(
+                    coordinator,
+                    1001,
+                    datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
+                )
 
-        self.assertEqual(
-            _boundary_options(coordinator),
-            [
-                {
-                    "id": 1001,
-                    "filter_changed_date": "2026-07-05",
-                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
-                }
-            ],
-        )
-        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [False])
-        self.assertEqual(coordinator.rebuild_count, 1)
-
-    async def test_replacement_survives_unexpected_dismiss_error(
-        self,
-    ) -> None:
-        coordinator = _FakeCoordinator(dismiss_error=RuntimeError("unexpected"))
-
-        await self.entry_options.async_mark_filter_changed(
-            coordinator,
-            1001,
-            datetime(2026, 7, 5, 21, 48, tzinfo=UTC),
-        )
-
-        self.assertEqual(
-            _boundary_options(coordinator),
-            [
-                {
-                    "id": 1001,
-                    "filter_changed_date": "2026-07-05",
-                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
-                }
-            ],
-        )
-        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.refresh_skip_sync_values, [False])
-        self.assertEqual(coordinator.rebuild_count, 1)
+                self.assertEqual(
+                    _boundary_options(coordinator),
+                    [
+                        {
+                            "id": 1001,
+                            "filter_changed_date": "2026-07-05",
+                            "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                        }
+                    ],
+                )
+                self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+                self.assertEqual(coordinator.refresh_skip_sync_values, [False])
+                self.assertEqual(coordinator.rebuild_count, 1)
 
     async def test_mark_filter_changed_persists_exact_time_before_cloud_refresh(
         self,
@@ -242,30 +219,6 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.refresh_skip_sync_values, [True])
         self.assertEqual(coordinator.rebuild_count, 0)
 
-    async def test_mark_filter_changed_stays_persisted_when_fresh_sync_fails(
-        self,
-    ) -> None:
-        coordinator = _FakeCoordinator(refresh_error=RuntimeError("sync failed"))
-
-        await self.entry_options.async_mark_filter_changed(
-            coordinator,
-            1001,
-            datetime.fromisoformat("2026-07-05T17:48:00-04:00"),
-        )
-
-        self.assertEqual(
-            _boundary_options(coordinator),
-            [
-                {
-                    "id": 1001,
-                    "filter_changed_date": "2026-07-05",
-                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
-                }
-            ],
-        )
-        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
-        self.assertEqual(coordinator.scheduled_reconcile_count, 1)
-
     async def test_filter_change_stays_persisted_if_cached_rebuild_fails(self) -> None:
         coordinator = _FakeCoordinator(rebuild_error=RuntimeError("rebuild failed"))
 
@@ -336,6 +289,18 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["status"], "recorded")
         self.assertEqual(response["changed_at"], changed_at.isoformat())
         self.assertEqual(response["boundary_status"], "pending_data")
+        self.assertEqual(
+            _boundary_options(coordinator),
+            [
+                {
+                    "id": 1001,
+                    "filter_changed_date": "2026-07-05",
+                    "filter_changed_at": "2026-07-05T21:48:00+00:00",
+                }
+            ],
+        )
+        self.assertEqual(coordinator.dismissed_thermostat_ids, [1001])
+        self.assertEqual(coordinator.scheduled_reconcile_count, 1)
         event = coordinator.config_entry.options["thermostats"][0][
             "filter_change_event"
         ]

@@ -584,7 +584,7 @@ async def _skip_dependency_setup_for_config_flow_tests(
 
 
 async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
-    """Test the successful user setup flow."""
+    """Normalize copied connection fields while creating the complete entry."""
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -597,12 +597,20 @@ async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
         CONF_API_BASE,
     }
 
-    with _mock_validate_input():
+    with _mock_validate_input() as validate:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            USER_INPUT,
+            USER_INPUT
+            | {
+                CONF_API_KEY: " test-api-key \n",
+                CONF_API_BASE: f" {API_BASE} ",
+            },
         )
 
+    validate.assert_awaited_once()
+    validated_input = validate.await_args.args[1]
+    assert validated_input[CONF_API_KEY] == "test-api-key"
+    assert validated_input[CONF_API_BASE] == API_BASE
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == CONFIG_TITLE
     assert result["data"] == {
@@ -699,50 +707,28 @@ async def test_migrate_entry_backfills_stable_refs_for_options_only(
     }
 
 
-async def test_user_flow_normalizes_copy_paste_whitespace(
-    hass: HomeAssistant,
-) -> None:
-    """Test copied Beestat connection fields are stripped before validation/storage."""
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_USER},
-    )
-
-    user_input = USER_INPUT | {
-        CONF_API_KEY: " test-api-key \n",
-        CONF_API_BASE: f" {API_BASE} ",
-    }
-    with _mock_validate_input() as validate:
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input,
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    validate.assert_awaited_once()
-    validated_input = validate.await_args.args[1]
-    assert validated_input[CONF_API_KEY] == "test-api-key"
-    assert validated_input[CONF_API_BASE] == API_BASE
-    assert result["data"][CONF_API_KEY] == "test-api-key"
-    assert result["data"][CONF_API_BASE] == API_BASE
-
-
 @pytest.mark.parametrize(
     ("source", "failure"),
     [
         (source, failure)
         for source in (SOURCE_USER, SOURCE_RECONFIGURE, SOURCE_REAUTH)
-        for failure in ("invalid_api_base", "cannot_connect", "invalid_auth")
+        for failure in ("invalid_api_base", "cannot_connect", "invalid_auth", "unknown")
     ]
     + [(source, "api_key_required") for source in (SOURCE_USER, SOURCE_REAUTH)],
 )
 async def test_connection_retry_preserves_endpoint_without_prefilling_key(
-    hass: HomeAssistant, source: str, failure: str
+    hass: HomeAssistant, source: str, failure: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Retry the attempted endpoint while keeping stored credentials out of forms."""
 
-    entry = None if source == SOURCE_USER else _add_mock_entry(hass)
+    entry = (
+        None
+        if source == SOURCE_USER
+        else _add_mock_entry(
+            hass,
+            data={**_add_mock_entry_data(), "future_data": {"preserve": True}},
+        )
+    )
     original_data = dict(entry.data) if entry is not None else None
     context = {"source": source}
     if entry is not None:
@@ -750,14 +736,26 @@ async def test_connection_retry_preserves_endpoint_without_prefilling_key(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context=context, data=entry.data if source == SOURCE_REAUTH else None
     )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == (
+        "reauth_confirm" if source == SOURCE_REAUTH else source
+    )
     attempted_endpoint = (
         "http://attempted.example.test/"
         if failure == "invalid_api_base"
         else "https://attempted.example.test/"
     )
-    attempted_key = "" if failure == "api_key_required" else "attempted-test-key"
+    attempted_key = (
+        ""
+        if failure == "api_key_required"
+        or (source == SOURCE_RECONFIGURE and failure == "cannot_connect")
+        else "attempted-test-key"
+    )
+    private_detail = "private-validation-detail"
     error = (
-        BeestatAuthError("rejected")
+        RuntimeError(private_detail)
+        if failure == "unknown"
+        else BeestatAuthError("rejected")
         if failure == "invalid_auth"
         else BeestatApiError("offline")
     )
@@ -784,6 +782,9 @@ async def test_connection_retry_preserves_endpoint_without_prefilling_key(
         else:
             validate.assert_awaited_once()
         reload.assert_not_awaited()
+        if failure == "unknown":
+            assert private_detail not in caplog.text
+            assert "RuntimeError" in caplog.text
 
     fields = {field.schema: field for field in result["data_schema"].schema}
     assert fields[CONF_API_BASE].default() == attempted_endpoint
@@ -827,6 +828,10 @@ async def test_connection_retry_preserves_endpoint_without_prefilling_key(
     saved_data = result["data"] if entry is None else entry.data
     assert saved_data[CONF_API_BASE] == corrected_endpoint
     assert saved_data[CONF_API_KEY] == expected_key
+    assert saved_data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
+    if entry is not None:
+        assert result["reason"] == f"{source}_successful"
+        assert saved_data["future_data"] == {"preserve": True}
 
 
 async def test_user_flow_requires_identifiable_account_anchor(
@@ -847,40 +852,6 @@ async def test_user_flow_requires_identifiable_account_anchor(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "account_identity_unavailable"}
     assert not hass.config_entries.async_entries(DOMAIN)
-
-
-async def test_user_flow_recovers_from_unexpected_error(
-    hass: HomeAssistant,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test the user can recover after an unexpected validation exception."""
-
-    secret = "private-validation-detail"
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_USER},
-    )
-
-    with _mock_validate_input(side_effect=RuntimeError(secret)):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            USER_INPUT,
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "unknown"}
-    assert secret not in caplog.text
-    assert "RuntimeError" in caplog.text
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            USER_INPUT | {CONF_API_KEY: "fixed-key"},
-        )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_API_KEY] == "fixed-key"
 
 
 async def test_reauth_preserves_entry_when_account_identity_is_unavailable(
@@ -1152,7 +1123,7 @@ async def test_import_flow_reconciles_concurrent_options_update(
         return ACCOUNT_A
 
     with (
-        _mock_validate_input(side_effect=validate),
+        _mock_validate_input(side_effect=validate) as validate_input,
         patch.object(hass.config_entries, "async_schedule_reload") as reload,
     ):
         result = await hass.config_entries.flow.async_init(
@@ -1168,6 +1139,7 @@ async def test_import_flow_reconciles_concurrent_options_update(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+    validate_input.assert_awaited_once()
     assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
     assert dict(entry.options) == {
         **external_options,
@@ -1175,36 +1147,6 @@ async def test_import_flow_reconciles_concurrent_options_update(
         CONF_SCAN_INTERVAL_SECONDS: 1800,
     }
     reload.assert_called_once_with(entry.entry_id)
-
-
-async def test_same_connection_yaml_import_backfills_missing_fingerprint(
-    hass: HomeAssistant,
-) -> None:
-    """Test a legacy entry proves continuity before gaining a fingerprint."""
-
-    entry = _add_mock_entry(
-        hass,
-        data={
-            CONF_API_KEY: "yaml-key",
-            CONF_API_BASE: API_BASE,
-        },
-    )
-    with _mock_validate_input() as validate:
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": SOURCE_IMPORT},
-            data={
-                CONF_API_KEY: "yaml-key",
-                CONF_API_BASE: API_BASE,
-                CONF_POINT_LOOKBACK_DAYS: 75,
-                CONF_SCAN_INTERVAL_SECONDS: 3600,
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
-    validate.assert_awaited_once()
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
 
 
 async def test_import_flow_preserves_ui_mapping_options(
@@ -1374,128 +1316,6 @@ async def test_setup_clears_stale_yaml_connection_issue_without_yaml(
         )
         is None
     )
-
-
-async def test_reauth_flow_updates_api_key(hass: HomeAssistant) -> None:
-    """Test reauth updates the existing entry without creating another."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-        data=entry.data,
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
-
-    with _mock_validate_input(side_effect=BeestatAuthError("invalid key")):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "bad-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "invalid_auth"}
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "replacement-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_API_KEY] == "replacement-key"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
-
-
-async def test_reauth_flow_recovers_from_unexpected_error(
-    hass: HomeAssistant,
-) -> None:
-    """Test reauth can recover after an unexpected validation exception."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-        data=entry.data,
-    )
-
-    with _mock_validate_input(side_effect=RuntimeError("boom")):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "replacement-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "unknown"}
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "replacement-key",
-                CONF_API_BASE: API_BASE,
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_API_KEY] == "replacement-key"
-
-
-async def test_reconfigure_flow_allows_blank_key_to_keep_current(
-    hass: HomeAssistant,
-) -> None:
-    """Test reconfigure can update connection data without retyping the key."""
-
-    entry = _add_mock_entry(
-        hass,
-        data={**_add_mock_entry_data(), "future_data": {"preserve": True}},
-    )
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reconfigure"
-
-    with _mock_validate_input(side_effect=BeestatApiError("offline")):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "",
-                CONF_API_BASE: "https://offline.example.test/",
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "cannot_connect"}
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "",
-                CONF_API_BASE: "https://api.example.test/",
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_API_KEY] == "old-key"
-    assert entry.data[CONF_API_BASE] == "https://api.example.test/"
-    assert entry.data[CONF_ACCOUNT_FINGERPRINT] == ACCOUNT_A
-    assert entry.data["future_data"] == {"preserve": True}
 
 
 async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(
@@ -1860,43 +1680,6 @@ async def test_account_change_confirmation_preserves_intervening_entry_update(
     assert dict(entry.data) == external_data
     assert dict(entry.options) == external_options
     reload.assert_not_called()
-
-
-async def test_reconfigure_flow_recovers_from_unexpected_error(
-    hass: HomeAssistant,
-) -> None:
-    """Test reconfigure can recover after an unexpected validation exception."""
-
-    entry = _add_mock_entry(hass)
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
-    )
-
-    with _mock_validate_input(side_effect=RuntimeError("boom")):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "",
-                CONF_API_BASE: "https://api.example.test/",
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "unknown"}
-
-    with _mock_validate_input():
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_API_KEY: "",
-                CONF_API_BASE: "https://api.example.test/",
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_API_BASE] == "https://api.example.test/"
 
 
 async def test_options_flow_updates_import_options(hass: HomeAssistant) -> None:

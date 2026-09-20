@@ -59,7 +59,7 @@ class ConfigPayloadTest(unittest.TestCase):
         valid = {"id": 1, "filter_notice_days": 7}
         rows = [valid] + [
             {"id": value, "future": {"preserve": True}}
-            for value in (True, 1.5, 0, -1, float("inf"), None)
+            for value in (True, 1.5, 0, -1, float("inf"), None, "invalid")
         ]
         options = {"thermostats": rows}
         updated = config_payload.update_thermostat_override_options(
@@ -153,26 +153,6 @@ class ConfigPayloadTest(unittest.TestCase):
                 "filter_changed_date": "2026-08-08",
             },
         )
-
-    def test_invalid_legacy_row_does_not_block_targeted_override_update(self) -> None:
-        """Malformed unrelated rows remain stored but cannot crash an edit."""
-
-        options = {
-            "thermostats": [
-                {"id": 1, "filter_notice_days": 7},
-                {"id": "invalid", "future": {"preserve": True}},
-            ]
-        }
-
-        updated = config_payload.update_thermostat_override_options(
-            {},
-            options,
-            1,
-            {"filter_notice_days": 14},
-        )
-
-        self.assertEqual(updated["thermostats"][0]["filter_notice_days"], 14)
-        self.assertEqual(updated["thermostats"][1], options["thermostats"][1])
 
     def test_split_entry_payload_normalizes_filter_changed_date(self) -> None:
         data, _options = config_payload.split_entry_payload(

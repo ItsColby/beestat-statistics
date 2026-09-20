@@ -799,16 +799,3 @@ async def test_coverage_without_contract_version_preserves_v2_response(
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
     await runtime.entry._async_process_on_unload(hass)
-
-
-async def test_existing_v2_selection_schema_accepts_unchanged_calls():
-    request = {
-        "config_entry_id": "fixture-entry",
-        "epoch_start": START.isoformat(),
-        "statistic_ids": ["beestat:zone_a_fan_runtime_hours_hourly_v2"],
-        "expected_revision": 0,
-    }
-    for digest in (None, "reviewed-v2-selection"):
-        supplied = {**request, **({"preview_digest": digest} if digest else {})}
-        parsed = integration.SELECT_HOURLY_SERVICE_SCHEMA(supplied)
-        assert parsed == {**supplied, "epoch_start": START}

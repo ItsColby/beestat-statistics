@@ -529,29 +529,6 @@ class ConfigModelTest(unittest.TestCase):
             config.thermostats[0].filter_change_day_runtime_baseline_seconds
         )
 
-    def test_thermostat_override_can_set_filter_change_day_runtime_baseline(
-        self,
-    ) -> None:
-        config = config_model.build_beestat_config(
-            FakeHass({}),
-            thermostat_rows=({"id": 1001, "name": "Zone A"},),
-            sensor_rows=(),
-            config_data={
-                "thermostats": [
-                    {
-                        "id": 1001,
-                        "filter_changed_date": "2026-07-05",
-                        "filter_change_day_runtime_baseline_seconds": "28800",
-                    }
-                ]
-            },
-        )
-
-        self.assertEqual(
-            config.thermostats[0].filter_change_day_runtime_baseline_seconds,
-            28800,
-        )
-
     def test_thermostat_override_parses_exact_filter_boundary_metadata(self) -> None:
         config = config_model.build_beestat_config(
             FakeHass({}),
@@ -563,7 +540,7 @@ class ConfigModelTest(unittest.TestCase):
                         "id": 1001,
                         "filter_changed_date": "2026-07-05",
                         "filter_changed_at": "2026-07-05T21:48:00+00:00",
-                        "filter_change_day_runtime_baseline_seconds": 28800,
+                        "filter_change_day_runtime_baseline_seconds": "28800",
                         "filter_change_boundary_reconciled_at": (
                             "2026-07-05T22:05:00+00:00"
                         ),
@@ -576,6 +553,7 @@ class ConfigModelTest(unittest.TestCase):
         )
 
         thermostat = config.thermostats[0]
+        self.assertEqual(thermostat.filter_change_day_runtime_baseline_seconds, 28800)
         self.assertEqual(
             thermostat.filter_changed_at.isoformat(),
             "2026-07-05T21:48:00+00:00",
@@ -1161,6 +1139,16 @@ class ConfigModelTest(unittest.TestCase):
         self.assertIsNone(thermostat.device_id)
         self.assertEqual(thermostat.climate_entity_id, "climate.zone_a")
         self.assertIsNone(thermostat.temperature_entity_id)
+        self.assertEqual(
+            config.mapping_device_conflicts,
+            (
+                config_model.MappingDeviceConflict(
+                    resource_type="thermostat",
+                    resource_ids=(1001,),
+                    reason="cross_device",
+                ),
+            ),
+        )
 
     def test_duplicate_explicit_device_claims_fail_linking_closed(self) -> None:
         entries = [
@@ -1211,40 +1199,6 @@ class ConfigModelTest(unittest.TestCase):
                     resource_type="thermostat",
                     resource_ids=(1001, 1002),
                     reason="duplicate_device",
-                ),
-            ),
-        )
-
-    def test_reports_cross_device_explicit_mapping_conflict(self) -> None:
-        entries = [
-            FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
-            FakeEntityEntry(
-                "sensor.zone_b_temperature",
-                "thermostat_zone_b",
-                original_device_class="temperature",
-            ),
-        ]
-
-        conflicts = config_model.configured_mapping_device_conflicts(
-            {
-                "thermostats": [
-                    {
-                        "id": 1001,
-                        "climate_entity_id": "climate.zone_a",
-                        "temperature_entity_id": "sensor.zone_b_temperature",
-                    }
-                ]
-            },
-            FakeEntityRegistry(entries),
-        )
-
-        self.assertEqual(
-            conflicts,
-            (
-                config_model.MappingDeviceConflict(
-                    resource_type="thermostat",
-                    resource_ids=(1001,),
-                    reason="cross_device",
                 ),
             ),
         )

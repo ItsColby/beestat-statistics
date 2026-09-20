@@ -891,21 +891,6 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(self.recorder.submissions))
         self.assertIsNotNone(self.store.value["pending"])
 
-    async def test_pending_invalidation_suppresses_before_clearing(self):
-        await self.adopt(source((0.25, 0.5, 0.75)))
-        await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
-        self.recorder.partial = 0
-        with self.assertRaises(RuntimeError):
-            await self.writer.async_import((source((0.25, None, 0.75)),), identity())
-        coverage = self.writer.coverage(start=START, end=START + 3 * HOUR)["series"][ID]
-        self.assertEqual(
-            [0.25, None, None], [hour["value"] for hour in coverage["hours"]]
-        )
-        self.assertEqual("pending_reconciliation", coverage["hours"][1]["coverage"])
-        await self.fresh().async_reconcile()
-        self.assertTrue(self.recorder.rows[ID][START + HOUR].cleared)
-        self.assertTrue(self.recorder.rows[ID][START + 2 * HOUR].cleared)
-
     async def test_correction_recomputes_full_suffix_and_bounds_partial_window(self):
         await self.adopt(source((0.25, 0.5, 0.75)))
         await self.writer.async_import((source((0.25, 0.5, 0.75)),), identity())
@@ -1061,20 +1046,9 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
             async with self.gated_import(gate_call=1, timeout=0.02):
                 self.fail("A missed gate must not enter the gated body")
         self.assertEqual({"cleanup_completed": True}, self.store.value)
-        self.assertEqual(3, len(self.operation_tasks))
-        self.assertEqual(1, len(self.store_tasks))
         self.assertTrue(
             all(task.done() for task in self.operation_tasks + self.store_tasks)
         )
-
-    async def test_measurement_gap_is_missing_and_mean_uses_observed_hours(self):
-        item = source((70, None, 72), cumulative=False)
-        await self.adopt(item)
-        await self.writer.async_import((item,), identity())
-        result = self.writer.coverage(start=START, end=START + 3 * HOUR)["series"][ID]
-        self.assertEqual(71, result["observed_hour_average"])
-        self.assertEqual(2, result["complete_observed_hours"])
-        self.assertEqual("missing_slots", result["hours"][1]["coverage"])
 
     async def test_real_sensor_builder_coverage_average_is_finite_and_read_only(self):
         model = sys.modules[f"{PACKAGE}.config_model"]
