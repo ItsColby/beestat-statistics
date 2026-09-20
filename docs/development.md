@@ -20,13 +20,18 @@ For a working edit, use `-ChangedPath scripts/verify-release-local.sh` instead o
 refs. On Linux, use `bash scripts/verify-release-local.sh affected container ""`
 with `--base <base-commit> --head HEAD`, or repeated `--path <relative-path>`;
 add `--plan-only` to inspect the JSON plan without snapshots or installations.
-Planning uses an existing host Python 3.14 (`python3.14`, an installed uv runtime,
-or `VALIDATION_PYTHON`) to parse source without importing the integration. It
-does not download a runtime; HA execution keeps its isolated Python 3.14 lane.
-Explicit paths describe the complete change being accepted. The refs mode
-requires the checked-out candidate as its head; it does not include uncommitted
-edits. An empty verified comparison selects no jobs. Missing comparison input
-and unmapped changes fail with an unresolved applicability message.
+The PowerShell `-PlanOnly` preview uses `python` from PATH, which must be
+Python 3.14. Bash planning and snapshot admission find an existing Python 3.14
+through `python3.14`, an installed uv runtime, or `VALIDATION_PYTHON`.
+The public-safety path guard rejects linked leaves and ancestors before planning
+reads source and before the container payload is copied. The planner, guard and
+interpreter remain trusted executable tooling. Neither preview downloads a runtime.
+Explicit paths describe the complete change being accepted and select checks,
+not acquisition scope: planning parses all Python under `custom_components`,
+`tests` and `scripts`; execution copies tracked and nonignored files.
+The refs mode requires a clean checkout with the candidate as its head and rejects
+uncommitted edits. An empty verified comparison selects no jobs. Missing comparison
+input and unmapped changes fail with an unresolved applicability message.
 
 The product-owned planner traces local Python imports and reviewed direct-file
 consumers. Changed tests run in their native collector; runtime changes include
@@ -35,11 +40,22 @@ environments. A support requirements change selects that environment, without
 invalidating the unchanged sibling lane. Runner and workflow dependency declarations
 are compared against the supplied base, or HEAD for working-path selections;
 changed harness, Python image, action, and tool pins select their actual consumers.
+The separate API-surface workflow and its retained inventory select the existing
+offline checker tests and public-safety checks; workflow edits also select
+Actionlint/ShellCheck and workflow security analysis. These checks do not make
+upstream API requests or refresh the retained inventory.
 An unavailable dependency comparison remains unresolved. The Bash runner remains
 the owner of exact local tool versions. Tooling, workflow, public-content and
 metadata checks are selected independently of product tests. Configuration
 changes without a reviewed tool-specific mapping need explicit review, rather
 than an automatic complete run.
+
+Container execution rebuilds the affected plan from the captured payload, retaining
+the preview's resolved dependency baseline and selected paths. That plan contains
+the exact lane commands, which are reused without reading original source files
+again. Ref comparisons also require the captured files to match the clean candidate.
+Keep edits stable while the payload is being copied. Native execution uses one
+captured plan and requires its working tree to remain stable for the run.
 
 Pull requests and main pushes use this same selection. The stable Release gate
 requires the planning job and every selected job to succeed, and accepts skipped
