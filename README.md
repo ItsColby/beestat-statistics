@@ -1,6 +1,6 @@
 # Beestat Statistics
 
-Use your Beestat history in Home Assistant: chart daily HVAC statistics, see
+Use your Beestat history in Home Assistant: chart HVAC statistics, see
 cloud-reported schedules and alerts beside your existing devices, and estimate
 filter use from recorded fan runtime.
 
@@ -39,8 +39,11 @@ local match use Beestat fallback devices.
 
 Allow the initial import to finish, then check source freshness, mapping Repairs
 and partial-import status. A completed import can still contain skipped windows.
-Imported Recorder statistics are daily aggregates and cumulative totals, not a
-copy of every five-minute source sample.
+By default, imported Recorder statistics are daily aggregates and cumulative
+totals. [Opt-in hourly history](docs/hourly-history-v3.md) uses eligible raw
+observations for explicitly adopted quantities; installing the integration or
+selecting room measurements does not adopt hourly history. Neither path copies
+every five-minute source sample into Recorder.
 
 Scheduled acquisition defaults to six hours. Cached schedules, calendar dates
 and local room-temperature calculations can change between polls without a new

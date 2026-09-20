@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
+import threading
 import types
 import unittest
 from dataclasses import replace
@@ -225,6 +226,42 @@ class RawPointsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.call_count, 0)
         with self.assertRaises(asyncio.CancelledError):
             await self.raw.async_read_raw_points(client, request, identity)
+        self.assertEqual(session.call_count, 1)
+
+    async def test_receipt_transform_runs_off_loop_and_cancellation_propagates(self):
+        loop = asyncio.get_running_loop()
+        started, finished = asyncio.Event(), asyncio.Event()
+        proceed = threading.Event()
+        loop_thread = threading.get_ident()
+        worker_threads = []
+        original_complete = self.raw._complete_response
+
+        def paused_complete(response, result):
+            worker_threads.append(threading.get_ident())
+            loop.call_soon_threadsafe(started.set)
+            try:
+                if not proceed.wait(5):
+                    raise AssertionError("receipt worker was not released")
+                return original_complete(response, result)
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+
+        session = _FakeSession([{"data": [{"fan": 30}]}])
+        client = self.api.BeestatClient(session, "fixture-secret", "https://api.test/")
+        request = self.raw.parse_raw_point_request("runtime_thermostat", 1, START, END)
+        with patch.object(self.raw, "_complete_response", side_effect=paused_complete):
+            task = asyncio.create_task(
+                self.raw.async_read_raw_points(client, request, self.identity(request))
+            )
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                self.assertNotEqual(worker_threads, [loop_thread])
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                proceed.set()
+                await asyncio.wait_for(finished.wait(), 2)
         self.assertEqual(session.call_count, 1)
 
 

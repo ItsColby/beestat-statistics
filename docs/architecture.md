@@ -49,7 +49,7 @@ One coordinator timer selects the earliest cached schedule transition, cloud-sta
 
 Imports capture one evaluation time, timezone, and revision before preparing daily rows. A timezone change during awaited preparation restarts preparation before any Recorder submission, with a bounded number of attempts. Local days use actual UTC elapsed time across daylight-saving transitions. [`test_runtime_ha.py`](../tests/test_runtime_ha.py) exercises real timer transitions without a new source event, timezone changes, bounded import restarts, and unload cancellation.
 
-Current comfort profile mirrors cached `currentClimateRef`; scheduled profiles project the cached program. Neither reconstructs live holds. Sensor `in_use` is Beestat's reported flag, not configured membership or momentary weighting. [`alerts.py`](../custom_components/beestat_statistics/alerts.py) keeps equipment and unknown alerts visible even alongside maintenance reminders.
+Current comfort profile mirrors cached `currentClimateRef`; scheduled profiles project the cached program. Both use one normalization in which the last row for a climate reference wins, retaining sensor identities for membership while publishing names in profile attributes. Neither reconstructs live holds. Sensor `in_use` is Beestat's reported flag, not configured membership or momentary weighting. [`alerts.py`](../custom_components/beestat_statistics/alerts.py) keeps equipment and unknown alerts visible even alongside maintenance reminders.
 
 Room-temperature spread combines mapped readings for identity-qualified members of that thermostat's configured profile. It converts supported explicit units and accepts only absolute `temperature` observations when a live device class is present; sources with no device-class attribute remain supported. Absolute readings below 0 K, −273.15 °C or −459.67 °F are invalid, allowing only `1e-9` degrees of floating-point roundoff without clipping. Invalid or unavailable observations reduce coverage without removing their mappings, so a later valid state recovers through local events without cloud I/O. The spread itself is a temperature difference. At least two valid readings can produce a partial range that understates the full profile spread. Observation age alone does not reject a valid local reading.
 
@@ -102,8 +102,10 @@ legacy ID reservation and freezes the quantity's current legacy ID after a slug
 change. Disabling, removing or renaming a selected quantity cannot reopen its daily
 writer; reusing a reserved ID for a different resource is rejected. The importer
 checks ownership again after awaited work and before legacy submission. Legacy
-preparation and cumulative seed discovery use only admitted legacy IDs. There is
-one intended writer per quantity under the same importer and lock.
+preparation and cumulative seed discovery use only admitted legacy IDs. Point
+acquisition skips thermostat and sensor resources with no remaining legacy point
+quantity; summary-based quantities alone do not trigger point reads. There is one
+intended writer per quantity under the same importer and lock.
 
 The builder uses actual thermostat and sensor five-minute points for all declared
 families, including quantities previously imported from daily summaries. The
@@ -340,6 +342,12 @@ recovery and persistence failure paths. The
 hour/day, null, gap/reset, segment and suffix counterexamples. Those disposable
 contracts do not constitute proof of an actual installation or historical repair.
 
+Qualified v3 hourly queries read native hourly rows without fetching the legacy
+daily fallback. Daily queries retain that fallback. Query projection and view-token
+hashing run outside the event loop on detached request, material, and context
+snapshots; configuration, identity, timezone, runtime validity, and the history
+root revision are checked again before the result returns.
+
 ## Filter observation and action contracts
 
 Filter exposure is observed fan runtime, not a measurement of filter condition. Baseline selection is deterministic: local exact timestamp, local date override, mapped helper date, then Beestat date. [`filter_runtime.py`](../custom_components/beestat_statistics/filter_runtime.py) combines one bounded raw replacement day with later daily summaries. It counts only complete five-minute intervals after an exact replacement time; it does not prorate the crossing bucket. Missing intervals, boundary uncertainty, and the still-unreported tail remain explicit uncertainty. Date-only input omits the ambiguous replacement day.
@@ -355,6 +363,15 @@ An identical replay of the currently saved request returns `already_recorded` wi
 Date edits and boundary repair are corrections; neither acknowledges alerts. Repair refines an existing date and checks the persisted boundary. Exact input rejects ambiguous or nonexistent naive local times. Reconciliation rechecks the current timestamp and timezone revision after I/O before writing; it retains only the affected raw local day and periodically refreshes it to catch source corrections. A separate effect timer retries recent pending boundaries. Persisted reconciliation status and current source coverage remain distinct: an earlier finalized boundary does not prove complete exposure today. Action schemas and operational examples live in [Usage](usage.md) and [`services.yaml`](../custom_components/beestat_statistics/services.yaml).
 
 ## Transport, privacy, and verification boundaries
+
+Response JSON decoding, raw receipt validation, and routine history serialization
+run outside the event loop. Workers own detached inputs and cannot submit Recorder
+effects. Routine history capture rechecks its context after serialization before
+continuing. Exhausted retry diagnostics distinguish an unsuccessful API envelope
+from a false synchronization result, include attempt count and final HTTP status,
+and expose only recognized integer provider error codes (1000, 1003, 1005, 1505).
+They exclude provider messages and response bodies; retry and authentication
+behavior is unchanged.
 
 [`api.py`](../custom_components/beestat_statistics/api.py) is the only cloud transport. It uses the Home Assistant client session, an HTTPS endpoint validated by [`url_validation.py`](../custom_components/beestat_statistics/url_validation.py), disabled redirects, bounded responses, per-attempt timeouts, and bounded retries. Authentication failures and permanent client errors stop promptly. Supported resource/method wrappers and the [reviewed API inventory](beestat-api-surface.json) define the API surface; the upstream checker is a drift signal, not authenticated runtime verification.
 

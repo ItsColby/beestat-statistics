@@ -2,9 +2,9 @@
 
 This additive contract separates logical history from Recorder storage. Calls
 without `contract_version: 3` keep the existing coverage contract and v2 selection
-behavior. A v3 capability declaration does not mean any quantity is admitted or
-that a repair has completed. The implementation candidate requires validation
-before release and separate installation/adoption before use.
+behavior. A v3 capability declaration does not establish installation, admission
+of any quantity, or completion of a historical repair. Installation, explicit
+adoption, and verified history remain separate operational outcomes.
 
 ## Discover identities
 

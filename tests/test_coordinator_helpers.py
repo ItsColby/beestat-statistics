@@ -1073,6 +1073,78 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertTrue(sleep.is_optimized)
         self.assertEqual(sleep.sensors, ("Bedroom",))
 
+    def test_duplicate_profiles_share_last_row_for_current_and_schedule(self) -> None:
+        profiles = [
+            {
+                "climateRef": "home",
+                "name": "Earlier Home",
+                "sensors": [{"id": "rs:10:1", "name": "Earlier Room"}],
+            },
+            {
+                "climateRef": "home",
+                "name": "Later Home",
+                "sensors": [
+                    {"id": "rs:11:1", "name": "Same Room"},
+                    {"id": "rs:12:1", "name": "Same Room"},
+                    {"id": "rs:13:1"},
+                    {"name": "Named Room"},
+                    {},
+                    None,
+                ],
+            },
+        ]
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1, slug="zone_a", name="Zone A"
+        )
+        for climates in (profiles, list(reversed(profiles))):
+            winner = climates[-1]
+            with self.subTest(winner=winner["name"]):
+                row = {
+                    "thermostat_id": 1,
+                    "program": {
+                        "currentClimateRef": "home",
+                        "climates": [None, {}, *climates],
+                        "schedule": [["home"] * 48 for _ in range(7)],
+                    },
+                }
+                metadata = self.coordinator._build_thermostat_metadata(
+                    (row,),
+                    {},
+                    datetime(2026, 7, 1, 13, 15, tzinfo=UTC),
+                    ZoneInfo("UTC"),
+                    (thermostat,),
+                )[1]
+                expected_sensors = tuple(
+                    self.coordinator.ProfileSensorReference(
+                        sensor.get("id"), sensor.get("name")
+                    )
+                    for sensor in winner["sensors"]
+                    if isinstance(sensor, dict) and sensor
+                )
+                self.assertEqual(metadata.current_climate_name, winner["name"])
+                self.assertEqual(metadata.scheduled_climate_name, winner["name"])
+                self.assertEqual(metadata.current_profile_sensors, expected_sensors)
+                self.assertEqual(len(metadata.schedule_profiles), 1)
+                self.assertEqual(
+                    metadata.schedule_profiles[0].sensor_references, expected_sensors
+                )
+                self.assertEqual(
+                    metadata.schedule_profiles[0].sensors,
+                    tuple(sensor.name for sensor in expected_sensors if sensor.name),
+                )
+
+    def test_current_profile_preserves_unknown_reference_fallback(self) -> None:
+        for program in (
+            {"currentClimateRef": "unavailable"},
+            {"currentClimateRef": "unavailable", "climates": []},
+            {"currentClimateRef": "unavailable", "climates": [None, {}]},
+        ):
+            with self.subTest(program=program):
+                self.assertEqual(
+                    self.coordinator._current_profile({"program": program}),
+                    ("unavailable", "unavailable", ()),
+                )
+
     def test_ecobee_schedule_days_are_monday_first(self) -> None:
         local_tz = ZoneInfo("America/New_York")
 
