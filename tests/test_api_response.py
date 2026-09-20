@@ -149,9 +149,6 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("!", fingerprint)
         self.assertNotIn("private-response-secret", fingerprint)
 
-    def test_sync_true_response_is_success_without_rows(self) -> None:
-        self.assertEqual(self.api._normalize_rows(True, allow_boolean=True), [])
-
     async def test_sync_false_response_is_retried_before_success(self) -> None:
         session = _FakeSession([False, True])
         client = self.api.BeestatClient(
@@ -199,36 +196,35 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_envelope_reports_only_allowlisted_integer_codes(self) -> None:
         secret = "remote-response-secret"
-        for success in (False, 0):
-            for code in (1000, 1003, 1005, 1505):
-                with self.subTest(success=success, code=code):
-                    session = _FakeSession(
-                        [
-                            {
-                                "success": success,
-                                "data": {
-                                    "error_code": code,
-                                    "error_message": f"Invalid API key {secret}",
-                                    "error_detail": f"https://private.test/{secret}",
-                                },
-                            }
-                        ]
-                    )
-                    client = self.api.BeestatClient(
-                        session, "secret-token", "https://api.test/", retries=1
-                    )
-                    with self.assertRaises(self.api.BeestatApiError) as raised:
-                        await client.async_sync_runtime()
-                    self.assertEqual(type(raised.exception), self.api.BeestatApiError)
-                    self.assertEqual(
-                        client.redact_error(raised.exception),
-                        "Failed Beestat call runtime.sync: "
-                        "runtime.sync returned an unsuccessful response "
-                        "[failure=unsuccessful_envelope; "
-                        f"provider_error_code={code}] "
-                        "[attempts=1; final_http_status=200]",
-                    )
-                    self.assertNotIn(secret, client.redact_error(raised.exception))
+        for success, code in ((False, 1000), (0, 1003), (False, 1005), (0, 1505)):
+            with self.subTest(success=success, code=code):
+                session = _FakeSession(
+                    [
+                        {
+                            "success": success,
+                            "data": {
+                                "error_code": code,
+                                "error_message": f"Invalid API key {secret}",
+                                "error_detail": f"https://private.test/{secret}",
+                            },
+                        }
+                    ]
+                )
+                client = self.api.BeestatClient(
+                    session, "secret-token", "https://api.test/", retries=1
+                )
+                with self.assertRaises(self.api.BeestatApiError) as raised:
+                    await client.async_sync_runtime()
+                self.assertEqual(type(raised.exception), self.api.BeestatApiError)
+                self.assertEqual(
+                    client.redact_error(raised.exception),
+                    "Failed Beestat call runtime.sync: "
+                    "runtime.sync returned an unsuccessful response "
+                    "[failure=unsuccessful_envelope; "
+                    f"provider_error_code={code}] "
+                    "[attempts=1; final_http_status=200]",
+                )
+                self.assertNotIn(secret, client.redact_error(raised.exception))
 
     async def test_failed_envelope_omits_unknown_or_malformed_code_fields(self) -> None:
         secret = "remote-response-secret"

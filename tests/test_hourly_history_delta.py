@@ -281,11 +281,22 @@ class HistoryDeltaTest(unittest.TestCase):
 
     def test_prepared_bytes_keep_before_after_binding_when_callers_change_inputs(self):
         self.old_rows([self.row()])
+        resource = self.baseline["resources"]["runtime_thermostat:1"]
+        resource["conflict_hours"] = [START.isoformat()]
+        resource["blocked_windows"] = [
+            {
+                "start": START.isoformat(),
+                "end": self.end.isoformat(),
+                "reason": "unplaceable_timestamp",
+            }
+        ]
+        self.seal()
         incoming = [self.incoming([self.row(0, deleted=True)])]
         inputs_before = copy.deepcopy((self.baseline, incoming))
         result = self.prepare(incoming)
         saved = copy.deepcopy(result)
         self.assertEqual((self.baseline, incoming), inputs_before)
+        self.assertEqual(result["baseline_digest"], self.baseline["baseline_digest"])
         self.baseline["source_revision"] = "b" * 64
         self.seal()
         incoming[0]["manifest"]["resource_id"] = 99
@@ -326,23 +337,6 @@ class HistoryDeltaTest(unittest.TestCase):
         self.seal()
         with self.assertRaisesRegex(ValueError, "history_delta_baseline_identity"):
             self.prepare([self.incoming([self.row()])])
-
-    def test_baseline_conflicts_remain_bound_and_are_not_cleared(self):
-        self.old_rows([self.row()])
-        resource = self.baseline["resources"]["runtime_thermostat:1"]
-        resource["conflict_hours"] = [START.isoformat()]
-        resource["blocked_windows"] = [
-            {
-                "start": START.isoformat(),
-                "end": self.end.isoformat(),
-                "reason": "unplaceable_timestamp",
-            }
-        ]
-        self.seal()
-        before = copy.deepcopy(self.baseline)
-        result = self.prepare([self.incoming([self.row(0)])])
-        self.assertEqual(self.baseline, before)
-        self.assertEqual(result["baseline_digest"], before["baseline_digest"])
 
     def test_boolean_resource_identity_cannot_alias_integer_owner(self):
         self.old_rows([self.row()])

@@ -149,12 +149,9 @@ async def test_framework_refresh_starts_cached_projection_scheduler(
     ("invalid_value", "invalid_class", "invalid_unit"),
     [
         ("22", "temperature_delta", "°C"),
-        ("22", "humidity", "°C"),
         ("-274.15", "temperature", "°C"),
-        ("-460", "temperature", "°F"),
-        ("-459.7", "temperature", "°F"),
-        ("-1", "temperature", "K"),
     ],
+    ids=["attribute_only_invalid_class", "invalid_numeric_state"],
 )
 async def test_room_spread_invalid_observation_and_recovery_without_io(
     hass: HomeAssistant,

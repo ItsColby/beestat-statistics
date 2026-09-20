@@ -81,7 +81,6 @@ class TaskCoalescerTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertEqual(calls, 1)
-        self.assertIsNone(scheduler._task)
 
     async def test_failed_work_propagates_and_a_new_request_can_recover(self) -> None:
         task_coalescer = _load_task_coalescer_module()

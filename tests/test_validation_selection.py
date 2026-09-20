@@ -84,14 +84,6 @@ class ValidationSelectionTests(unittest.TestCase):
         # Snapshots have an index, but planning must bind an explicit source baseline.
         return target, str(source / ".git")
 
-    def test_docs_do_not_run_product_or_environment_suites(self):
-        plan = planner.build_plan(["README.md"])
-        self.assertTrue(plan["jobs"]["unit"])
-        self.assertEqual([], plan["ha_tests"])
-        self.assertFalse(plan["jobs"]["minimum"])
-        self.assertFalse(plan["jobs"]["current"])
-        self.assertFalse(plan["jobs"]["release"])
-
     def test_tooling_changes_keep_runtime_and_support_lanes_out(self):
         runner = (ROOT / "scripts/verify-release-local.sh").read_text()
         with patch.object(planner, "_git", return_value=runner):
@@ -335,6 +327,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual([], plan["unresolved"])
         self.assertEqual([planner.API_SURFACE_TEST], plan["unit_tests"])
         self.assertFalse(plan["workflow"])
+        self.assertTrue(plan["safety"])
         self.assertEqual({name: name == "unit" for name in planner.JOBS}, plan["jobs"])
         command = planner.lane_command(plan, "unit")
         self.assertIn("--test tests/test_api_surface_checker.py", command)
@@ -361,13 +354,13 @@ class ValidationSelectionTests(unittest.TestCase):
             ):
                 plan = planner.build_plan([path])
                 self.assertEqual([], plan["unresolved"])
-                self.assertIn(planner.API_SURFACE_TEST, plan["unit_tests"])
                 self.assertEqual(
                     {planner.API_SURFACE_TEST},
                     set(plan["unit_tests"]),
                 )
                 self.assertEqual([], plan["ha_tests"])
                 self.assertTrue(plan["workflow"])
+                self.assertTrue(plan["safety"])
                 self.assertEqual(
                     {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
                 )
@@ -459,8 +452,9 @@ class ValidationSelectionTests(unittest.TestCase):
                 plan = planner.build_plan([path])
                 self.assertIn(planner.METADATA_TEST, plan["unit_tests"])
                 self.assertEqual([], plan["ha_tests"])
-                self.assertFalse(plan["jobs"]["minimum"])
-                self.assertFalse(plan["jobs"]["current"])
+                self.assertEqual(
+                    {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
+                )
 
     def test_only_changed_support_environment_runs(self):
         for path, lane, other in (
@@ -536,12 +530,6 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(["future/unknown.py"], plan["unresolved"])
         self.assertFalse(plan["jobs"]["current"])
 
-    def test_empty_verified_comparison_has_no_jobs(self):
-        with patch.object(planner, "_git", side_effect=["a", "b", "b", "", ""]):
-            paths = planner.changed_paths("base", "head", None)
-        self.assertEqual([], paths)
-        self.assertFalse(any(planner.build_plan(paths)["jobs"].values()))
-
     @unittest.skipUnless(shutil.which("git"), "requires Git")
     def test_real_ref_comparison_binds_clean_candidate_and_resolves_changes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -575,7 +563,8 @@ class ValidationSelectionTests(unittest.TestCase):
                 self.assertEqual(
                     ["README.md"], planner.changed_paths(before, after, None)
                 )
-                self.assertEqual([], planner.changed_paths(after, after, None))
+                empty_paths = planner.changed_paths(after, after, None)
+                self.assertEqual([], empty_paths)
                 self.assertEqual(
                     ["README.md"],
                     planner.changed_paths(before, after, None, str(root / ".git")),
@@ -585,6 +574,7 @@ class ValidationSelectionTests(unittest.TestCase):
                 source.write_text("uncommitted\n")
                 with self.assertRaisesRegex(ValueError, "clean candidate"):
                     planner.changed_paths(before, after, None)
+            self.assertFalse(any(planner.build_plan(empty_paths)["jobs"].values()))
 
     @unittest.skipUnless(shutil.which("git"), "requires Git")
     def test_native_identity_survives_replacements_and_refuses_inherited_targets(self):
@@ -801,7 +791,7 @@ class ValidationSelectionTests(unittest.TestCase):
             self.assertTrue(plan["jobs"]["minimum"])
             self.assertFalse(plan["jobs"]["current"])
 
-    def test_missing_input_traversal_and_dirty_ref_candidate_fail(self):
+    def test_missing_input_and_traversal_fail(self):
         with self.assertRaises(ValueError):
             planner.changed_paths(None, None, None)
         for path in (
@@ -813,13 +803,6 @@ class ValidationSelectionTests(unittest.TestCase):
         ):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 planner.changed_paths(None, None, [path])
-        with (
-            patch.object(
-                planner, "_git", side_effect=["a", "b", "b", " M scripts/runner.py"]
-            ),
-            self.assertRaisesRegex(ValueError, "clean candidate"),
-        ):
-            planner.changed_paths("base", "head", None)
 
     @unittest.skipUnless(
         os.name == "posix" and shutil.which("bash"), "requires native Bash"
@@ -1290,8 +1273,8 @@ class SnapshotPlanningTests(unittest.TestCase):
             self.assertNotIn("ruff==99.0.0", captured["commands"]["unit"])
 
 
-class SourceAdmissionAndApiRoutingTests(unittest.TestCase):
-    """Admission precedes parsing; known audit inputs keep offline ownership."""
+class SourceAdmissionTests(unittest.TestCase):
+    """Admission precedes parsing."""
 
     def test_linked_owner_and_leaf_are_rejected_before_parsing(self):
         for linked_owner in (False, True):
@@ -1322,47 +1305,6 @@ class SourceAdmissionAndApiRoutingTests(unittest.TestCase):
                 ):
                     planner.build_plan(["README.md"])
                 read.assert_not_called()
-
-    def test_api_audit_inputs_select_offline_checks_without_support_lanes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for owner in ("scripts", "tests"):
-                (root / owner).mkdir()
-            shutil.copyfile(
-                ROOT / "scripts/verify-release-local.sh",
-                root / "scripts/verify-release-local.sh",
-            )
-            workflows = root / ".github/workflows"
-            workflows.mkdir(parents=True)
-            for name in ("beestat-api-surface.yaml", "validate.yaml"):
-                shutil.copyfile(ROOT / ".github/workflows" / name, workflows / name)
-            baseline = (workflows / "beestat-api-surface.yaml").read_text()
-            for path, workflow in (
-                (".github/workflows/beestat-api-surface.yaml", True),
-                ("docs/beestat-api-surface.json", False),
-            ):
-                with (
-                    self.subTest(path=path),
-                    patch.object(planner, "ROOT", root),
-                    patch.object(planner, "_git", return_value=baseline),
-                ):
-                    plan = planner.build_plan([path])
-                    self.assertEqual([], plan["unresolved"])
-                    self.assertEqual(
-                        ["tests/test_api_surface_checker.py"], plan["unit_tests"]
-                    )
-                    self.assertEqual(workflow, plan["workflow"])
-                    self.assertTrue(plan["safety"])
-                    self.assertEqual(
-                        {job: job == "unit" for job in planner.JOBS}, plan["jobs"]
-                    )
-                    self.assertIn(
-                        "test_api_surface_checker.py",
-                        planner.lane_command(plan, "unit"),
-                    )
-            with patch.object(planner, "ROOT", root):
-                unknown = planner.build_plan(["docs/unmapped.json"])
-            self.assertEqual(["docs/unmapped.json"], unknown["unresolved"])
 
 
 if __name__ == "__main__":

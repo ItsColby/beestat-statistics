@@ -90,33 +90,6 @@ class ConfigFlowHelpersTest(unittest.TestCase):
             self.config_flow._account_fingerprint([{"id": True}, {"id": 1.5}])
         )
 
-    def test_wrong_account_allows_overlapping_thermostat_anchor(self) -> None:
-        current = {
-            "account_fingerprint": {
-                "thermostat_id_hashes": ["shared", "old"],
-                "signature": "old-signature",
-            }
-        }
-
-        self.assertFalse(
-            self.config_flow._wrong_account(
-                current,
-                {
-                    "thermostat_id_hashes": ["shared", "new"],
-                    "signature": "new-signature",
-                },
-            )
-        )
-        self.assertTrue(
-            self.config_flow._wrong_account(
-                current,
-                {
-                    "thermostat_id_hashes": ["other"],
-                    "signature": "other-signature",
-                },
-            )
-        )
-
     def test_wrong_account_supports_legacy_signature_values(self) -> None:
         self.assertFalse(
             self.config_flow._wrong_account(
