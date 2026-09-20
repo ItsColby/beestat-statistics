@@ -23,12 +23,18 @@ import json
 import os
 import sys
 
+if "--snapshot-plan" in sys.argv and os.environ.get("VALIDATION_MUTATE_SOURCE"):
+    from pathlib import Path
+    source = Path(os.environ["VALIDATION_MUTATE_SOURCE"])
+    (source / "scripts/run_dependency_light_tests.py").write_text("raise RuntimeError('changed original')")
 if "--command" in sys.argv:
-    print(":")
+    raise RuntimeError("Lane command must come from the captured plan")
 else:
     selected = os.environ["VALIDATION_PLAN_LANES"].split()
     print(json.dumps({"jobs": {lane: lane in selected for lane in
-          ("unit", "minimum", "current", "release", "hacs")}, "workflow": True}))
+          ("unit", "minimum", "current", "release", "hacs")}, "workflow": True,
+          "safety": True, "paths": [], "base": "HEAD",
+          "commands": {lane: "echo snapshot-command" for lane in selected}}))
 """
 
 FAKE_TOOL = r"""
@@ -145,6 +151,10 @@ class ValidationRunnerTests(unittest.TestCase):
         (self.repo / "scripts").mkdir()
         self.runner = self.repo / "scripts" / "verify-release-local.sh"
         shutil.copyfile(ROOT / "scripts/verify-release-local.sh", self.runner)
+        shutil.copyfile(
+            ROOT / "scripts/check_public_safety.py",
+            self.repo / "scripts/check_public_safety.py",
+        )
         self.scratch = self.root / "scratch"
         self.scratch.mkdir()
         self.bin = self.root / "bin"
@@ -167,6 +177,7 @@ class ValidationRunnerTests(unittest.TestCase):
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
             "TMPDIR": str(self.scratch),
             "VALIDATION_LOG": str(self.log),
+            "VALIDATION_PYTHON": sys.executable,
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
         }
@@ -215,6 +226,31 @@ class ValidationRunnerTests(unittest.TestCase):
             for marker in self.root.glob(f"*.{suffix}"):
                 marker.unlink()
         return ["affected", "container", "", *(["--only", only] if only else [])]
+
+    def test_captured_commands_survive_original_planner_changes(self) -> None:
+        args = self.prepare_affected(("unit", "minimum", "current", "release"))
+        self.env["VALIDATION_MUTATE_SOURCE"] = str(self.repo)
+        result = self.run_validation(*args)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        commands = [
+            event["args"][-1]
+            for event in self.events()
+            if event["kind"] in {"unit-python", "minimum", "current"}
+        ]
+        self.assertEqual(3, len(commands))
+        self.assertTrue(all("snapshot-command" in command for command in commands))
+        self.assertEqual([], list(self.scratch.iterdir()))
+
+    def test_linked_snapshot_input_stops_before_container_and_cleans(self) -> None:
+        target = self.root / "external.py"
+        target.write_text(
+            "raise RuntimeError('must not be acquired')", encoding="utf-8"
+        )
+        (self.repo / "linked.py").symlink_to(target)
+        result = self.run_validation("release", "container")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual([], self.events())
+        self.assertEqual([], list(self.scratch.iterdir()))
 
     def test_affected_selection_preserves_order_overlap_and_exclusions(self) -> None:
         for lanes, only in (
