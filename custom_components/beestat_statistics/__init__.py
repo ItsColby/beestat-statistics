@@ -154,6 +154,7 @@ from .const import (
     SERVICE_RECORD_FILTER_CHANGE,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
     SERVICE_SELECT_HOURLY_STATISTICS,
+    STATISTIC_SOURCE,
     SUMMARY_MEAN_STATISTICS,
     SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
@@ -859,10 +860,29 @@ class BeestatStatisticsImporter:
 
     async def async_get_hourly_history(self, request: dict[str, Any]) -> dict[str, Any]:
         # A read must see pending suppression while a writer awaits native work.
+        request = deepcopy(request)
         context = self._history_context()
         material = await self.hourly.async_history_material(request, context=context)
         context["check_current"]()
-        return history_response(request, material, context)
+        # Material is a detached readback. Keep the pure, potentially large
+        # digest/projection off the event loop without passing runtime owners.
+        projection_context = {
+            key: context[key]
+            for key in (
+                "identity",
+                "config_revision",
+                "timezone",
+                "timezone_revision",
+                "evaluated_at",
+            )
+        }
+        response = await self._hass.async_add_executor_job(
+            history_response, request, material, projection_context
+        )
+        context["check_current"]()
+        await self.hourly.async_check_history_material(material, context=context)
+        context["check_current"]()
+        return response
 
     async def _async_refresh_hourly_history(
         self, *, lookback_days: int, rebuilding: bool
@@ -1477,6 +1497,7 @@ class BeestatStatisticsImporter:
             end_day=rebuild_end,
             thermostat_id=thermostat_id,
             temporal_context=temporal_context,
+            allowed_statistic_ids=allowed_legacy_ids,
         )
         sensor_rows_by_id = await self._async_fetch_sensor_rows(
             lookback_days,
@@ -1486,6 +1507,7 @@ class BeestatStatisticsImporter:
             end_day=rebuild_end,
             thermostat_id=thermostat_id,
             temporal_context=temporal_context,
+            allowed_statistic_ids=allowed_legacy_ids,
         )
         series = build_statistics(
             summary_rows,
@@ -1712,6 +1734,7 @@ class BeestatStatisticsImporter:
         temporal_context: TemporalContext,
         window: tuple[datetime, datetime] | None = None,
         preserve_source_rows: bool = False,
+        allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
         start, end = window or _point_window(
             lookback_days,
@@ -1729,6 +1752,12 @@ class BeestatStatisticsImporter:
             thermostat.thermostat_id
             for thermostat in runtime_data.config.thermostats
             if thermostat_id is None or thermostat.thermostat_id == thermostat_id
+            if allowed_statistic_ids is None
+            or any(
+                f"{STATISTIC_SOURCE}:{thermostat.slug}_{spec.statistic_suffix}"
+                in allowed_statistic_ids
+                for spec in THERMOSTAT_POINT_STATISTICS
+            )
         )
         for current_thermostat_id in thermostat_ids:
             rows: list[dict[str, Any]] = []
@@ -1814,6 +1843,7 @@ class BeestatStatisticsImporter:
         temporal_context: TemporalContext,
         window: tuple[datetime, datetime] | None = None,
         preserve_source_rows: bool = False,
+        allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
         start, end = window or _point_window(
             lookback_days,
@@ -1838,6 +1868,9 @@ class BeestatStatisticsImporter:
                 spec.sensor_id
                 for spec in build_sensor_specs(runtime_data.config)
                 if spec.sensor_id in configured_sensor_ids
+                if allowed_statistic_ids is None
+                or f"{STATISTIC_SOURCE}:{spec.statistic_suffix}"
+                in allowed_statistic_ids
             }
         )
         for sensor_id in sensor_ids:

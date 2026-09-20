@@ -183,30 +183,31 @@ async def test_cancelled_setup_releases_resources_and_retries(
                     PlatformData, "async_load_translations", blocked_translations
                 ),
             ):
-                async with asyncio.timeout(10):
-                    setup_task = asyncio.create_task(
-                        hass.config_entries.async_setup(entry.entry_id)
-                    )
-                    if cancel_at == "platform_forwarding":
+                setup_task = asyncio.create_task(
+                    hass.config_entries.async_setup(entry.entry_id)
+                )
+                if cancel_at == "platform_forwarding":
+                    async with asyncio.timeout(10):
                         await forwarding_started.wait()
                         await button_loaded.wait()
-                        assert (
-                            entry.entry_id
-                            in hass.data["entity_components"]["date"]._platforms
-                        )
-                        component = hass.data["entity_components"]["button"]
-                        old_platform = component._platforms[entry.entry_id]
-                        old_entities = dict(old_platform.entities)
-                        assert old_entities
-                        assert all(hass.states.get(key) for key in old_entities)
-                        client.async_sync_runtime.side_effect = blocked_sync
-                        # An import can already be running while platform setup
-                        # awaits. Exercise its real entry-owned task as well.
-                        import_at = now + timedelta(
-                            seconds=MIN_SCAN_INTERVAL_SECONDS + 1
-                        )
-                        freezer.move_to(import_at)
-                        async_fire_time_changed_exact(hass, import_at)
+                    assert (
+                        entry.entry_id
+                        in hass.data["entity_components"]["date"]._platforms
+                    )
+                    component = hass.data["entity_components"]["button"]
+                    old_platform = component._platforms[entry.entry_id]
+                    old_entities = dict(old_platform.entities)
+                    assert old_entities
+                    assert all(hass.states.get(key) for key in old_entities)
+                    client.async_sync_runtime.side_effect = blocked_sync
+                    # An import can already be running while platform setup
+                    # awaits. Exercise its real entry-owned task as well.
+                    import_at = now + timedelta(seconds=MIN_SCAN_INTERVAL_SECONDS + 1)
+                    # Freezer also moves loop time. Do not expire a wait guard
+                    # by advancing the clock to the import's scheduled deadline.
+                    freezer.move_to(import_at)
+                    async_fire_time_changed_exact(hass, import_at)
+                async with asyncio.timeout(10):
                     await acquisition_started.wait()
                     old_runtime = entry.runtime_data
                     setup_task.cancel("setup cancelled")

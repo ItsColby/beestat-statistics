@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import threading
 import traceback
 import types
 import unittest
@@ -166,6 +167,238 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(session.call_count, 2)
 
+    async def test_failed_sync_distinguishes_envelope_and_boolean_false(self) -> None:
+        cases = (
+            ({"success": False, "data": False}, "unsuccessful_envelope"),
+            ({"success": 0, "data": False}, "unsuccessful_envelope"),
+            ({"success": True, "data": False}, "sync_false"),
+            (False, "sync_false"),
+        )
+        for payload, failure in cases:
+            with self.subTest(payload=payload):
+                session = _FakeSession([payload, payload, payload])
+                client = self.api.BeestatClient(
+                    session, "secret-token", "https://api.test/"
+                )
+                sleep = AsyncMock()
+                with (
+                    patch.object(self.api.asyncio, "sleep", new=sleep),
+                    self.assertRaises(self.api.BeestatApiError) as raised,
+                ):
+                    await client.async_sync_runtime()
+                self.assertEqual(
+                    client.redact_error(raised.exception),
+                    "Failed Beestat call runtime.sync: "
+                    "runtime.sync returned an unsuccessful response "
+                    f"[failure={failure}] [attempts=3; final_http_status=200]",
+                )
+                self.assertEqual(type(raised.exception), self.api.BeestatApiError)
+                self.assertEqual(session.call_count, 3)
+                self.assertEqual(
+                    [call.args for call in sleep.await_args_list], [(2,), (4,)]
+                )
+
+    async def test_failed_envelope_reports_only_allowlisted_integer_codes(self) -> None:
+        secret = "remote-response-secret"
+        for success in (False, 0):
+            for code in (1000, 1003, 1005, 1505):
+                with self.subTest(success=success, code=code):
+                    session = _FakeSession(
+                        [
+                            {
+                                "success": success,
+                                "data": {
+                                    "error_code": code,
+                                    "error_message": f"Invalid API key {secret}",
+                                    "error_detail": f"https://private.test/{secret}",
+                                },
+                            }
+                        ]
+                    )
+                    client = self.api.BeestatClient(
+                        session, "secret-token", "https://api.test/", retries=1
+                    )
+                    with self.assertRaises(self.api.BeestatApiError) as raised:
+                        await client.async_sync_runtime()
+                    self.assertEqual(type(raised.exception), self.api.BeestatApiError)
+                    self.assertEqual(
+                        client.redact_error(raised.exception),
+                        "Failed Beestat call runtime.sync: "
+                        "runtime.sync returned an unsuccessful response "
+                        "[failure=unsuccessful_envelope; "
+                        f"provider_error_code={code}] "
+                        "[attempts=1; final_http_status=200]",
+                    )
+                    self.assertNotIn(secret, client.redact_error(raised.exception))
+
+    async def test_failed_envelope_omits_unknown_or_malformed_code_fields(self) -> None:
+        secret = "remote-response-secret"
+        codes = (9999, True, False, 1000.0, "1000", secret, None, [], {"code": 1000})
+        payloads = [
+            {
+                "success": False,
+                "data": {
+                    "error_code": code,
+                    "error_message": secret,
+                    "error_detail": f"https://private.test/{secret}",
+                },
+            }
+            for code in codes
+        ]
+        payloads.extend(
+            (
+                {"success": False, "data": {"code": 1000, "error_detail": secret}},
+                {"success": False, "error_code": 1000, "message": secret},
+                {"success": False, "data": [{"error_code": 1000, "value": secret}]},
+                {"success": False, "data": secret},
+                {"success": False, "data": None},
+            )
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                client = self.api.BeestatClient(
+                    _FakeSession([payload]),
+                    "secret-token",
+                    "https://api.test/",
+                    retries=1,
+                )
+                with self.assertRaises(self.api.BeestatApiError) as raised:
+                    await client.async_sync_runtime()
+                self.assertEqual(
+                    client.redact_error(raised.exception),
+                    "Failed Beestat call runtime.sync: "
+                    "runtime.sync returned an unsuccessful response "
+                    "[failure=unsuccessful_envelope] "
+                    "[attempts=1; final_http_status=200]",
+                )
+                self.assertNotIn(secret, client.redact_error(raised.exception))
+
+    async def test_sync_success_null_and_true_remain_successful(self) -> None:
+        for payload in (None, True, {"success": True, "data": None}, {"data": True}):
+            with self.subTest(payload=payload):
+                session = _FakeSession([payload])
+                client = self.api.BeestatClient(
+                    session, "secret-token", "https://api.test/"
+                )
+                sleep = AsyncMock()
+                with patch.object(self.api.asyncio, "sleep", new=sleep):
+                    self.assertEqual(await client.async_sync_runtime(), [])
+                self.assertEqual(session.call_count, 1)
+                sleep.assert_not_awaited()
+
+    async def test_successful_data_is_not_reclassified_by_error_code(self) -> None:
+        data = {"error_code": 1000, "error_message": "Invalid API key"}
+        session = _FakeSession([{"success": True, "data": data}, {"data": data}])
+        client = self.api.BeestatClient(session, "secret-token", "https://api.test/")
+        self.assertEqual(await client.async_read_id("thermostat"), [data])
+        self.assertEqual(await client.async_read_id("thermostat"), [data])
+        self.assertEqual(session.call_count, 2)
+
+    async def test_failed_envelope_can_recover_without_changing_retry_policy(
+        self,
+    ) -> None:
+        session = _FakeSession(
+            [
+                {"success": False, "data": {"error_code": 1003}},
+                {"success": True, "data": None},
+            ]
+        )
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=4
+        )
+        sleep = AsyncMock()
+        with patch.object(self.api.asyncio, "sleep", new=sleep):
+            self.assertEqual(await client.async_sync_runtime(), [])
+        self.assertEqual(session.call_count, 2)
+        sleep.assert_awaited_once_with(2)
+
+    async def test_exhaustion_reports_final_http_status_after_mixed_responses(
+        self,
+    ) -> None:
+        for final_status, final_payload, final_detail in (
+            (
+                200,
+                False,
+                "runtime.sync returned an unsuccessful response [failure=sync_false]",
+            ),
+            (503, {}, "runtime.sync returned HTTP 503"),
+        ):
+            with self.subTest(final_status=final_status):
+                session = _FakeSession(
+                    [
+                        _FakeResponse({}, status=429),
+                        _FakeResponse(final_payload, status=final_status),
+                    ]
+                )
+                client = self.api.BeestatClient(
+                    session, "secret-token", "https://api.test/", retries=2
+                )
+                sleep = AsyncMock()
+                with (
+                    patch.object(self.api.asyncio, "sleep", new=sleep),
+                    self.assertRaises(self.api.BeestatApiError) as raised,
+                ):
+                    await client.async_sync_runtime()
+                self.assertEqual(
+                    client.redact_error(raised.exception),
+                    f"Failed Beestat call runtime.sync: {final_detail} "
+                    f"[attempts=2; final_http_status={final_status}]",
+                )
+                self.assertEqual(session.call_count, 2)
+                sleep.assert_awaited_once_with(2)
+
+    async def test_final_transport_failure_does_not_reuse_prior_http_status(
+        self,
+    ) -> None:
+        secret = "network-response-secret"
+        session = _FakeSession([])
+        client = self.api.BeestatClient(
+            session, "secret-token", "https://api.test/", retries=2
+        )
+        sleep = AsyncMock()
+        with (
+            patch.object(
+                session,
+                "get",
+                side_effect=[
+                    _FakeResponse(False),
+                    self.api.aiohttp.ClientError(secret),
+                ],
+            ) as get,
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaises(self.api.BeestatApiError) as raised,
+        ):
+            await client.async_sync_runtime()
+        self.assertEqual(
+            client.redact_error(raised.exception),
+            "Failed Beestat call runtime.sync: Beestat network request failed "
+            "[attempts=2; final_http_status=unavailable]",
+        )
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_awaited_once_with(2)
+
+    async def test_auth_envelope_still_uses_original_nonretrying_exception(
+        self,
+    ) -> None:
+        payload = {
+            "success": False,
+            "message": "Invalid API key remote-response-secret",
+            "data": {"error_code": 1000},
+        }
+        session = _FakeSession([payload])
+        client = self.api.BeestatClient(session, "secret-token", "https://api.test/")
+        sleep = AsyncMock()
+        with (
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+            self.assertRaises(self.api.BeestatAuthError) as raised,
+        ):
+            await client.async_sync_runtime()
+        self.assertEqual(
+            client.redact_error(raised.exception), "runtime.sync authentication failed"
+        )
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
     async def test_http_error_does_not_expose_response_body(self) -> None:
         secret = "http-response-secret"
         session = _FakeSession(
@@ -279,6 +512,50 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             self.assertRaises(asyncio.CancelledError),
         ):
             await client.async_read_id("thermostat")
+        self.assertEqual(session.call_count, 1)
+        sleep.assert_not_awaited()
+
+    async def test_decode_runs_off_loop_and_cancelled_result_cannot_publish(
+        self,
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        started, finished = asyncio.Event(), asyncio.Event()
+        proceed = threading.Event()
+        loop_thread = threading.get_ident()
+        original_decode = self.api._decode_response
+        worker_threads = []
+
+        def paused_decode(chunks):
+            worker_threads.append(threading.get_ident())
+            loop.call_soon_threadsafe(started.set)
+            try:
+                if not proceed.wait(5):
+                    raise AssertionError("decode worker was not released")
+                return original_decode(chunks)
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+
+        session = _FakeSession([{"data": [{"fan": 30}]}])
+        client = self.api.BeestatClient(session, "secret-token", "https://api.test/")
+        trace = self.api._ReadTrace()
+        sleep = AsyncMock()
+        with (
+            patch.object(self.api, "_decode_response", side_effect=paused_decode),
+            patch.object(self.api.asyncio, "sleep", new=sleep),
+        ):
+            task = asyncio.create_task(
+                client._async_call_raw("runtime_thermostat", "read", None, trace=trace)
+            )
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                self.assertNotEqual(worker_threads, [loop_thread])
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                proceed.set()
+                await asyncio.wait_for(finished.wait(), 2)
+        self.assertEqual(trace.attempts, [])
         self.assertEqual(session.call_count, 1)
         sleep.assert_not_awaited()
 

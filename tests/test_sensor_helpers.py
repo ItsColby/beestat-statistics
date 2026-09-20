@@ -286,6 +286,30 @@ class SensorHelpersTest(unittest.TestCase):
                 profile = self.profile.schedule_profiles_by_ref(program)["home"]
                 self.assertEqual(profile.ventilator_min_on_time, expected)
 
+    def test_profile_payload_keeps_sensor_identifiers_private(self) -> None:
+        profile = self.profile.schedule_profiles_by_ref(
+            {
+                "climates": [
+                    {
+                        "climateRef": "home",
+                        "sensors": [
+                            {"id": "rs:11:1", "name": "Same Room"},
+                            {"id": "rs:12:1", "name": "Same Room"},
+                            {"id": "rs:13:1"},
+                        ],
+                    }
+                ]
+            }
+        )["home"]
+        for include_none in (True, False):
+            with self.subTest(include_none=include_none):
+                payload = self.profile.schedule_profile_payload(
+                    profile, include_none=include_none
+                )
+                self.assertEqual(payload["sensors"], ["Same Room", "Same Room"])
+                self.assertNotIn("sensor_references", payload)
+                self.assertNotIn("rs:", str(payload))
+
     def test_filter_due_date_snapshot_is_atomic_and_content_revisioned(self) -> None:
         changed_at = datetime(2026, 6, 18, 14, 30, tzinfo=UTC)
         thermostat = self.config_model.ConfiguredThermostat(

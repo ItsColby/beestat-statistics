@@ -435,6 +435,80 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(material["hours"][KEY], [])
         self.assertEqual((self.store.calls, len(self.recorder.submissions)), before)
 
+    async def test_only_daily_queries_read_the_legacy_source(self):
+        await self.accept()
+        await self.complete()
+        for period in (None, "hour", "day"):
+            with self.subTest(period=period):
+                self.recorder.reads.clear()
+                request = {
+                    "quantity_ids": [KEY],
+                    "start": (START - timedelta(days=2)).isoformat(),
+                    "end": (START + 2 * HOUR).isoformat(),
+                }
+                if period is not None:
+                    request["period"] = period
+                await self.writer.async_history_material(request, context=self.context)
+                read_ids = {item[0] for item in self.recorder.reads}
+                self.assertIn(NATIVE, read_ids)
+                self.assertEqual(
+                    "beestat:zone_fan_runtime_hours" in read_ids, period == "day"
+                )
+
+    async def test_query_guard_accepts_cold_cache_and_rejects_durable_change(self):
+        await self.accept()
+        cold = self.fresh()
+        material = await cold.async_history_material(
+            {
+                "quantity_ids": [KEY],
+                "start": START.isoformat(),
+                "end": (START + 2 * HOUR).isoformat(),
+            },
+            context=self.context,
+        )
+        self.assertIsNone(cold._state)
+        self.assertGreater(material["root_revision"], 0)
+        await cold.async_check_history_material(material, context=self.context)
+        await self.writer.async_advance_history(context=self.context)
+        with self.assertRaisesRegex(
+            manager.HourlyImportError, "history_query_root_changed"
+        ):
+            await cold.async_check_history_material(material, context=self.context)
+
+    async def test_query_guard_rejects_writer_intent_during_root_fence_read(self):
+        await self.accept()
+        cold = self.fresh()
+        material = await cold.async_history_material(
+            {
+                "quantity_ids": [KEY],
+                "start": START.isoformat(),
+                "end": (START + 2 * HOUR).isoformat(),
+            },
+            context=self.context,
+        )
+        reached, release = asyncio.Event(), asyncio.Event()
+        check_fence = cold._check_history_root_fence
+
+        async def pause_first_fence(state):
+            if not reached.is_set():
+                reached.set()
+                await release.wait()
+            await check_fence(state)
+
+        cold._check_history_root_fence = pause_first_fence
+        task = self.create_task(
+            cold.async_check_history_material(material, context=self.context)
+        )
+        try:
+            await reached.wait()
+            await cold.async_advance_history(context=self.context)
+        finally:
+            release.set()
+        with self.assertRaisesRegex(
+            manager.HourlyImportError, "history_query_root_changed"
+        ):
+            await task
+
     async def test_initial_native_identity_collision_blocks_without_saves(self):
         self.recorder.metadata[NATIVE] = {"statistic_id": NATIVE}
         plan = await self.writer.async_plan_history(

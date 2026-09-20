@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from .api import BeestatClient, BeestatRawReadError
+from .api import BeestatClient, BeestatRawReadError, BeestatRawResponse
 from .config_model import BeestatConfig
 
 RAW_POINT_MAX_DAYS = 31
@@ -189,6 +190,7 @@ async def async_read_raw_points(
         if request.resource == "runtime_thermostat"
         else client.async_read_runtime_sensor
     )
+    result: BeestatRawResponse | None = None
     try:
         result = await read(
             request.resource_id,
@@ -201,7 +203,18 @@ async def async_read_raw_points(
         response.update(
             status="failed", error=str(err), attempts=[asdict(a) for a in err.attempts]
         )
-    else:
+    response["finished_at"] = datetime.now(UTC).isoformat()
+    # The receipt and source result belong exclusively to this acquisition;
+    # cancelled callers discard the result without publishing it.
+    return await asyncio.to_thread(_complete_response, response, result)
+
+
+def _complete_response(
+    response: dict[str, Any], result: BeestatRawResponse | None
+) -> dict[str, Any]:
+    """Validate the detached receipt without large event-loop JSON transforms."""
+
+    if result is not None:
         count, shape = _row_count(result.data)
         response.update(
             attempts=[asdict(a) for a in result.attempts],
@@ -232,7 +245,6 @@ async def async_read_raw_points(
             )
         else:
             response.update(status="success", data=result.data)
-    response["finished_at"] = datetime.now(UTC).isoformat()
     try:
         encoded_size = len(
             json.dumps(response, ensure_ascii=True, allow_nan=False).encode()

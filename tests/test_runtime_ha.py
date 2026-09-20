@@ -52,6 +52,7 @@ from custom_components.beestat_statistics.api import (
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredSensor,
+    ConfiguredThermostat,
 )
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
@@ -325,6 +326,114 @@ async def test_sensor_runtime_is_read_once_for_all_enabled_statistics(
     )
     assert rows == {10: [] if read_fails else [row]}
     assert skipped_windows.runtime_sensor_count == int(read_fails)
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize(
+    ("selected", "thermostat_ids", "sensor_ids"),
+    [
+        (None, [1, 2], [10, 20]),
+        (frozenset({"beestat:room_voc_concentration"}), [], [10]),
+        (frozenset({"beestat:zone_a_heat_setpoint"}), [1], []),
+        (frozenset({"beestat:zone_a_fan_runtime_hours"}), [], []),
+        (frozenset(), [], []),
+    ],
+)
+async def test_legacy_partition_filters_acquisition_without_changing_output(
+    hass: HomeAssistant, freezer: Any, selected, thermostat_ids, sensor_ids
+) -> None:
+    """Mixed ownership fetches only needed points and preserves the owned rows."""
+    now = datetime(2026, 7, 1, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    config = BeestatConfig(
+        thermostats=(
+            ConfiguredThermostat(thermostat_id=1, slug="zone_a", name="Zone A"),
+            ConfiguredThermostat(thermostat_id=2, slug="zone_b", name="Zone B"),
+        ),
+        sensors=tuple(
+            ConfiguredSensor(
+                sensor_id=resource_id,
+                slug=slug,
+                name=slug,
+                thermostat_id=thermostat,
+                thermostat_slug=f"zone_{'a' if thermostat == 1 else 'b'}",
+                include_temperature=True,
+                include_air_quality=False,
+                include_co2=False,
+                include_voc=True,
+            )
+            for resource_id, thermostat, slug in ((10, 1, "room"), (20, 2, "other"))
+        ),
+    )
+    data = replace(coordinator.data, config=config)
+    coordinator.data = data
+    client.async_read_runtime_thermostat = AsyncMock(
+        side_effect=lambda resource_id, *_: [
+            {
+                "thermostat_id": resource_id,
+                "timestamp": "2026-07-01 12:00:00",
+                "setpoint_heat": 68,
+                "setpoint_cool": 75,
+            }
+        ]
+    )
+    client.async_read_runtime_sensor = AsyncMock(
+        side_effect=lambda resource_id, *_: [
+            {
+                "sensor_id": resource_id,
+                "timestamp": "2026-07-01 12:00:00",
+                "temperature": 72,
+                "voc_concentration": 4,
+            }
+        ]
+    )
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    summary = [{"thermostat_id": 1, "date": "2026-07-01", "sum_fan": 3600}]
+    arguments = {
+        "lookback_days": 1,
+        "force_full_summary": False,
+        "rebuild_start": None,
+        "rebuild_end": None,
+        "thermostat_id": None,
+        "temporal_context": coordinator.capture_temporal_context(),
+    }
+    with (
+        patch.object(
+            importer,
+            "_async_existing_detailed_statistic_ids",
+            AsyncMock(return_value=frozenset()),
+        ),
+        patch.object(
+            importer,
+            "_async_summary_import_plan",
+            AsyncMock(
+                return_value=SummaryImportPlan.full(summary, fallback_reason="fixture")
+            ),
+        ),
+    ):
+        baseline = await importer._async_prepare_import(data, **arguments)
+        client.async_read_runtime_thermostat.reset_mock()
+        client.async_read_runtime_sensor.reset_mock()
+        scoped = await importer._async_prepare_import(
+            data, **arguments, allowed_legacy_ids=selected
+        )
+    assert [
+        call.args[0] for call in client.async_read_runtime_thermostat.await_args_list
+    ] == thermostat_ids
+    assert [
+        call.args[0] for call in client.async_read_runtime_sensor.await_args_list
+    ] == sensor_ids
+    expected = [
+        item
+        for item in baseline.series
+        if selected is None or item.statistic_id in selected
+    ]
+    assert scoped.series == expected
+    if selected:
+        assert {item.statistic_id for item in scoped.series} == selected
     await entry._async_process_on_unload(hass)
 
 

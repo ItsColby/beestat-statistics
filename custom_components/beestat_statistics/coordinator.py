@@ -58,7 +58,7 @@ from .filter_runtime import (
     next_filter_uncertainty_deadline,
     observed_threshold_date,
 )
-from .profile import ScheduleProfile, schedule_profiles_by_ref
+from .profile import ProfileSensorReference, ScheduleProfile, schedule_profiles_by_ref
 from .temperature import absolute_temperature_value
 from .thermostat_settings import (
     ThermostatSettingsSnapshot,
@@ -90,14 +90,6 @@ class ThermostatRuntimeSummary:
     filter_runtime_threshold_date: date | None = None
     filter_runtime_observation: FilterRuntimeObservation | None = None
     recent_runtime_rate: RecentRuntimeRate | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileSensorReference:
-    """One Ecobee comfort-profile sensor without exposing it to diagnostics."""
-
-    identifier: str | None
-    name: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1430,8 +1422,13 @@ def _build_thermostat_metadata(
             if any(item.in_use is None for item in eligible_sensors)
             else len(active_sensors)
         )
-        current_ref, current_name, current_profile_sensors = _current_profile(row)
-        schedule = _schedule_snapshot(row, fetched_at, local_tz)
+        profiles_by_ref = schedule_profiles_by_ref(row.get("program"))
+        current_ref, current_name, current_profile_sensors = _current_profile(
+            row, profiles_by_ref=profiles_by_ref
+        )
+        schedule = _schedule_snapshot(
+            row, fetched_at, local_tz, profiles_by_ref=profiles_by_ref
+        )
         active_alerts = _active_alerts(row)
         metadata[thermostat.thermostat_id] = ThermostatMetadata(
             thermostat_id=thermostat.thermostat_id,
@@ -1702,39 +1699,17 @@ def _find_changed_dates(value: Any) -> list[date]:
 
 def _current_profile(
     row: dict[str, Any],
+    *,
+    profiles_by_ref: dict[str, ScheduleProfile] | None = None,
 ) -> tuple[str | None, str | None, tuple[ProfileSensorReference, ...]]:
     program = row.get("program")
     if not isinstance(program, dict):
         return None, None, ()
     current_ref = _string_or_none(program.get("currentClimateRef"))
-    climates = program.get("climates")
-    if current_ref is None or not isinstance(climates, list):
-        return current_ref, current_ref, ()
-    for climate in climates:
-        if not isinstance(climate, dict) or climate.get("climateRef") != current_ref:
-            continue
-        sensors = climate.get("sensors")
-        sensor_references = (
-            tuple(
-                ProfileSensorReference(
-                    identifier=_string_or_none(item.get("id")),
-                    name=_string_or_none(item.get("name")),
-                )
-                for item in sensors
-                if isinstance(item, dict)
-                and (
-                    _string_or_none(item.get("id")) is not None
-                    or _string_or_none(item.get("name")) is not None
-                )
-            )
-            if isinstance(sensors, list)
-            else ()
-        )
-        return (
-            current_ref,
-            _string_or_none(climate.get("name")) or current_ref,
-            sensor_references,
-        )
+    if profiles_by_ref is None:
+        profiles_by_ref = schedule_profiles_by_ref(program)
+    if profile := profiles_by_ref.get(current_ref or ""):
+        return current_ref, profile.name, profile.sensor_references
     return current_ref, current_ref, ()
 
 
@@ -1742,13 +1717,16 @@ def _schedule_snapshot(
     row: dict[str, Any],
     fetched_at: datetime,
     local_tz: ZoneInfo,
+    *,
+    profiles_by_ref: dict[str, ScheduleProfile] | None = None,
 ) -> dict[str, Any]:
     program = row.get("program")
     if not isinstance(program, dict):
         return _empty_schedule_snapshot()
 
-    profile_by_ref = schedule_profiles_by_ref(program)
-    profiles = tuple(profile_by_ref.values())
+    if profiles_by_ref is None:
+        profiles_by_ref = schedule_profiles_by_ref(program)
+    profiles = tuple(profiles_by_ref.values())
     schedule = program.get("schedule")
     if not _valid_schedule(schedule):
         return {**_empty_schedule_snapshot(), "profiles": profiles}
@@ -1758,13 +1736,13 @@ def _schedule_snapshot(
     day_index = _ecobee_day_index(local_now)
     slot_index = min(local_now.hour * 2 + (local_now.minute // 30), 47)
     scheduled_ref = _schedule_ref(schedule, day_index, slot_index)
-    scheduled_profile = profile_by_ref.get(scheduled_ref or "")
+    scheduled_profile = profiles_by_ref.get(scheduled_ref or "")
     next_ref, next_at = _next_schedule_transition(
         schedule,
         local_now,
         scheduled_ref,
     )
-    next_profile = profile_by_ref.get(next_ref or "")
+    next_profile = profiles_by_ref.get(next_ref or "")
     return {
         "scheduled_ref": scheduled_ref,
         "scheduled_name": _profile_name(scheduled_profile, scheduled_ref),

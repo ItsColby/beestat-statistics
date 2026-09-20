@@ -18,6 +18,7 @@ _FINGERPRINT_MAX = 160
 _DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 _RESPONSE_CHUNK_BYTES = 64 * 1024
 _RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429})
+_SAFE_PROVIDER_ERROR_CODES = frozenset({1000, 1003, 1005, 1505})
 
 
 class BeestatApiError(RuntimeError):
@@ -218,7 +219,17 @@ def _unwrap_response(
         detail = payload.get("message") or payload.get("errors") or payload.get("error")
         if _is_auth_error(detail):
             raise BeestatAuthError(f"{resource}.{method} authentication failed")
-        raise BeestatApiError(f"{resource}.{method} returned an unsuccessful response")
+        data = payload.get("data")
+        error_code = data.get("error_code") if isinstance(data, dict) else None
+        code_detail = (
+            f"; provider_error_code={error_code}"
+            if type(error_code) is int and error_code in _SAFE_PROVIDER_ERROR_CODES
+            else ""
+        )
+        raise BeestatApiError(
+            f"{resource}.{method} returned an unsuccessful response "
+            f"[failure=unsuccessful_envelope{code_detail}]"
+        )
     if "data" in payload:
         return payload["data"]
     if require_envelope_data and "success" in payload:
@@ -262,6 +273,12 @@ def _pagination_indicated(payload: object) -> bool:
         payload.get(key) not in (None, False, "", 0)
         for key in ("has_more", "next", "next_page", "next_cursor", "truncated")
     )
+
+
+def _decode_response(chunks: list[bytes]) -> Any:
+    """Join and decode task-owned response bytes outside the event loop."""
+
+    return json.loads(b"".join(chunks))
 
 
 class BeestatClient:
@@ -354,8 +371,10 @@ class BeestatClient:
             params["arguments"] = json.dumps(arguments, separators=(",", ":"))
 
         last_error: Exception | None = None
+        attempt = 0
+        status: int | None = None
         for attempt in range(1, self._retries + 1):
-            status: int | None = None
+            status = None
             if trace is not None:
                 trace.response_bytes = 0
             try:
@@ -373,7 +392,8 @@ class BeestatClient:
                 )
                 if method == "sync" and data is False:
                     raise BeestatApiError(
-                        f"{resource}.{method} returned an unsuccessful response"
+                        f"{resource}.{method} returned an unsuccessful response "
+                        "[failure=sync_false]"
                     )
                 _record_attempt(trace, attempt, status, "success", payload)
                 return data
@@ -403,7 +423,9 @@ class BeestatClient:
             else "Beestat request failed"
         )
         raise BeestatApiError(
-            f"Failed Beestat call {resource}.{method}: {detail}"
+            f"Failed Beestat call {resource}.{method}: {detail} "
+            f"[attempts={attempt}; "
+            f"final_http_status={status if status is not None else 'unavailable'}]"
         ) from None
 
     async def _async_read_json(
@@ -429,7 +451,9 @@ class BeestatClient:
                     "Beestat response exceeded the size limit"
                 )
             chunks.append(chunk)
-        return json.loads(b"".join(chunks))
+        # Only this call owns these chunks. A cancelled/expired caller drops the
+        # worker result; the worker cannot mutate transport or receipt state.
+        return await asyncio.to_thread(_decode_response, chunks)
 
     async def async_sync_runtime(self) -> list[dict[str, Any]]:
         """Ask Beestat to sync runtime data before reading it."""
