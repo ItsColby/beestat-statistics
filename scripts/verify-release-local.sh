@@ -37,7 +37,7 @@ if [[ "$(cd "$actual_root" && pwd -P)" != "$(cd "$source_root" && pwd -P)" ]]; t
   echo "Git target root does not match the wrapper source root." >&2; exit 2
 fi
 validation_python="${VALIDATION_PYTHON:-}"
-if [[ "$mode" == affected && -z "$validation_python" ]]; then
+if [[ ( "$mode" == affected || "$backend" == container ) && -z "$validation_python" ]]; then
   if command -v python3.14 >/dev/null 2>&1; then
     validation_python="$(command -v python3.14)"
   elif command -v uv >/dev/null 2>&1; then
@@ -45,7 +45,7 @@ if [[ "$mode" == affected && -z "$validation_python" ]]; then
   elif [[ -x "$HOME/.local/bin/uv" ]]; then
     validation_python="$("$HOME/.local/bin/uv" python find 3.14 --no-python-downloads)"
   else
-    echo "Affected planning requires Python 3.14; set VALIDATION_PYTHON to an existing interpreter." >&2
+    echo "Source admission and planning require Python 3.14; set VALIDATION_PYTHON to an existing interpreter." >&2
     exit 2
   fi
 fi
@@ -82,10 +82,12 @@ if [[ "$mode" == affected ]]; then
 fi
 
 if [[ "$backend" == container ]]; then
-  repo_root="$(mktemp -d)"
+  temporary_root="$(mktemp -d)"
+  repo_root="$temporary_root/payload"
+  mkdir "$repo_root"
   # An interrupted wait can leave lanes using the snapshot. Drain this
   # runner's jobs before deleting it, and retain the interrupt exit status.
-  trap 'trap "" INT TERM; wait; rm -rf "$repo_root"' EXIT
+  trap 'trap "" INT TERM; wait; rm -rf "$temporary_root"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   "${source_git[@]}" ls-files --cached --others --exclude-standard -z |
@@ -93,8 +95,9 @@ if [[ "$backend" == container ]]; then
       if [[ -e "$source_root/$path" || -L "$source_root/$path" ]]; then
         printf '%s\0' "$path"
       fi
-    done |
-    tar -C "$source_root" --null --files-from=- --create --file=- |
+    done > "$temporary_root/source-paths"
+  "$validation_python" "$source_root/scripts/check_public_safety.py" --check-source-paths < "$temporary_root/source-paths"
+  tar -C "$source_root" --null --files-from="$temporary_root/source-paths" --create --file=- |
     tar -C "$repo_root" --extract --file=-
   # The pinned Actionlint image runs as an unprivileged user.
   chmod a+rx "$repo_root"
@@ -103,6 +106,12 @@ if [[ "$backend" == container ]]; then
   git -C "$repo_root" -c init.templateDir= init -q
   # The curated payload can contain tracked files matching source ignore rules.
   git -C "$repo_root" add -A -f
+fi
+
+if [[ "$mode" == affected && "$backend" == container ]]; then
+  planning_git_dir="$("${source_git[@]}" rev-parse --absolute-git-dir)"
+  affected_plan="$(printf '%s' "$affected_plan" |
+    "$validation_python" "$repo_root/scripts/run_dependency_light_tests.py" --plan --snapshot-plan --git-directory "$planning_git_dir")"
 fi
 
 python_image="docker.io/library/python@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde11b7a9395f48e24360c0988bcc5c2bc"
@@ -181,7 +190,7 @@ run_minimum() {
     python -m mypy --strict custom_components/beestat_statistics
     python scripts/run_dependency_light_tests.py --home-assistant'
   if [[ "$mode" == affected ]]; then
-    checks="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command minimum)"
+    checks="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(json.load(sys.stdin)["commands"][sys.argv[1]])' minimum)"
   fi
   run_python '
     python -m pip install "pytest-homeassistant-custom-component==0.13.354" || exit "$?"
@@ -192,7 +201,7 @@ run_current() {
   local checks='    python -m pip check
     python scripts/run_dependency_light_tests.py --home-assistant'
   if [[ "$mode" == affected ]]; then
-    checks="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command current)"
+    checks="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(json.load(sys.stdin)["commands"][sys.argv[1]])' current)"
   fi
   run_python '
     python -m pip install "pytest-homeassistant-custom-component==0.13.365" || exit "$?"
@@ -268,7 +277,7 @@ run_affected() {
         if [[ "$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(str(json.load(sys.stdin)["workflow"]).lower())')" == true ]]; then
           run_actionlint
         fi
-        command="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command unit)"
+        command="$(printf '%s' "$affected_plan" | "$validation_python" -c 'import json,sys; print(json.load(sys.stdin)["commands"][sys.argv[1]])' unit)"
         run_python "$command"
         ;;
       minimum) run_minimum ;;

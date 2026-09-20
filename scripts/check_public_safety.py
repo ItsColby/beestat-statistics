@@ -249,6 +249,25 @@ def _content_failures(relative_posix: str, raw: bytes) -> set[str]:
     return set()
 
 
+def is_linked_source(root: Path, path: Path) -> bool:
+    """Apply the guard's existing leaf and ancestor link policy."""
+    return any(
+        candidate.is_symlink() or candidate.is_junction()
+        for candidate in (path, *path.parents)
+        if candidate != root and root in candidate.parents
+    )
+
+
+def require_source_paths(root: Path, paths) -> None:
+    """Reject linked inputs before a consumer reads or copies their content."""
+    for name in paths:
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Source admission requires repository-relative paths")
+        if is_linked_source(root, root / relative):
+            raise ValueError("Source admission refused an unreviewed linked path")
+
+
 def run_guard(root: Path = ROOT) -> tuple[int, list[str]]:
     files = _candidate_files(root)
     failures: set[str] = set()
@@ -261,12 +280,7 @@ def run_guard(root: Path = ROOT) -> tuple[int, list[str]]:
         )
         for label in path_failures:
             failures.add(f"{label_path}: {label} in filename")
-        relative_parts = relative.parts
-        if any(
-            (candidate := root.joinpath(*relative_parts[:index])).is_symlink()
-            or candidate.is_junction()
-            for index in range(1, len(relative_parts) + 1)
-        ):
+        if is_linked_source(root, path):
             failures.add(f"{label_path}: symbolic link requires review")
             continue
         if not path.is_file():
@@ -289,10 +303,22 @@ def run_guard(root: Path = ROOT) -> tuple[int, list[str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-source-paths", action="store_true")
+    args = parser.parse_args(argv)
     try:
+        if args.check_source_paths:
+            require_source_paths(
+                ROOT,
+                (
+                    os.fsdecode(raw)
+                    for raw in sys.stdin.buffer.read().split(b"\0")
+                    if raw
+                ),
+            )
+            return 0
         file_count, failures = run_guard()
-    except OSError, RuntimeError, subprocess.TimeoutExpired:
+    except OSError, RuntimeError, ValueError, subprocess.TimeoutExpired:
         print(
             "Public safety guard could not enumerate repository files.", file=sys.stderr
         )
