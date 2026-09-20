@@ -724,7 +724,6 @@ async def test_user_flow_normalizes_copy_paste_whitespace(
     validated_input = validate.await_args.args[1]
     assert validated_input[CONF_API_KEY] == "test-api-key"
     assert validated_input[CONF_API_BASE] == API_BASE
-    assert "\n" not in validated_input[CONF_API_KEY]
     assert result["data"][CONF_API_KEY] == "test-api-key"
     assert result["data"][CONF_API_BASE] == API_BASE
 
