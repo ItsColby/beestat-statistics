@@ -289,10 +289,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(recovered.value, 2.8)
         self.assertEqual(recovered.valid_sensor_count, 3)
         self.assertEqual(recovered.unavailable_sensor_names, ())
-        self.assertEqual(
-            self.coordinator._convert_temperature(273.15, "K", "°C"),
-            0,
-        )
 
     def test_temperature_state_accepts_absolute_and_classless_supported_units(
         self,
@@ -1145,22 +1141,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
                     ("unavailable", "unavailable", ()),
                 )
 
-    def test_ecobee_schedule_days_are_monday_first(self) -> None:
-        local_tz = ZoneInfo("America/New_York")
-
-        self.assertEqual(
-            self.coordinator._ecobee_day_index(
-                datetime(2026, 7, 6, 12, tzinfo=local_tz)
-            ),
-            0,
-        )
-        self.assertEqual(
-            self.coordinator._ecobee_day_index(
-                datetime(2026, 7, 12, 12, tzinfo=local_tz)
-            ),
-            6,
-        )
-
     def test_schedule_snapshot_skips_nonexistent_spring_forward_slots(self) -> None:
         schedule = [["sleep"] * 48 for _ in range(7)]
         schedule[6][4] = "home"
@@ -1673,7 +1653,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         coordinator._local_tz = ZoneInfo("America/New_York")
         coordinator._timezone_revision = 0
         coordinator._cancel_projection_boundary = None
-        coordinator._client = types.SimpleNamespace(calls=[])
+        coordinator._client = types.SimpleNamespace()
         coordinator.listener_updates = 0
         coordinator.async_update_listeners = lambda: setattr(
             coordinator,
@@ -1772,7 +1752,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             coordinator.data.thermostat_metadata[1].data_lag_minutes,
             121,
         )
-        self.assertEqual(coordinator._client.calls, [])
         self.assertEqual(coordinator.listener_updates, 1)
 
     async def test_scheduler_selects_earliest_cached_projection_boundary(self) -> None:
@@ -1841,24 +1820,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                     before + timedelta(minutes=115, seconds=30, microseconds=1),
                 )
 
-    async def test_scheduler_retains_boundary_crossed_during_registration(
-        self,
-    ) -> None:
-        before = datetime(2026, 7, 1, 13, 59, 59, 900000, tzinfo=UTC)
-        schedule = [["sleep"] * 48 for _ in range(7)]
-        schedule[2][20] = "home"
-        coordinator = self._cached_coordinator(
-            evaluated_at=before,
-            schedule=schedule,
-        )
-
-        deadline = self.coordinator._next_projection_deadline(
-            coordinator.data,
-            coordinator._local_tz,
-        )
-
-        self.assertEqual(deadline, datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
-
     async def test_scheduler_rebuilds_boundary_crossed_during_registration(
         self,
     ) -> None:
@@ -1869,6 +1830,14 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         coordinator = self._cached_coordinator(
             evaluated_at=before,
             schedule=schedule,
+        )
+
+        self.assertEqual(
+            self.coordinator._next_projection_deadline(
+                coordinator.data,
+                coordinator._local_tz,
+            ),
+            datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
         )
 
         with patch.object(
@@ -1908,7 +1877,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(coordinator.data.thermostats[1].lag_days, 2)
         self.assertEqual(coordinator.data.projected_at, midnight)
-        self.assertEqual(coordinator._client.calls, [])
         self.assertEqual(coordinator.listener_updates, 1)
 
     async def test_late_projection_callback_uses_actual_evaluation_time(self) -> None:

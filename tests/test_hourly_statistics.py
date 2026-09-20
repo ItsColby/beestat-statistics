@@ -280,16 +280,6 @@ class HourlyStatisticsTest(unittest.TestCase):
         self.assertEqual(item.source_rows, 16)
         self.assertEqual(item.hours[0].reason, "ready")
 
-    def test_window_is_half_open_and_rows_outside_it_do_not_pollute_values(self):
-        rows = self.sensor_rows(temperature=70)
-        rows.extend(self.sensor_rows(self.end, count=1, temperature=99))
-        rows.extend(
-            self.sensor_rows(self.start - timedelta(minutes=5), count=1, temperature=99)
-        )
-        bucket = self.item(self.build(sensor_rows=rows), "room_a_temperature").hours[0]
-        self.assertEqual(bucket.values["mean"], 70)
-        self.assertEqual(bucket.duplicate_slots, 0)
-
     def test_outside_parseable_rows_are_filtered_before_quality_checks(self):
         rows = self.sensor_rows(temperature=70)
         for stamp in (
@@ -299,7 +289,12 @@ class HourlyStatisticsTest(unittest.TestCase):
             self.end + timedelta(seconds=1),
         ):
             rows.extend(
-                {**rows[0], "timestamp": stamp.isoformat(), "sensor_id": identity}
+                {
+                    **rows[0],
+                    "timestamp": stamp.isoformat(),
+                    "sensor_id": identity,
+                    "temperature": 99,
+                }
                 for identity in (10, 11)
             )
         item = self.item(self.build(sensor_rows=rows), "room_a_temperature")

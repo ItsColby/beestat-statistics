@@ -47,12 +47,12 @@ class SkippedWindowEvidenceTest(unittest.TestCase):
         self.assertEqual(evidence.runtime_sensor_count, 4)
         self.assertEqual(evidence.runtime_thermostat_count, 1)
         self.assertEqual(len(evidence.examples), 3)
-        self.assertEqual(
-            set(evidence.examples[0]),
-            {"resource", "start", "end"},
+        self.assertTrue(
+            all(
+                set(example) == {"resource", "start", "end"}
+                for example in evidence.examples
+            )
         )
-        self.assertNotIn("sensor_id", repr(evidence.examples))
-        self.assertNotIn("thermostat_id", repr(evidence.examples))
 
     def test_duplicate_resource_windows_count_but_do_not_hide_other_examples(
         self,

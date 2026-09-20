@@ -64,7 +64,7 @@ TEMPERATURE_ID = "beestat:writer_temperature_hourly_v2"
 _NATIVE_STORE_WRITE = Store._async_write_data
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 async def _started_recorder(recorder_mock: Any, freezer: Any) -> AsyncIterator[None]:
     """Request Recorder first so the harness creates its isolated SQLite owner."""
 
@@ -93,6 +93,7 @@ def _metadata(statistic_id=RUNTIME_ID, *, measurement=False):
     }
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_snapshot_distinguishes_absence_empty_range_and_cleared_row(hass):
     adapter = HourlyRecorder(hass)
     missing = await adapter.async_snapshot(RUNTIME_ID, START)
@@ -112,6 +113,7 @@ async def test_snapshot_distinguishes_absence_empty_range_and_cleared_row(hass):
         assert cleared.rows == (HourlyStatisticRow(START),)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_snapshot_includes_retained_tail_and_only_supported_fields(hass):
     adapter = HourlyRecorder(hass)
     rows = (
@@ -136,6 +138,7 @@ async def test_snapshot_includes_retained_tail_and_only_supported_fields(hass):
     assert await adapter.async_known_ids() == {TEMPERATURE_ID}
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_projection_explicitly_requests_native_units_and_no_change(hass):
     adapter = HourlyRecorder(hass)
     adapter.submit(
@@ -156,6 +159,7 @@ async def test_projection_explicitly_requests_native_units_and_no_change(hass):
     )
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_cancelled_snapshot_does_not_cancel_queued_effect_or_replacement_fence(
     hass,
 ):
@@ -191,6 +195,7 @@ async def test_cancelled_snapshot_does_not_cancel_queued_effect_or_replacement_f
     assert snapshot.rows == (HourlyStatisticRow(START, state=0.25, sum=0.25),)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 @pytest.mark.parametrize(
     ("corruption", "error"),
     [
@@ -242,6 +247,7 @@ async def test_incomplete_or_malformed_native_projection_never_becomes_complete(
         await adapter.async_snapshot(RUNTIME_ID, START)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 @pytest.mark.parametrize("extra_rows", [0, 1])
 async def test_snapshot_bound_rejects_overflow_without_truncation(hass, extra_rows):
     adapter = HourlyRecorder(hass)
@@ -264,6 +270,7 @@ async def test_snapshot_bound_rejects_overflow_without_truncation(hass, extra_ro
             assert result.complete and len(result.rows) == MAX_SNAPSHOT_ROWS
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_metadata_change_during_projection_blocks_complete_snapshot(hass):
     adapter = HourlyRecorder(hass)
     adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
@@ -287,6 +294,7 @@ async def test_metadata_change_during_projection_blocks_complete_snapshot(hass):
         await adapter.async_snapshot(RUNTIME_ID, START)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 @pytest.mark.parametrize(
     "row",
     [
@@ -302,6 +310,7 @@ async def test_invalid_submission_has_no_native_effect(hass, row):
     assert await adapter.async_known_ids() == set()
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_native_read_failure_propagates_without_empty_success(hass):
     adapter = HourlyRecorder(hass)
     with (
@@ -494,6 +503,7 @@ async def _select(writer, source, identity, *, epoch=START):
     return preview
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_native_partition_reserves_interrupted_selection_and_survives_reload(
     hass, disk_store
 ):
@@ -563,6 +573,7 @@ async def test_native_partition_reserves_interrupted_selection_and_survives_relo
     ]
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_native_selected_quantity_disable_reload_and_reenable(hass, disk_store):
     entry, identity = _entry_and_identity(hass)
     identity["resources"][TEMPERATURE_ID] = {
@@ -646,6 +657,7 @@ async def test_native_selected_quantity_disable_reload_and_reenable(hass, disk_s
     assert await recorder.async_known_ids() == {RUNTIME_ID, TEMPERATURE_ID}
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_real_manager_restart_gap_invalidation_and_explicit_segment(
     hass, disk_store
 ):
@@ -701,6 +713,7 @@ async def test_real_manager_restart_gap_invalidation_and_explicit_segment(
     ]
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_real_manager_advances_complete_prefix_across_lagging_refreshes(
     hass, disk_store, freezer
 ):
@@ -768,6 +781,7 @@ async def test_real_manager_advances_complete_prefix_across_lagging_refreshes(
     assert coverage["observed_hour_average"] == 0.375
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
     hass, freezer, tmp_path
 ):
@@ -894,6 +908,7 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
     await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 @pytest.mark.parametrize("corruption", ["off_grid", "wrong_resource"])
 async def test_real_importer_scopes_expanded_source_validation_per_quantity(
     hass, freezer, tmp_path, corruption
@@ -1052,6 +1067,7 @@ async def test_real_importer_scopes_expanded_source_validation_per_quantity(
     await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("_started_recorder")
 async def test_real_checkpoint_write_failure_recovers_without_recorder_replay(
     hass, disk_store
 ):

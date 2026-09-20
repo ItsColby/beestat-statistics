@@ -391,14 +391,6 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.calls, 0)
         self.assertEqual(self.recorder.submissions, [])
 
-    async def test_missing_or_corrupt_root_does_not_restore_legacy(self):
-        await self.accept()
-        self.store.value = None
-        self.writer = self.fresh()
-        with self.assertRaises(manager.HourlyImportError):
-            await self.writer.async_writer_partition(identity())
-        self.assertEqual(self.recorder.submissions, [])
-
     async def test_cold_adopted_marker_never_reports_unselected_ownership(self):
         self.assertEqual(self.writer.history_status()["status"], "unselected")
         await self.accept()
@@ -411,8 +403,9 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(other.history_configuration(self.context)["quantities"], [])
         with self.assertRaises(manager.HourlyImportError):
-            await other._load()
+            await other.async_writer_partition(identity())
         self.assertEqual(other.history_status()["status"], "blocked")
+        self.assertEqual(self.recorder.submissions, [])
 
     async def test_query_is_readonly_and_pending_suppresses_exact_window(self):
         await self.accept()
@@ -816,11 +809,13 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
     async def test_oversized_month_catalog_selects_bounded_window_without_public_cap_relaxation(
         self,
     ):
-        # Thousands of tiny fixture executor jobs otherwise spend most time
-        # collecting debug creation tracebacks, unrelated to catalog limits.
-        loop = asyncio.get_running_loop()
-        self.addCleanup(loop.set_debug, loop.get_debug())
-        loop.set_debug(False)
+        # This isolated catalog check needs the real size limit and parsers,
+        # but not thousands of thread handoffs from the in-memory store.
+        # Native service/runtime tests separately verify executor placement.
+        async def process_source_job(function, *args):
+            return function(*args)
+
+        self.store.async_process_source_job = process_source_job
         await self.accept()
         await self.complete()
         root = deepcopy(self.store.value)
@@ -940,11 +935,12 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 expected_revision=self.store.value["revision"],
             )
 
-    async def test_delta_correction_and_invalid_correction_use_exact_prior_lineage(
+    async def test_delta_corrections_keep_lineage_after_benign_configuration_revision(
         self,
     ):
         await self.accept()
         await self.complete()
+        self.context["config_revision"] = "d" * 64
         request = await self.delta_request()
         result = await self.writer.async_refresh_history(request, context=self.context)
         self.assertEqual(result["status"], "accepted")
@@ -984,16 +980,6 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         ):
             await self.writer.async_refresh_history(stale, context=self.context)
         self.assertEqual(self.store.value, before)
-
-    async def test_benign_configuration_revision_change_does_not_stop_routine(self):
-        await self.accept()
-        await self.complete()
-        self.context["config_revision"] = "d" * 64
-        request = await self.delta_request()
-        result = await self.writer.async_refresh_history(request, context=self.context)
-        self.assertEqual(result["status"], "accepted")
-        await self.complete()
-        self.assertEqual(self.recorder.rows[NATIVE][START].mean, 100)
 
     async def test_offsetless_semantically_equal_provider_rows_do_not_make_delta(self):
         await self.accept()

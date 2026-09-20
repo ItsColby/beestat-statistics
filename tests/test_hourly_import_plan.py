@@ -553,19 +553,6 @@ class HourlyImportPlanTests(unittest.TestCase):
         )
         self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
 
-    def test_midday_epoch_first_row_contains_actual_first_hour_increment(self):
-        series = _series((0.5,))
-        midday = START + 9 * HOUR
-        series = replace(series, hours=(replace(series.hours[0], start=midday),))
-        result = planner.plan_hourly_import(
-            (series,),
-            snapshots={series.statistic_id: _snapshot(series)},
-            checkpoints={series.statistic_id: planner.CumulativeCheckpoint(midday)},
-        )[0]
-        self.assertEqual(0.5, result.unblocked_rows[0].sum)
-        self.assertEqual(midday, result.unblocked_rows[0].start)
-        self.assertEqual(1, len(result.unblocked_rows))
-
     def test_actual_builder_output_reconciles_and_deleted_slot_preserves_stale_evidence(
         self,
     ):

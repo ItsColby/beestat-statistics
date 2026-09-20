@@ -236,45 +236,36 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.objects)
 
     async def test_raw_success_export_matches_identity_and_inclusive_bounds(self):
-        for wrapped in (False, True):
-            with self.subTest(wrapped=wrapped):
-                envelope = raw_export()
+        envelope = raw_export()
 
-                def transport(value, wrapped=wrapped):
-                    return (
-                        {"changed_states": [], "service_response": value}
-                        if wrapped
-                        else value
-                    )
-
-                receipt = await self.stage(transport(envelope))
-                self.assertEqual(receipt["row_count"], 2)
-                cases = [
-                    (("status",), "error", "incomplete_export"),
-                    (
-                        ("completeness", "transport_complete"),
-                        False,
-                        "incomplete_export",
-                    ),
-                    (("completeness", "truncated"), True, "incomplete_export"),
-                    (
-                        ("completeness", "pagination_indicated"),
-                        True,
-                        "incomplete_export",
-                    ),
-                    (("request", "boundary"), "exclusive", "export_identity"),
-                    (("identity", "config_entry_id"), "other-entry", "export_identity"),
-                    (("request", "end"), "2026-09-01T01:00:00Z", "export_window"),
-                ]
-                for path, value, reason in cases:
-                    with self.subTest(path=path):
-                        changed = deepcopy(envelope)
-                        target = changed
-                        for key in path[:-1]:
-                            target = target[key]
-                        target[path[-1]] = value
-                        with self.assertRaisesRegex(ValueError, reason):
-                            await self.stage(transport(changed))
+        receipt = await self.stage(envelope)
+        self.assertEqual(receipt["row_count"], 2)
+        cases = [
+            (("status",), "error", "incomplete_export"),
+            (
+                ("completeness", "transport_complete"),
+                False,
+                "incomplete_export",
+            ),
+            (("completeness", "truncated"), True, "incomplete_export"),
+            (
+                ("completeness", "pagination_indicated"),
+                True,
+                "incomplete_export",
+            ),
+            (("request", "boundary"), "exclusive", "export_identity"),
+            (("identity", "config_entry_id"), "other-entry", "export_identity"),
+            (("request", "end"), "2026-09-01T01:00:00Z", "export_window"),
+        ]
+        for path, value, reason in cases:
+            with self.subTest(path=path):
+                changed = deepcopy(envelope)
+                target = changed
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                with self.assertRaisesRegex(ValueError, reason):
+                    await self.stage(changed)
 
     async def test_native_rest_export_retains_outer_bytes_and_resolves_points(self):
         envelope = raw_export()
@@ -317,6 +308,10 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
     async def test_malformed_native_rest_wrappers_fail_before_retention(self):
         envelope = raw_export()
         cases = [
+            {
+                "changed_states": [],
+                "service_response": {**envelope, "status": "failed"},
+            },
             {"service_response": envelope},
             {"changed_states": []},
             {"changed_states": None, "service_response": envelope},
@@ -695,12 +690,13 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual([item["source_id"] for item in loaded], [new["source_id"]])
 
+    @patch.object(sources, "MAX_SOURCE_CHUNKS", 4)
     async def test_catalog_scan_filters_before_cap_and_preserves_cross_page_acquisition(
         self,
     ):
         old = []
         first = datetime(2026, 8, 1, tzinfo=UTC)
-        for index in range(2047):
+        for index in range(3):
             stamp = (first + timedelta(minutes=index * 5)).isoformat()
             old.append(
                 await self.stage(
@@ -713,7 +709,10 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
         selected = await self.original_chunks(
-            [json.dumps(row()).encode() + b"\n", json.dumps(row(5)).encode() + b"\n"]
+            [
+                json.dumps(row()).encode() + b"\n",
+                json.dumps(row(5)).encode() + b"\n",
+            ]
         )
         ids = [item["source_id"] for item in [*old, *selected]]
         window = ("2026-09-01T00:00:00Z", "2026-09-02T00:00:00Z")
@@ -724,7 +723,7 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         declarations, loaded = await sources.async_load_catalog_source_bundle(
             self.store, ids, identity(), window=window
         )
-        self.assertEqual(len(declarations), 2049)
+        self.assertEqual(len(declarations), 5)
         self.assertEqual(
             [item["source_id"] for item in loaded],
             [item["source_id"] for item in selected],
