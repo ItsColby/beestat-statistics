@@ -750,7 +750,7 @@
       },
       "sensor_mapping_detail": {
         "title": "Room sensor HomeKit mapping",
-        "description": "Configure {item}. Select local entities for the same physical sensor; clear a selection to restore automatic matching. Choose which measurements to import as daily statistics.",
+        "description": "Configure {item}. Select local entities for the same physical sensor; clear a selection to restore automatic matching. Choose which measurements to import.",
         "data": {
           "thermostat_id": "Owning thermostat",
           "temperature_entity_id": "Temperature entity",

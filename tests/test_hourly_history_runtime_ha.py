@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import threading
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
@@ -573,3 +575,65 @@ async def test_durable_baseline_change_during_capture_cannot_accept_stale_delta(
     assert changed["operation"] == before["operation"]
     assert changed["pending"] is None
     await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("interruption", ["configuration", "unload", "cancel"])
+async def test_detached_serialization_cannot_publish_after_context_or_task_ends(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, interruption
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    rows = json.loads(_content())
+    rows[0]["fan"] = 150
+    _provider(runtime, monkeypatch, rows=rows)
+    before = await runtime.store.async_load()
+    objects = _objects(runtime)
+    writes = runtime.write.call_count
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    started, finished = asyncio.Event(), asyncio.Event()
+    proceed = threading.Event()
+    original = hourly_history_runtime._serialize_capture
+    worker_threads = []
+
+    def paused_capture(response):
+        worker_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(started.set)
+        try:
+            if not proceed.wait(5):
+                raise AssertionError("serialization worker was not released")
+            return original(response)
+        finally:
+            loop.call_soon_threadsafe(finished.set)
+
+    monkeypatch.setattr(hourly_history_runtime, "_serialize_capture", paused_capture)
+    task = asyncio.create_task(_refresh(runtime))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert worker_threads != [loop_thread]
+        if interruption == "configuration":
+            data = runtime.coordinator.data
+            runtime.coordinator.data = replace(
+                data, config=replace(data.config, thermostats=())
+            )
+        elif interruption == "unload":
+            await runtime.entry._async_process_on_unload(hass)
+        else:
+            task.cancel()
+        proceed.set()
+        if interruption == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(ValueError, match="history_context_changed"):
+                await task
+    finally:
+        proceed.set()
+        await asyncio.wait_for(finished.wait(), 2)
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert await runtime.store.async_load() == before
+    assert _objects(runtime) == objects
+    assert runtime.write.call_count == writes
+    if interruption != "unload":
+        await runtime.entry._async_process_on_unload(hass)

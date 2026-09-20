@@ -1755,6 +1755,7 @@ class HistoryWriter:
             "source_revision": history.get("source_revision"),
             "coverage_revision": history.get("coverage_revision", 0),
             "operation": status(state),
+            "root_digest": digest(state),
         }
         for key in requested:
             selection = selected.get(key)
@@ -1786,18 +1787,32 @@ class HistoryWriter:
                 metadata = snapshot.metadata
                 result["native_rows"][key].extend(_row(row) for row in snapshot.rows)
             result["native_metadata"][key] = deepcopy(metadata)
-            result["legacy_days"][key] = await self.legacy_days(
-                selection, first, end, context
-            )
+            if request.get("period", "hour") == "day":
+                result["legacy_days"][key] = await self.legacy_days(
+                    selection, first, end, context
+                )
         pending = (state or {}).get("pending")
         if pending and pending.get("generation") == 3:
             batch = pending["batch"]
             result["pending_affected"][batch["quantity_id"]] = [
                 [batch["start"], batch["end"]]
             ]
-        if digest(await self.root(context)) != digest(state):
-            raise HourlyImportError("history_query_root_changed")
+        await self.check_material(result, context)
         return result
+
+    async def check_material(
+        self, material: dict[str, Any], context: dict[str, Any]
+    ) -> None:
+        # Read from the same durable owner even when the writer cache is cold.
+        # Saves replace the cached state; reject a save across root/fence awaits.
+        cached = self.manager._state
+        state = await self.root(context)
+        if (
+            digest(state) != material["root_digest"]
+            or self.manager._state is not cached
+            or self.manager.has_pending_store_save()
+        ):
+            raise HourlyImportError("history_query_root_changed")
 
     async def legacy_days(
         self,

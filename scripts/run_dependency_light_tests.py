@@ -170,6 +170,8 @@ TOOL_TESTS = {
     "tests/test_validation_selection.py",
 }
 METADATA_TEST = "tests/test_ha_quality_static.py"
+API_SURFACE_TEST = "tests/test_api_surface_checker.py"
+API_SURFACE_WORKFLOW = ".github/workflows/beestat-api-surface.yaml"
 EXTRA_DEPENDENCIES: dict[str, set[str]] = {
     # HA's flow manager loads this module dynamically.
     "tests/test_config_flow_ha.py": {f"{PRODUCT}/config_flow.py"},
@@ -177,6 +179,7 @@ EXTRA_DEPENDENCIES: dict[str, set[str]] = {
         path.relative_to(ROOT).as_posix() for path in (ROOT / PRODUCT).rglob("*.py")
     }
     | {"README.md", "RELEASE_NOTES.md"},
+    API_SURFACE_TEST: {"docs/beestat-api-surface.json", API_SURFACE_WORKFLOW},
 }
 JOBS = ("unit", "minimum", "current", "release", "hacs")
 
@@ -424,7 +427,9 @@ def _workflow_content(source: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
+def workflow_dependencies(
+    source: str, *, api_surface: bool = False
+) -> dict[str, tuple[str, ...]]:
     """Read execution inputs in the maintained workflow's mapped job blocks."""
     shared = _workflow_content(
         "\n".join(
@@ -436,7 +441,8 @@ def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
     )
     jobs = dict(
         re.findall(
-            r"(?ms)^  ([a-z_]+):\n(.*?)(?=^  [a-z_]+:|\Z)",
+            r"(?ms)^  ([A-Za-z_][A-Za-z0-9_-]*):\n"
+            r"(.*?)(?=^  [A-Za-z_][A-Za-z0-9_-]*:|\Z)",
             source.split("jobs:\n", 1)[-1],
         )
     )
@@ -447,7 +453,11 @@ def workflow_dependencies(source: str) -> dict[str, tuple[str, ...]]:
         "hassfest": "release",
         "hacs": "hacs",
     }
-    if set(jobs) - set(names) - {"plan", "release_gate"} or set(names) - set(jobs):
+    auxiliary_jobs = {"plan", "release_gate"}
+    if api_surface:
+        names = {"check": "api_surface"}
+        auxiliary_jobs = set()
+    if set(jobs) - set(names) - auxiliary_jobs or set(names) - set(jobs):
         raise ValueError("Unresolved workflow job dependency mapping")
     result = {}
     for name, lane in names.items():
@@ -471,6 +481,17 @@ def _select_environment(
         plan["lane_typing"][lane] = sorted(
             path for path in files if path.startswith(PRODUCT + "/")
         )
+
+
+def _workflow_environment(content: tuple[str, ...]) -> dict[str, str]:
+    """Read the literal interpreter and host that the selected job validates."""
+    environment = {}
+    for key in ("python-version", "runs-on"):
+        values = re.findall(rf"^\s+{key}:\s*(.+)$", "\n".join(content), re.MULTILINE)
+        if len(values) != 1:
+            raise ValueError(f"Unresolved workflow environment declaration: {key}")
+        environment[key] = values[0].strip().strip("\"'")
+    return environment
 
 
 def _select_unit_environment(plan: dict, unit_files: set[str], files: set[str]) -> None:
@@ -525,10 +546,10 @@ def _route_dependency_changes(
         ):
             continue
         try:
-            if (
-                path.startswith(".github/")
-                and path != ".github/workflows/validate.yaml"
-            ):
+            if path.startswith(".github/") and path not in {
+                ".github/workflows/validate.yaml",
+                API_SURFACE_WORKFLOW,
+            }:
                 raise ValueError(f"Unresolved workflow dependency owner: {path}")
             before = _git("show", f"{base}:{path}", git_directory=git_directory)
             after = (ROOT / path).read_text(encoding="utf-8")
@@ -537,20 +558,47 @@ def _route_dependency_changes(
                     before, after, files, unit_files, ha_files, plan
                 )
             else:
-                old, new = workflow_dependencies(before), workflow_dependencies(after)
-                for lane in new:
-                    if old[lane] == new[lane]:
-                        continue
-                    if lane in {"minimum", "current"}:
-                        _select_environment(plan, lane, ha_files, files)
-                    elif lane == "unit":
-                        _select_unit_environment(plan, unit_files, files)
-                    else:
-                        plan[lane] = True
+                _route_workflow_dependencies(
+                    path, before, after, files, unit_files, ha_files, plan
+                )
         except (OSError, ValueError, subprocess.CalledProcessError) as err:
             plan["unresolved"].append(
                 f"{path}: dependency comparison unavailable: {err}"
             )
+
+
+def _route_workflow_dependencies(
+    path: str,
+    before: str,
+    after: str,
+    files: set[str],
+    unit_files: set[str],
+    ha_files: set[str],
+    plan: dict,
+) -> None:
+    api_surface = path == API_SURFACE_WORKFLOW
+    old = workflow_dependencies(before, api_surface=api_surface)
+    new = workflow_dependencies(after, api_surface=api_surface)
+    if api_surface:
+        unit_source = (ROOT / ".github/workflows/validate.yaml").read_text(
+            encoding="utf-8"
+        )
+        unit = workflow_dependencies(unit_source)["unit"]
+        if _workflow_environment(new["api_surface"]) != _workflow_environment(unit):
+            raise ValueError(
+                "API audit environment differs from the validated unit environment"
+            )
+    for lane in new:
+        if old[lane] == new[lane]:
+            continue
+        if lane in {"minimum", "current"}:
+            _select_environment(plan, lane, ha_files, files)
+        elif lane == "unit":
+            _select_unit_environment(plan, unit_files, files)
+        elif lane == "api_surface":
+            plan["unit_tests"] = sorted(set(plan["unit_tests"]) | {API_SURFACE_TEST})
+        else:
+            plan[lane] = True
 
 
 def build_plan(
@@ -672,6 +720,8 @@ def _route_path(
             "pyproject.toml: select the affected tool configuration explicitly after review"
         )
     elif path.endswith(".md") or path in {
+        # Its offline consumer is declared in EXTRA_DEPENDENCIES.
+        "docs/beestat-api-surface.json",
         "LICENSE",
         ".gitignore",
         ".gitattributes",

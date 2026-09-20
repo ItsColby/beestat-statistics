@@ -22,6 +22,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from custom_components import beestat_statistics as integration
+from custom_components.beestat_statistics import raw_points
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.const import DOMAIN
@@ -209,13 +210,30 @@ class _PausedContent(_FakeContent):
             yield chunk
 
 
+def _paused_response(monkeypatch, started, proceed, phase):
+    response = _FakeResponse({"data": [{"fan": 30}]})
+    if phase == "transport":
+        response.content = _PausedContent(started, proceed)
+    else:
+        original = asyncio.to_thread
+
+        async def paused_transform(function, *args, **kwargs):
+            if function is raw_points._complete_response:
+                started.set()
+                await proceed.wait()
+            return await original(function, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", paused_transform)
+    return response
+
+
 @pytest.mark.parametrize("changed_owner", ["metadata", "runtime"])
+@pytest.mark.parametrize("phase", ["transport", "receipt"])
 async def test_native_runtime_change_discards_inflight_response(
-    hass, hass_admin_user, freezer, monkeypatch, changed_owner
+    hass, hass_admin_user, freezer, monkeypatch, changed_owner, phase
 ):
     started, proceed = asyncio.Event(), asyncio.Event()
-    response = _FakeResponse({})
-    response.content = _PausedContent(started, proceed)
+    response = _paused_response(monkeypatch, started, proceed, phase)
     entry, coordinator, _, session, forbidden = await _runtime(
         hass, freezer, monkeypatch, [response]
     )
@@ -240,12 +258,12 @@ async def test_native_runtime_change_discards_inflight_response(
     await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.parametrize("phase", ["transport", "receipt"])
 async def test_native_unload_cancels_read_and_rejects_queued_request(
-    hass, hass_admin_user, freezer, monkeypatch
+    hass, hass_admin_user, freezer, monkeypatch, phase
 ):
     started, proceed = asyncio.Event(), asyncio.Event()
-    response = _FakeResponse({})
-    response.content = _PausedContent(started, proceed)
+    response = _paused_response(monkeypatch, started, proceed, phase)
     entry, _, _, session, forbidden = await _runtime(
         hass, freezer, monkeypatch, [response]
     )

@@ -24,6 +24,17 @@ if TYPE_CHECKING:
     from . import BeestatStatisticsImporter
 
 
+def _serialize_capture(response: dict[str, Any]) -> tuple[bytes, str]:
+    """Serialize an exclusively owned acquisition without touching runtime state."""
+
+    content = json.dumps(
+        response, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode()
+    if len(content) > MAX_SOURCE_BYTES:
+        raise ValueError("history_routine_acquisition_exceeds_limit")
+    return content, sha256(content).hexdigest()
+
+
 async def async_refresh_history(
     importer: BeestatStatisticsImporter,
     context: dict[str, Any],
@@ -126,12 +137,10 @@ async def _capture(
             context["check_current"]()
             if response.get("status") != "success":
                 raise ValueError("history_routine_acquisition_unavailable")
-            content = json.dumps(
-                response, ensure_ascii=False, separators=(",", ":"), allow_nan=False
-            ).encode()
-            if len(content) > MAX_SOURCE_BYTES:
-                raise ValueError("history_routine_acquisition_exceeds_limit")
-            original_hash = sha256(content).hexdigest()
+            content, original_hash = await importer._hass.async_add_executor_job(
+                _serialize_capture, response
+            )
+            context["check_current"]()
             # The provider horizon comes from the captured metadata, never the
             # query end or elapsed time. Parser validates every captured row.
             parent = next(

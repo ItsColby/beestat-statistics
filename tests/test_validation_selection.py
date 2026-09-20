@@ -287,6 +287,121 @@ class ValidationSelectionTests(unittest.TestCase):
                 "jobs:\n  future_job:\n    uses: unknown/action@ref"
             )
 
+    def test_api_snapshot_selects_its_offline_consumer(self):
+        plan = planner.build_plan(["docs/beestat-api-surface.json"])
+        self.assertEqual([], plan["unresolved"])
+        self.assertEqual([planner.API_SURFACE_TEST], plan["unit_tests"])
+        self.assertFalse(plan["workflow"])
+        self.assertEqual({name: name == "unit" for name in planner.JOBS}, plan["jobs"])
+        command = planner.lane_command(plan, "unit")
+        self.assertIn("--test tests/test_api_surface_checker.py", command)
+        self.assertNotIn("python scripts/check_beestat_api_surface.py", command)
+
+    def test_api_workflow_dependency_changes_select_offline_audit_and_workflow_checks(
+        self,
+    ):
+        path = planner.API_SURFACE_WORKFLOW
+        current = (ROOT / path).read_text()
+        previous_versions = (
+            current,
+            current.replace("ubuntu-24.04", "ubuntu-22.04"),
+            current.replace('python-version: "3.14"', 'python-version: "3.13"'),
+            current.replace("uses: actions/checkout@", "uses: previous/checkout@"),
+            current.replace("persist-credentials: false", "persist-credentials: true"),
+            current.replace("python scripts/", "python -B scripts/"),
+            "defaults:\n  run:\n    shell: bash\n" + current,
+        )
+        for previous in previous_versions:
+            with (
+                self.subTest(previous=previous),
+                patch.object(planner, "_git", return_value=previous),
+            ):
+                plan = planner.build_plan([path])
+                self.assertEqual([], plan["unresolved"])
+                self.assertIn(planner.API_SURFACE_TEST, plan["unit_tests"])
+                self.assertEqual(
+                    planner.TOOL_TESTS | {planner.API_SURFACE_TEST},
+                    set(plan["unit_tests"]),
+                )
+                self.assertEqual([], plan["ha_tests"])
+                self.assertTrue(plan["workflow"])
+                self.assertEqual(
+                    {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
+                )
+                command = planner.lane_command(plan, "unit")
+                self.assertIn("zizmor --strict-collection --persona auditor .", command)
+                self.assertNotIn("python scripts/check_beestat_api_surface.py", command)
+
+    def test_api_workflow_unknown_jobs_and_unavailable_comparison_fail_closed(self):
+        current = (ROOT / planner.API_SURFACE_WORKFLOW).read_text()
+        for previous in (
+            current.replace("  check:", "  renamed:"),
+            current + "\n  future_job:\n    runs-on: ubuntu-24.04\n",
+            current + "\n  future-job2:\n    runs-on: ubuntu-24.04\n",
+            current + "\n  plan:\n    runs-on: ubuntu-24.04\n",
+        ):
+            with self.subTest(previous=previous):
+                with self.assertRaisesRegex(ValueError, "job dependency mapping"):
+                    planner.workflow_dependencies(previous, api_surface=True)
+                with patch.object(planner, "_git", return_value=previous):
+                    plan = planner.build_plan([planner.API_SURFACE_WORKFLOW])
+                self.assertTrue(plan["unresolved"])
+        with patch.object(planner, "_git", side_effect=OSError("missing comparison")):
+            plan = planner.build_plan([planner.API_SURFACE_WORKFLOW])
+        self.assertTrue(plan["unresolved"])
+        plan = planner.build_plan([".github/workflows/unknown.yaml"])
+        self.assertTrue(
+            any(
+                "Unresolved workflow dependency owner" in item
+                for item in plan["unresolved"]
+            )
+        )
+
+    def test_api_workflow_candidate_environment_must_match_its_unit_consumer(self):
+        path = planner.API_SURFACE_WORKFLOW
+        current = (ROOT / path).read_text()
+        read_text = Path.read_text
+        for candidate, resolved in (
+            (
+                current.replace('python-version: "3.14"', 'python-version: "3.13"'),
+                False,
+            ),
+            (current.replace("ubuntu-24.04", "windows-2025"), False),
+            (current.replace('python-version: "3.14"', "python-version: '3.14'"), True),
+            (
+                current.replace(
+                    "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+                    "actions/setup-python@" + "a" * 40,
+                ),
+                True,
+            ),
+        ):
+
+            def read_candidate(source, *args, candidate=candidate, **kwargs):
+                return (
+                    candidate
+                    if source == ROOT / path
+                    else read_text(source, *args, **kwargs)
+                )
+
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(planner, "_git", return_value=current),
+                patch.object(Path, "read_text", read_candidate),
+            ):
+                plan = planner.build_plan([path])
+            self.assertEqual(resolved, not plan["unresolved"])
+            if resolved:
+                self.assertIn(planner.API_SURFACE_TEST, plan["unit_tests"])
+                self.assertTrue(plan["workflow"])
+                self.assertEqual(
+                    {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
+                )
+            else:
+                self.assertTrue(
+                    any("environment differs" in item for item in plan["unresolved"])
+                )
+
     def test_retained_document_contracts_select_their_static_consumer(self):
         self.assertFalse((ROOT / "docs/removed.md").exists())
         for path in [

@@ -84,7 +84,8 @@ INTEGRATION_DECISIONS = (
         "surface": "runtime_thermostat.read, runtime_sensor.read",
         "decision": "used",
         "reason": (
-            "Read bounded point-history windows for daily Recorder statistics. "
+            "Read bounded point-history windows for default daily Recorder "
+            "statistics and opt-in hourly history for explicitly adopted quantities. "
             "Thermostat points also reconcile exact local filter-change "
             "timestamps and expose observed runtime, gaps, and five-minute "
             "boundary uncertainty without inventing missing measurements."

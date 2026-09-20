@@ -195,7 +195,7 @@ run_current() {
     checks="$("$validation_python" "$source_root/scripts/run_dependency_light_tests.py" --plan "${affected_args[@]}" --command current)"
   fi
   run_python '
-    python -m pip install "pytest-homeassistant-custom-component==0.13.365" || exit "$?"
+    python -m pip install "pytest-homeassistant-custom-component==0.13.366" || exit "$?"
     python -m pip install --upgrade -r requirements-ha-current.txt || exit "$?"
 '"$checks" false
 }

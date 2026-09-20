@@ -102,6 +102,59 @@ async def _runtime(hass, freezer, monkeypatch, tmp_path):
     )
 
 
+@pytest.mark.parametrize("change_context", ["none", "configuration", "unload"])
+async def test_query_projection_off_loop_keeps_snapshot_and_rechecks_context(
+    hass, freezer, monkeypatch, tmp_path, change_context
+):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    material = {"synthetic": True, "root_digest": integration.history_digest(None)}
+    monkeypatch.setattr(
+        runtime.importer.hourly,
+        "async_history_material",
+        AsyncMock(return_value=material),
+    )
+    started, release = threading.Event(), threading.Event()
+    loop_thread = threading.get_ident()
+    projected_requests = []
+
+    def project(request, snapshot, context):
+        assert threading.get_ident() != loop_thread
+        assert "check_current" not in context and "config" not in context
+        assert snapshot is material
+        started.set()
+        assert release.wait(5)
+        projected_requests.append(deepcopy(request))
+        return {"status": "projected"}
+
+    monkeypatch.setattr(integration, "history_response", project)
+    request = {"quantity_ids": [QUANTITY]}
+    task = asyncio.create_task(runtime.importer.async_get_hourly_history(request))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        request["quantity_ids"].append("changed-by-caller")
+        if change_context == "configuration":
+            hass.config_entries.async_update_entry(
+                runtime.entry,
+                options={**runtime.entry.options, "scan_interval_seconds": 600},
+            )
+        elif change_context == "unload":
+            runtime.importer._async_unload()
+        release.set()
+        if change_context in ("configuration", "unload"):
+            with pytest.raises(ValueError, match="history_context_changed"):
+                await task
+        else:
+            assert await task == {"status": "projected"}
+        assert projected_requests == [{"quantity_ids": [QUANTITY]}]
+        runtime.submit.assert_not_called()
+        for forbidden in runtime.forbidden:
+            forbidden.assert_not_called()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await runtime.entry._async_process_on_unload(hass)
+
+
 def _manifest(runtime):
     identity = runtime.importer._history_context()["identity"]
     return {

@@ -9,6 +9,14 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileSensorReference:
+    """One comfort-profile sensor's physical identity for local projections."""
+
+    identifier: str | None
+    name: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ScheduleProfile:
     """One normalized Ecobee comfort profile from the thermostat program."""
 
@@ -23,10 +31,11 @@ class ScheduleProfile:
     is_optimized: bool | None = None
     vent: str | None = None
     ventilator_min_on_time: int | None = None
+    sensor_references: tuple[ProfileSensorReference, ...] = ()
 
 
 def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
-    """Return one normalized profile per climate reference."""
+    """Return one normalized profile per reference, with the last row winning."""
 
     if not isinstance(program, Mapping) or not isinstance(
         climates := program.get("climates"), list
@@ -39,22 +48,14 @@ def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
         ref = _text_or_none(climate.get("climateRef"))
         if ref is None:
             continue
-        sensors = climate.get("sensors")
-        sensor_names = (
-            tuple(
-                name
-                for sensor in sensors
-                if isinstance(sensor, Mapping)
-                if (name := _text_or_none(sensor.get("name"))) is not None
-            )
-            if isinstance(sensors, list)
-            else ()
-        )
+        sensor_references = _profile_sensor_references(climate.get("sensors"))
         profiles[ref] = ScheduleProfile(
             ref=ref,
             name=_text_or_none(climate.get("name")) or ref,
             is_occupied=_bool_or_none(climate.get("isOccupied")),
-            sensors=sensor_names,
+            sensors=tuple(
+                sensor.name for sensor in sensor_references if sensor.name is not None
+            ),
             heat_temperature=_finite_float_or_none(climate.get("heatTemp")),
             cool_temperature=_finite_float_or_none(climate.get("coolTemp")),
             heat_fan=_enum_or_none(climate.get("heatFan"), {"auto", "on"}),
@@ -64,8 +65,23 @@ def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
             ventilator_min_on_time=_nonnegative_int_or_none(
                 climate.get("ventilatorMinOnTime")
             ),
+            sensor_references=sensor_references,
         )
     return profiles
+
+
+def _profile_sensor_references(sensors: Any) -> tuple[ProfileSensorReference, ...]:
+    if not isinstance(sensors, list):
+        return ()
+    references = []
+    for sensor in sensors:
+        if not isinstance(sensor, Mapping):
+            continue
+        identifier = _text_or_none(sensor.get("id"))
+        name = _text_or_none(sensor.get("name"))
+        if identifier is not None or name is not None:
+            references.append(ProfileSensorReference(identifier, name))
+    return tuple(references)
 
 
 def schedule_profile_payload(

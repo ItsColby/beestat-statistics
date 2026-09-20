@@ -355,6 +355,12 @@ class HourlyImportManager:
         """Project capabilities and cached reservations without I/O."""
         return self._history_writer().configuration(context)
 
+    async def async_check_history_material(
+        self, material: dict[str, Any], *, context: dict[str, Any]
+    ) -> None:
+        """Reject a query snapshot superseded during background projection."""
+        await self._history_writer().check_material(material, context)
+
     def history_quantity_ids(self) -> tuple[str, ...]:
         """Return only cached physically adopted/reserved v3 quantities."""
         state = self._state or {}
