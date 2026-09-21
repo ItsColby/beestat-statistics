@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
@@ -44,27 +43,18 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 1
 
 
-@dataclass(frozen=True, kw_only=True)
-class BeestatButtonEntityDescription(ButtonEntityDescription):
-    """Entity description for a Beestat button."""
-
-    action: str
-
-
-BUTTON_DESCRIPTIONS: tuple[BeestatButtonEntityDescription, ...] = (
-    BeestatButtonEntityDescription(
+BUTTON_DESCRIPTIONS: tuple[ButtonEntityDescription, ...] = (
+    ButtonEntityDescription(
         key="refresh_runtime",
         name="Refresh runtime",
         translation_key="refresh_runtime",
         entity_category=EntityCategory.DIAGNOSTIC,
-        action="refresh_runtime",
     ),
-    BeestatButtonEntityDescription(
+    ButtonEntityDescription(
         key="import_statistics",
         name="Import statistics",
         translation_key="import_statistics",
         entity_category=EntityCategory.DIAGNOSTIC,
-        action="import_statistics",
     ),
 )
 
@@ -105,14 +95,14 @@ def _build_entities(
 class BeestatButton(ButtonEntity):
     """A Beestat action button."""
 
-    entity_description: BeestatButtonEntityDescription
+    entity_description: ButtonEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
         self,
         coordinator: BeestatRuntimeDataCoordinator,
         importer: BeestatStatisticsImporter,
-        description: BeestatButtonEntityDescription,
+        description: ButtonEntityDescription,
     ) -> None:
         self._coordinator = coordinator
         self._importer = importer
@@ -123,7 +113,7 @@ class BeestatButton(ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
 
-        action = self.entity_description.action
+        action = self.entity_description.key
         try:
             if action == "refresh_runtime":
                 await self._coordinator.async_refresh_runtime()

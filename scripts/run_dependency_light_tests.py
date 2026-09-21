@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-"""Select validation from changed files and their local Python consumers."""
-
-
 import argparse
 import ast
 import json
@@ -164,7 +161,6 @@ def validate_test_selection(
     return selected
 
 
-ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "custom_components/beestat_statistics"
 PLANNER = "scripts/run_dependency_light_tests.py"
 TOOL_TESTS = {
