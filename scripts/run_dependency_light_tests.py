@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import math
 import os
 import re
 import shlex
 import subprocess
 import sys
+import tomllib
 import unittest
 from importlib import import_module
 from pathlib import Path, PurePosixPath
@@ -532,6 +534,63 @@ def _route_runner_dependencies(
     plan["release"] |= "hassfest_image" in changed
 
 
+def _same_toml_value(before: object, after: object) -> bool:
+    """Keep TOML type changes visible, including booleans versus integers."""
+    if type(before) is not type(after):
+        return False
+    if isinstance(before, dict) and isinstance(after, dict):
+        return before.keys() == after.keys() and all(
+            _same_toml_value(value, after[key]) for key, value in before.items()
+        )
+    if isinstance(before, list) and isinstance(after, list):
+        return len(before) == len(after) and all(
+            _same_toml_value(left, right)
+            for left, right in zip(before, after, strict=True)
+        )
+    return before == after or (
+        isinstance(before, float)
+        and isinstance(after, float)
+        and math.isnan(before)
+        and math.isnan(after)
+    )
+
+
+def _route_pyproject_changes(
+    before: str, after: str, files: set[str], plan: dict
+) -> None:
+    """Route semantic changes to the tools that consume this configuration."""
+    old, new = tomllib.loads(before), tomllib.loads(after)
+    for key in old.keys() | new.keys():
+        if key != "tool" and not _same_toml_value(old.get(key), new.get(key)):
+            raise ValueError(f"Unresolved pyproject configuration owner: {key}")
+    old_tools, new_tools = old.get("tool", {}), new.get("tool", {})
+    if not isinstance(old_tools, dict) or not isinstance(new_tools, dict):
+        raise TypeError("Unresolved pyproject tool table")
+    changed = {
+        key
+        for key in old_tools.keys() | new_tools.keys()
+        if not _same_toml_value(old_tools.get(key), new_tools.get(key))
+    }
+    unknown = changed - {"ruff", "mypy"}
+    if unknown:
+        raise ValueError(
+            "Unresolved pyproject tool configuration: " + ", ".join(sorted(unknown))
+        )
+    for name in changed:
+        if any(
+            name in tools and not isinstance(tools[name], dict)
+            for tools in (old_tools, new_tools)
+        ):
+            raise ValueError(f"Unresolved pyproject tool table: {name}")
+    if "ruff" in changed:
+        plan["python"] = sorted(files)
+    if "mypy" in changed:
+        plan["minimum"] = True
+        plan["lane_typing"]["minimum"] = sorted(
+            path for path in files if path.startswith(PRODUCT + "/")
+        )
+
+
 def _route_dependency_changes(
     paths: list[str],
     base: str,
@@ -543,9 +602,10 @@ def _route_dependency_changes(
 ) -> None:
     """Compare dependency inputs, rather than treating every runner edit as HA work."""
     for path in paths:
-        if path != "scripts/verify-release-local.sh" and not path.startswith(
-            ".github/workflows/"
-        ):
+        if path not in {
+            "scripts/verify-release-local.sh",
+            "pyproject.toml",
+        } and not path.startswith(".github/workflows/"):
             continue
         try:
             if path.startswith(".github/") and path not in {
@@ -556,7 +616,9 @@ def _route_dependency_changes(
             before = _git("show", f"{base}:{path}", git_directory=git_directory)
             require_source_paths(ROOT, [path])
             after = (ROOT / path).read_text(encoding="utf-8")
-            if path.endswith(".sh"):
+            if path == "pyproject.toml":
+                _route_pyproject_changes(before, after, files, plan)
+            elif path.endswith(".sh"):
                 _route_runner_dependencies(
                     before, after, files, unit_files, ha_files, plan
                 )
@@ -564,7 +626,7 @@ def _route_dependency_changes(
                 _route_workflow_dependencies(
                     path, before, after, files, unit_files, ha_files, plan
                 )
-        except (OSError, ValueError, subprocess.CalledProcessError) as err:
+        except (OSError, ValueError, TypeError, subprocess.CalledProcessError) as err:
             plan["unresolved"].append(
                 f"{path}: dependency comparison unavailable: {err}"
             )
@@ -741,9 +803,8 @@ def _route_path(
             set(plan["unit_tests"]) | API_AUDIT_INPUTS.get(path, {METADATA_TEST})
         )
     elif path == "pyproject.toml":
-        plan["unresolved"].append(
-            "pyproject.toml: select the affected tool configuration explicitly after review"
-        )
+        # The pinned base comparison selects the actual tool consumers below.
+        pass
     elif path.endswith(".md") or path in {
         # Its offline consumer is declared in EXTRA_DEPENDENCIES.
         "docs/beestat-api-surface.json",
