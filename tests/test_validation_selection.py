@@ -269,6 +269,117 @@ class ValidationSelectionTests(unittest.TestCase):
                 self.assertEqual([], plan["unresolved"])
                 self.assertTrue(all(plan["jobs"].values()))
 
+    @unittest.skipUnless(shutil.which("git"), "requires Git")
+    def test_pyproject_semantic_changes_use_real_base_and_tool_consumers(self):
+        baseline = (
+            "[tool.ruff]\nline-length = 88\n"
+            "[tool.mypy]\nstrict = true\n"
+            '[tool.unrelated]\nvalue = "retained"\nnot_a_number = nan\n'
+        )
+        cases = (
+            ("comment", baseline + "# explanation\n", set(), False),
+            ("format", baseline.replace(" = ", "="), set(), False),
+            ("ruff", baseline.replace("88", "89"), {"python"}, False),
+            ("mypy", baseline.replace("true", "false"), {"minimum"}, False),
+            ("type", baseline.replace("true", "1"), {"minimum"}, False),
+            (
+                "removed",
+                baseline.replace("[tool.ruff]\nline-length = 88\n", ""),
+                {"python"},
+                False,
+            ),
+            (
+                "both",
+                baseline.replace("88", "89").replace("true", "false"),
+                {"python", "minimum"},
+                False,
+            ),
+            ("unknown", baseline.replace('"retained"', '"changed"'), set(), True),
+            (
+                "pytest",
+                baseline + '[tool.pytest.ini_options]\naddopts = "-x"\n',
+                set(),
+                True,
+            ),
+            ("project", baseline + '[project]\nname = "example"\n', set(), True),
+            ("invalid", baseline + "[invalid\n", set(), True),
+            ("deleted", None, set(), True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self._planning_fixture(Path(directory), snapshot=False)
+            product = root / planner.PRODUCT / "__init__.py"
+            product.parent.mkdir(parents=True)
+            product.write_text('"""Synthetic product input."""\n')
+            config = root / "pyproject.toml"
+            config.write_text(baseline)
+            env = dict(
+                os.environ,
+                GIT_AUTHOR_NAME="Validation",
+                GIT_COMMITTER_NAME="Validation",
+                GIT_AUTHOR_EMAIL="validation@example.com",
+                GIT_COMMITTER_EMAIL="validation@example.com",
+            )
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-C", str(root), *args], env=env, text=True
+                ).strip()
+
+            git("add", "-A", "-f")
+            before = git("commit-tree", git("write-tree"), "-m", "configuration base")
+            git("update-ref", "HEAD", before)
+            for name, candidate, consumers, unresolved in cases:
+                with self.subTest(change=name):
+                    if candidate is None:
+                        config.unlink()
+                    else:
+                        config.write_text(candidate)
+                    git("add", "-A", "-f")
+                    after = git(
+                        "commit-tree", git("write-tree"), "-p", before, "-m", name
+                    )
+                    git("update-ref", "HEAD", after)
+                    with patch.object(planner, "ROOT", root):
+                        paths = planner.changed_paths(before, after, None)
+                        plan = planner.build_plan(paths, before, str(root / ".git"))
+                        self.assertEqual(["pyproject.toml"], paths)
+                        self.assertEqual(unresolved, bool(plan["unresolved"]))
+                        self.assertEqual("python" in consumers, bool(plan["python"]))
+                        self.assertEqual(
+                            "minimum" in consumers, plan["jobs"]["minimum"]
+                        )
+                        self.assertEqual([], plan["ha_tests"])
+                        self.assertFalse(plan["jobs"]["current"])
+                        self.assertFalse(plan["jobs"]["release"])
+                        self.assertFalse(plan["jobs"]["hacs"])
+                        self.assertTrue(plan["safety"])
+                        if "minimum" in consumers:
+                            command = planner.lane_command(plan, "minimum")
+                            self.assertIn("-m mypy", command)
+                            self.assertNotIn("--home-assistant", command)
+                        if "python" in consumers:
+                            self.assertIn(
+                                "-m ruff check", planner.lane_command(plan, "unit")
+                            )
+                        if name == "mypy":
+                            mixed = planner.build_plan(
+                                [*paths, "tests/test_runtime_ha.py"], before
+                            )
+                            self.assertTrue(mixed["jobs"]["minimum"])
+                            self.assertTrue(mixed["jobs"]["current"])
+                            self.assertEqual(
+                                ["tests/test_runtime_ha.py"], mixed["ha_tests"]
+                            )
+
+    def test_pyproject_comparison_requires_available_valid_base(self):
+        for previous in (OSError("missing comparison"), ValueError("malformed base")):
+            with patch.object(planner, "_git", side_effect=previous):
+                plan = planner.build_plan(["pyproject.toml"])
+            self.assertTrue(plan["unresolved"])
+            self.assertFalse(plan["jobs"]["minimum"])
+        with patch.object(planner, "_git", return_value="[invalid"):
+            self.assertTrue(planner.build_plan(["pyproject.toml"])["unresolved"])
+
     def test_unavailable_dependency_comparison_is_unresolved(self):
         with patch.object(planner, "_git", side_effect=OSError("missing comparison")):
             plan = planner.build_plan(["scripts/verify-release-local.sh"])

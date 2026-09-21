@@ -3,6 +3,25 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.21
+
+- Reuse normalized runtime and comfort-profile data, native button descriptions,
+  and the shared settings table. Preserve filter configuration, temperature
+  setting units, and bounded runtime-window recovery.
+- Move large response decoding and history projection work off the event loop.
+  Reject history snapshots invalidated during awaited reads or projection,
+  including a fence written while an earlier absence read was completing.
+- Fetch legacy point history only for applicable, unselected statistics and
+  retain bounded, credential-safe API failure details.
+- Isolate validation snapshots from inherited Git templates and hooks, reject
+  inherited Git targeting before public-file enumeration, and select validation
+  from semantic tool configuration changes.
+
+Home Assistant Core 2026.8.0 remains the minimum; the current tested lane is
+Core 2026.9.3. Existing configuration and hourly-history storage formats remain
+unchanged. Installation does not adopt new history quantities, repair historical
+statistics, or change thermostat commands.
+
 ## Beestat Statistics v2026.9.17.1
 
 - Add opt-in qualified hourly history for runtime, degree days and measurements, with stable physical identities and a versioned logical query contract. Runtime and degree-day amounts use native arithmetic means rather than cumulative sums; measurements retain actual sample mean, minimum and maximum.

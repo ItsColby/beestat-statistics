@@ -103,9 +103,12 @@ if [[ "$backend" == container ]]; then
   chmod a+rx "$repo_root"
   # DrvFS exposes regular files as executable unless metadata is enabled.
   find "$repo_root" -type f -exec chmod a-x {} +
-  git -C "$repo_root" -c init.templateDir= init -q
+  empty_git_template="$temporary_root/empty-git-template"
+  mkdir "$empty_git_template"
+  snapshot_git=(git -c "core.hooksPath=$empty_git_template" -C "$repo_root")
+  "${snapshot_git[@]}" init -q --template="$empty_git_template"
   # The curated payload can contain tracked files matching source ignore rules.
-  git -C "$repo_root" add -A -f
+  "${snapshot_git[@]}" add -A -f
 fi
 
 if [[ "$mode" == affected && "$backend" == container ]]; then
