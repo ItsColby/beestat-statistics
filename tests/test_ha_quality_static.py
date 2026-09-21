@@ -676,9 +676,10 @@ def _literal_translation_keys(path: Path) -> set[str]:
     text = path.read_text(encoding="utf-8")
     return set(
         re.findall(r'_attr_translation_key\s*=\s*"([^"]+)"', text)
+        + re.findall(r'ThermostatSettingSensorSpec\(\s*"([^"]+)"', text)
         + re.findall(
             (
-                r"Beestat(?:Button|Sensor)EntityDescription\("
+                r"(?:Button|BeestatSensor)EntityDescription\("
                 r'[\s\S]*?translation_key\s*=\s*"([^"]+)"'
             ),
             text,
