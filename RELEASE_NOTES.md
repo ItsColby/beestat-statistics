@@ -16,6 +16,9 @@ the release in which they appear.
 - Isolate validation snapshots from inherited Git templates and hooks, reject
   inherited Git targeting before public-file enumeration, and select validation
   from semantic tool configuration changes.
+- Reuse filter action validation, binary-sensor identity metadata, and isolated
+  test loaders. Clarify that filter action responses confirm updated entry
+  options while Home Assistant schedules their disk persistence.
 
 Home Assistant Core 2026.8.0 remains the minimum; the current tested lane is
 Core 2026.9.3. Existing configuration and hourly-history storage formats remain
