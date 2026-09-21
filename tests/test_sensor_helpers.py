@@ -929,7 +929,7 @@ class SensorHelpersTest(unittest.TestCase):
     def test_active_alert_examples_are_bounded_for_entity_state(self) -> None:
         alerts = tuple(
             {
-                "code": str(index),
+                "code": "3137" if index == 0 else str(index),
                 "type": "t" * 200 if index == 0 else "thermostat",
                 "severity": "low",
                 "timestamp": f"2026-07-0{index + 1} 12:00:00",
@@ -948,7 +948,7 @@ class SensorHelpersTest(unittest.TestCase):
             [
                 {
                     "category": "maintenance",
-                    "code": "0",
+                    "code": "3137",
                     "type": "t" * 96,
                     "severity": "low",
                     "timestamp": "2026-07-01 12:00:00",
