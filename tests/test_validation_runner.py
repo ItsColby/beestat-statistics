@@ -252,6 +252,31 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual([], self.events())
         self.assertEqual([], list(self.scratch.iterdir()))
 
+    def test_snapshot_ignores_inherited_templates_and_global_hooks(self) -> None:
+        template = self.root / "inherited template"
+        hooks = template / "hooks"
+        hooks.mkdir(parents=True)
+        hook = hooks / "post-index-change"
+        hook.write_text(
+            '#!/bin/sh\nprintf triggered > "$VALIDATION_HOOK_MARKER"\nexit 73\n',
+            encoding="utf-8",
+        )
+        hook.chmod(0o755)
+        marker = self.root / "hook-ran"
+        self.env["VALIDATION_HOOK_MARKER"] = str(marker)
+        for setting in ("template", "hooks"):
+            with self.subTest(setting=setting):
+                if setting == "template":
+                    self.env["GIT_TEMPLATE_DIR"] = str(template)
+                else:
+                    self.env.pop("GIT_TEMPLATE_DIR")
+                    self.env["GIT_CONFIG_GLOBAL"] = str(self.root / "global.gitconfig")
+                    self.git("config", "--global", "core.hooksPath", str(hooks))
+                result = self.run_validation("release", "container")
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertFalse(marker.exists())
+                self.assertEqual([], list(self.scratch.iterdir()))
+
     def test_affected_selection_preserves_order_overlap_and_exclusions(self) -> None:
         for lanes, only in (
             (("unit", "minimum", "current", "release"), ""),

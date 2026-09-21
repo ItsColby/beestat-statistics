@@ -1539,9 +1539,7 @@ class HourlyImportManager:
         epoch: datetime,
     ) -> tuple[dict[str, Any], RecorderSnapshot | None, dict[str, Any]]:
         """Bind one selected resource and reject any unowned native successor."""
-        records: dict[str, Any] = {}
-        snapshots: dict[str, RecorderSnapshot] = {}
-        preview: list[dict[str, Any]] = []
+        snapshot: RecorderSnapshot | None = None
         if (
             hourly_base_id(base) != base
             or base not in available
@@ -1584,7 +1582,7 @@ class HourlyImportManager:
         closed = [] if old is None else deepcopy(old["closed"])
         if old is not None:
             boundary = _time(old["blocked_from"])
-            snapshots[base] = await self._recorder.async_snapshot(
+            snapshot = await self._recorder.async_snapshot(
                 old["statistic_id"], boundary
             )
             closed.append(
@@ -1604,24 +1602,21 @@ class HourlyImportManager:
             "coverage": {},
             "closed": closed,
         }
-        records[base] = record
-        preview.append(
-            {
-                "base_id": base,
-                "statistic_id": target,
-                "epoch_start": _iso(epoch),
-                "metadata": _metadata(record["metadata"]),
-                "resource": record["resource"],
-                "first_hour": first.values,
-                "closed": closed,
-                "stale_rows": [
-                    _row(row)
-                    for row in snapshots.get(base, RecorderSnapshot()).rows
-                    if not row.cleared
-                ],
-            }
-        )
-        return records[base], snapshots.get(base), preview[0]
+        preview = {
+            "base_id": base,
+            "statistic_id": target,
+            "epoch_start": _iso(epoch),
+            "metadata": _metadata(record["metadata"]),
+            "resource": record["resource"],
+            "first_hour": first.values,
+            "closed": closed,
+            "stale_rows": [
+                _row(row)
+                for row in (snapshot or RecorderSnapshot()).rows
+                if not row.cleared
+            ],
+        }
+        return record, snapshot, preview
 
     async def _finish_selection(self) -> dict[str, Any]:
         selection = self._document["pending_selection"]

@@ -13,6 +13,28 @@ from scripts.run_dependency_light_tests import discover_home_assistant_test_file
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _exact_core_pin(path: Path) -> str:
+    """Read one unconditional exact Core pin, allowing other requirements."""
+    pins = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        content = line.split("#", 1)[0].strip()
+        if not re.match(r"homeassistant(?=[^A-Za-z0-9_.-]|$)", content, re.IGNORECASE):
+            continue
+        match = re.fullmatch(
+            r"homeassistant\s*==\s*([0-9]{4}\.(?:[1-9]|1[0-2])\.(?:0|[1-9][0-9]*))",
+            content,
+            re.IGNORECASE,
+        )
+        if match is None:
+            raise AssertionError(
+                f"{path.name} must use an unconditional stable exact Home Assistant pin"
+            )
+        pins.append(match.group(1))
+    if len(pins) != 1:
+        raise AssertionError(f"{path.name} must contain exactly one Home Assistant pin")
+    return pins[0]
+
+
 class HomeAssistantQualityStaticTest(unittest.TestCase):
     """Validate HA quality rules that can be checked without HA test deps."""
 
@@ -154,18 +176,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             encoding="utf-8"
         )
         runner = (ROOT / "scripts/verify-release-local.sh").read_text(encoding="utf-8")
-        minimum = (
-            (ROOT / "requirements-ha-test.txt").read_text(encoding="utf-8").strip()
-        )
-        current = (
-            (ROOT / "requirements-ha-current.txt").read_text(encoding="utf-8").strip()
-        )
-        self.assertEqual(
-            minimum, f"homeassistant=={_json_file('hacs.json')['homeassistant']}"
-        )
-        for requirement in (minimum, current):
-            self.assertRegex(requirement, r"^homeassistant==[0-9]+[.][0-9]+[.][0-9]+$")
-            self.assertIn(f"Core {requirement.split('==')[1]}", workflow)
+        minimum = _exact_core_pin(ROOT / "requirements-ha-test.txt")
+        current = _exact_core_pin(ROOT / "requirements-ha-current.txt")
+        self.assertEqual(minimum, _json_file("hacs.json")["homeassistant"])
+        for version in (minimum, current):
+            self.assertIn(f"Core {version}", workflow)
         self.assertNotEqual(
             minimum, current, "Equal support lanes should be consolidated"
         )
@@ -196,17 +211,15 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
     def test_development_guide_matches_validation_owners(self) -> None:
         development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
         for name in ("requirements-ha-test.txt", "requirements-ha-current.txt"):
-            version = (ROOT / name).read_text(encoding="utf-8").strip().split("==")[1]
+            version = _exact_core_pin(ROOT / name)
             self.assertIn(name, development)
             self.assertIn(f"`{version}`", development)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         test_files = tuple(sorted((ROOT / "tests").rglob("test_*.py")))
-        discovered_ha_filenames = {
-            path.name for path in discover_home_assistant_test_files(test_files)
-        }
         ha_modules = tuple(
-            f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
+            path.relative_to(ROOT).as_posix()
+            for path in discover_home_assistant_test_files(test_files)
         )
 
         for relative_path in ha_modules:
@@ -676,9 +689,10 @@ def _literal_translation_keys(path: Path) -> set[str]:
     text = path.read_text(encoding="utf-8")
     return set(
         re.findall(r'_attr_translation_key\s*=\s*"([^"]+)"', text)
+        + re.findall(r'ThermostatSettingSensorSpec\(\s*"([^"]+)"', text)
         + re.findall(
             (
-                r"Beestat(?:Button|Sensor)EntityDescription\("
+                r"(?:Button|BeestatSensor)EntityDescription\("
                 r'[\s\S]*?translation_key\s*=\s*"([^"]+)"'
             ),
             text,

@@ -10,8 +10,10 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .api import exception_fingerprint
-from .config_payload import update_thermostat_override_options
-from .config_rows import effective_override_items, override_id
+from .config_payload import (
+    effective_thermostat_override,
+    update_thermostat_override_options,
+)
 from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
@@ -19,7 +21,6 @@ from .const import (
     CONF_FILTER_CHANGE_EVENT,
     CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
-    CONF_THERMOSTATS,
 )
 from .filter_action import FilterChangeEvent, parse_filter_change_event
 
@@ -65,9 +66,6 @@ async def async_set_filter_changed_date(
         thermostat_id,
         changed_date,
         changed_at=None,
-        change_day_runtime_baseline_seconds=None,
-        boundary_reconciled_at=None,
-        boundary_source_data_end=None,
         rebuild_from_cached_rows=False,
         dismiss_alerts=False,
         event=_filter_change_event(
@@ -129,18 +127,14 @@ async def async_mark_filter_changed(
     event = _filter_change_event(
         coordinator, thermostat_id, changed_date, changed_at, source, request_id
     )
-    # Guard, complete option merge, and persistence contain no await. The first
-    # yield occurs only after this action owns a durable boundary and receipt.
+    # Guard and complete option merge contain no await. The first yield occurs
+    # after the entry holds this boundary and receipt; HA schedules disk persistence.
     await _async_apply_filter_change(
         coordinator,
         thermostat_id,
         changed_date,
         changed_at=changed_at,
-        change_day_runtime_baseline_seconds=None,
-        boundary_reconciled_at=None,
-        boundary_source_data_end=None,
         rebuild_from_cached_rows=True,
-        rollback_on_refresh_error=False,
         dismiss_alerts=dismiss_alerts,
         event=event,
     )
@@ -149,7 +143,7 @@ async def async_mark_filter_changed(
             skip_sync=False,
             summary_window=True,
         )
-    except Exception as err:  # noqa: BLE001 - the physical change is already durable
+    except Exception as err:  # noqa: BLE001 - retain the recorded physical change
         _LOGGER.warning(
             "Saved filter change; exact Beestat runtime boundary remains pending (%s)",
             exception_fingerprint(err),
@@ -167,7 +161,7 @@ class FilterChangeConflictError(ValueError):
 def saved_filter_boundary(
     coordinator: BeestatRuntimeDataCoordinator, thermostat_id: int
 ) -> tuple[datetime | None, date | None, str | None]:
-    """Read the persisted guard, independent of a possibly stale projection."""
+    """Read the entry-option guard, independent of a possibly stale projection."""
 
     row = _saved_filter_options(coordinator, thermostat_id)
     event = parse_filter_change_event(row.get(CONF_FILTER_CHANGE_EVENT))
@@ -186,15 +180,7 @@ def _saved_filter_options(
     coordinator: BeestatRuntimeDataCoordinator, thermostat_id: int
 ) -> dict[str, Any]:
     entry = cast("BeestatStatisticsConfigEntry", coordinator.config_entry)
-    source = entry.options if CONF_THERMOSTATS in entry.options else entry.data
-    return next(
-        (
-            row
-            for row in effective_override_items(source.get(CONF_THERMOSTATS))
-            if override_id(row) == thermostat_id
-        ),
-        {},
-    )
+    return effective_thermostat_override(entry.data, entry.options, thermostat_id) or {}
 
 
 def _filter_change_event(
@@ -266,11 +252,7 @@ async def _async_apply_filter_change(
     changed_date: date,
     *,
     changed_at: datetime | None,
-    change_day_runtime_baseline_seconds: float | None,
-    boundary_reconciled_at: datetime | None,
-    boundary_source_data_end: datetime | None,
     rebuild_from_cached_rows: bool,
-    rollback_on_refresh_error: bool = True,
     dismiss_alerts: bool = True,
     event: FilterChangeEvent,
 ) -> None:
@@ -287,15 +269,9 @@ async def _async_apply_filter_change(
             CONF_FILTER_CHANGED_DATE: changed_date.isoformat(),
             CONF_FILTER_CHANGED_AT: _isoformat_or_none(changed_at),
             CONF_FILTER_CHANGE_EVENT: event.as_dict(),
-            CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: (
-                change_day_runtime_baseline_seconds
-            ),
-            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT: _isoformat_or_none(
-                boundary_reconciled_at
-            ),
-            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END: _isoformat_or_none(
-                boundary_source_data_end
-            ),
+            CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: None,
+            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT: None,
+            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END: None,
         },
     )
     old_options = entry.options
@@ -312,11 +288,7 @@ async def _async_apply_filter_change(
         try:
             await coordinator.async_refresh_runtime(skip_sync=True)
         except Exception:
-            if (
-                not coordinator.is_closed
-                and rollback_on_refresh_error
-                and entry.options == new_options
-            ):
+            if not coordinator.is_closed and entry.options == new_options:
                 coordinator.hass.config_entries.async_update_entry(
                     entry,
                     options=old_options,

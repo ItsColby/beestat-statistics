@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import run_dependency_light_tests as runner
+from tests import test_ha_quality_static as quality
 
 
 class DependencyLightRunnerTests(unittest.TestCase):
@@ -75,6 +76,56 @@ class DependencyLightRunnerTests(unittest.TestCase):
                     )
                     unit_loader.assert_not_called()
 
+    def test_nested_ha_modules_reach_native_pytest_with_exact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / "tests"
+            nested = tests / "nested"
+            nested.mkdir(parents=True)
+            unit = tests / "test_unit.py"
+            unit.write_text("import unittest\n", encoding="utf-8")
+            core = nested / "test_core.py"
+            core.write_text("from homeassistant import core\n", encoding="utf-8")
+            alternate = nested / "feature_test.py"
+            alternate.write_text("def test_native(): pass\n", encoding="utf-8")
+            selected = ["tests/nested/test_core.py", "tests/nested/feature_test.py"]
+            with (
+                patch.object(runner, "ROOT", root),
+                patch.object(runner, "TESTS", tests),
+                patch.dict(runner.sys.modules, {"pytest": SimpleNamespace()}),
+                patch("pytest.main", create=True, return_value=5) as collect,
+            ):
+                self.assertEqual((unit,), runner.dependency_light_test_files())
+                self.assertEqual(5, runner.main(["--home-assistant"]))
+                collect.assert_called_once_with([str(tests), "-q", f"--ignore={unit}"])
+                collect.reset_mock()
+                self.assertEqual(
+                    5,
+                    runner.main(
+                        [
+                            "--home-assistant",
+                            "--test",
+                            selected[0],
+                            "--test",
+                            selected[1],
+                        ]
+                    ),
+                )
+                collect.assert_called_once_with(["-q", str(core), str(alternate)])
+                for paths in (
+                    selected,
+                    [selected[0]] * 2,
+                    ["tests/nested/../nested/test_core.py"],
+                ):
+                    with self.subTest(paths=paths), self.assertRaises(RuntimeError):
+                        runner.validate_test_selection(paths, home_assistant=False)
+                for paths in (
+                    [selected[0]] * 2,
+                    ["tests/nested/../nested/test_core.py"],
+                ):
+                    with self.subTest(paths=paths), self.assertRaises(RuntimeError):
+                        runner.validate_test_selection(paths, home_assistant=True)
+
     def test_nested_module_is_reported_instead_of_silently_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -85,6 +136,27 @@ class DependencyLightRunnerTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "flat"),
             ):
                 runner.dependency_light_test_files()
+
+    def test_static_ha_guard_reads_nested_paths_without_losing_directories(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder in ("first", "second"):
+                path = root / "tests" / folder / "test_ha.py"
+                path.parent.mkdir(parents=True)
+                path.write_text("import homeassistant\n", encoding="utf-8")
+            check = quality.HomeAssistantQualityStaticTest(
+                "test_discovered_ha_modules_fail_closed_without_harness"
+            )
+            with patch.object(quality, "ROOT", root):
+                check.test_discovered_ha_modules_fail_closed_without_harness()
+                path.write_text(
+                    "import homeassistant\nraise unittest.SkipTest()\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(AssertionError):
+                    check.test_discovered_ha_modules_fail_closed_without_harness()
 
     def test_empty_module_and_pytest_functions_cannot_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

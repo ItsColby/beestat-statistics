@@ -212,7 +212,7 @@ from .hourly_recorder import HourlyRecorderError
 from .hourly_sources import stage_source
 from .hourly_statistics import HourlySeries, build_hourly_statistics
 from .hourly_storage import HourlyStorageError
-from .import_evidence import SkippedWindowEvidence
+from .import_evidence import SkippedWindowEvidence, SkippedWindowResource
 from .issues import (
     async_set_insecure_api_base_issue,
     async_set_yaml_connection_change_issue,
@@ -1788,48 +1788,9 @@ class BeestatStatisticsImporter:
         end: datetime,
         skipped_windows: SkippedWindowEvidence,
     ) -> list[dict[str, Any]]:
-        try:
-            return await self._client.async_read_runtime_thermostat(
-                thermostat_id,
-                _format_beestat_time(start),
-                _format_beestat_time(end),
-            )
-        except BeestatAuthError, BeestatPermanentError:
-            raise
-        except BeestatApiError as err:
-            if end - start > timedelta(days=1):
-                midpoint = start + ((end - start) / 2)
-                rows: list[dict[str, Any]] = []
-                rows.extend(
-                    await self._async_read_runtime_thermostat_window(
-                        thermostat_id,
-                        start,
-                        midpoint,
-                        skipped_windows,
-                    )
-                )
-                rows.extend(
-                    await self._async_read_runtime_thermostat_window(
-                        thermostat_id,
-                        midpoint,
-                        end,
-                        skipped_windows,
-                    )
-                )
-                return rows
-
-            skipped_windows.record(
-                "runtime_thermostat",
-                start=_format_beestat_time(start),
-                end=_format_beestat_time(end),
-            )
-            _LOGGER.warning(
-                "Skipping Beestat runtime_thermostat window start=%s end=%s: %s",
-                _format_beestat_time(start),
-                _format_beestat_time(end),
-                exception_fingerprint(err),
-            )
-            return []
+        return await self._async_read_runtime_window(
+            "runtime_thermostat", thermostat_id, start, end, skipped_windows
+        )
 
     async def _async_fetch_sensor_rows(
         self,
@@ -1908,9 +1869,28 @@ class BeestatStatisticsImporter:
         end: datetime,
         skipped_windows: SkippedWindowEvidence,
     ) -> list[dict[str, Any]]:
+        return await self._async_read_runtime_window(
+            "runtime_sensor", sensor_id, start, end, skipped_windows
+        )
+
+    async def _async_read_runtime_window(
+        self,
+        resource: SkippedWindowResource,
+        resource_id: int,
+        start: datetime,
+        end: datetime,
+        skipped_windows: SkippedWindowEvidence,
+    ) -> list[dict[str, Any]]:
+        """Recover oversized source windows with one bounded bisection policy."""
+
+        read = (
+            self._client.async_read_runtime_thermostat
+            if resource == "runtime_thermostat"
+            else self._client.async_read_runtime_sensor
+        )
         try:
-            return await self._client.async_read_runtime_sensor(
-                sensor_id,
+            return await read(
+                resource_id,
                 _format_beestat_time(start),
                 _format_beestat_time(end),
             )
@@ -1921,16 +1901,18 @@ class BeestatStatisticsImporter:
                 midpoint = start + ((end - start) / 2)
                 rows: list[dict[str, Any]] = []
                 rows.extend(
-                    await self._async_read_runtime_sensor_window(
-                        sensor_id,
+                    await self._async_read_runtime_window(
+                        resource,
+                        resource_id,
                         start,
                         midpoint,
                         skipped_windows,
                     )
                 )
                 rows.extend(
-                    await self._async_read_runtime_sensor_window(
-                        sensor_id,
+                    await self._async_read_runtime_window(
+                        resource,
+                        resource_id,
                         midpoint,
                         end,
                         skipped_windows,
@@ -1939,12 +1921,13 @@ class BeestatStatisticsImporter:
                 return rows
 
             skipped_windows.record(
-                "runtime_sensor",
+                resource,
                 start=_format_beestat_time(start),
                 end=_format_beestat_time(end),
             )
             _LOGGER.warning(
-                "Skipping Beestat runtime_sensor window start=%s end=%s: %s",
+                "Skipping Beestat %s window start=%s end=%s: %s",
+                resource,
                 _format_beestat_time(start),
                 _format_beestat_time(end),
                 exception_fingerprint(err),
@@ -2222,38 +2205,15 @@ async def _async_handle_repair_filter_change_boundary(
 ) -> None:
     """Repair the filter change timestamp for an existing calendar date."""
 
-    entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
-    if (
-        entry is None
-        or entry.domain != DOMAIN
-        or entry.state is not ConfigEntryState.LOADED
-        or (runtime := getattr(entry, "runtime_data", None)) is None
-        or runtime.coordinator.data is None
-    ):
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="no_loaded_entry",
-        )
     thermostat_id = call.data[CONF_THERMOSTAT_ID]
-    thermostat = next(
-        (
-            item
-            for item in runtime.coordinator.data.config.thermostats
-            if item.thermostat_id == thermostat_id
-        ),
-        None,
+    coordinator = _loaded_filter_coordinator(
+        hass, call.data[ATTR_CONFIG_ENTRY_ID], thermostat_id
     )
-    if thermostat is None:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="unknown_thermostat_id",
-            translation_placeholders={"thermostat_id": str(thermostat_id)},
-        )
     changed_at = call.data[ATTR_CHANGED_AT]
     try:
         changed_at = resolve_filter_change_timestamp(
             changed_at,
-            runtime.coordinator.local_tz,
+            coordinator.local_tz,
         )
     except ValueError:
         raise ServiceValidationError(
@@ -2266,16 +2226,16 @@ async def _async_handle_repair_filter_change_boundary(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_out_of_range",
         )
-    prior_boundary = saved_filter_boundary(runtime.coordinator, thermostat_id)
+    prior_boundary = saved_filter_boundary(coordinator, thermostat_id)
     saved_date = prior_boundary[1]
-    repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
+    repair_date = changed_at.astimezone(coordinator.local_tz).date()
     if saved_date is None or saved_date != repair_date:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_date_mismatch",
         )
     await async_mark_filter_changed(
-        runtime.coordinator,
+        coordinator,
         thermostat_id,
         changed_at,
         dismiss_alerts=False,
