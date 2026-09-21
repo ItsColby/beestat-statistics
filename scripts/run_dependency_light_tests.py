@@ -727,9 +727,10 @@ def build_plan(
                     else set()
                 )
             )
-            plan["lane_typing"][lane] = sorted(
-                set(plan["lane_typing"][lane]) | set(plan["typing"])
-            )
+            if lane == "minimum":
+                plan["lane_typing"][lane] = sorted(
+                    set(plan["lane_typing"][lane]) | set(plan["typing"])
+                )
     plan["ha_tests"] = sorted(set().union(*map(set, plan["lane_tests"].values())))
     plan["jobs"] = {
         job: bool(plan[job])

@@ -632,6 +632,18 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertTrue(plan["jobs"]["minimum"])
         self.assertTrue(plan["ha_tests"])
         self.assertEqual([], plan["unresolved"])
+        self.assertTrue(plan["lane_typing"]["minimum"])
+        self.assertEqual([], plan["lane_typing"]["current"])
+        for lane in ("minimum", "current"):
+            self.assertEqual(plan["ha_tests"], plan["lane_tests"][lane])
+            command = planner.lane_command(plan, lane)
+            self.assertIn("python -m pip check", command)
+            self.assertIn("--home-assistant", command)
+            if lane == "minimum":
+                self.assertIn("mypy==", command)
+                self.assertIn("python -m mypy", command)
+            else:
+                self.assertNotIn("mypy", command)
 
     def test_config_flow_change_reaches_framework_loaded_native_consumer(self):
         path = planner.PRODUCT + "/config_flow.py"
