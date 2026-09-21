@@ -26,6 +26,27 @@ REVIEWED_BINARY_SHA256 = {
         "6b9995752bf6d548654c790f79e481ea32ecec8135c55dff2811e1c2406e1f1e"
     ),
 }
+LOCAL_GIT_OVERRIDE_NAMES = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    }
+)
+
 IGNORED_DIRECTORY_NAMES = {
     ".git",
     ".local",
@@ -163,27 +184,9 @@ def _is_word_char(char: str) -> bool:
 
 
 def _git_command(*arguments: str) -> list[str]:
-    local_names = {
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_CEILING_DIRECTORIES",
-        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    }
     # GIT_CONFIG_KEY/VALUE entries are inert without GIT_CONFIG_COUNT; native
     # hook cleanup unsets the count and may leave those unused entries behind.
-    inherited = sorted(name for name in os.environ if name in local_names)
+    inherited = sorted(name for name in os.environ if name in LOCAL_GIT_OVERRIDE_NAMES)
     if inherited:
         raise ValueError(
             "Inherited local Git overrides are not supported: " + ", ".join(inherited)
