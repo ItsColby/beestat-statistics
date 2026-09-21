@@ -7,6 +7,11 @@ from typing import Any
 MAX_STATE_ALERT_EXAMPLES = 3
 MAX_STATE_ALERT_VALUE_LENGTH = 96
 _STATE_ALERT_FIELDS = ("code", "type", "severity", "timestamp")
+# Ecobee Alert Object: the documented maintenance/reminder identifiers.
+# See the Ecobee API v1 Alert Object documentation, Alert Numbers table.
+_MAINTENANCE_ALERT_CODES = frozenset(
+    {"3130", "3131", "3132", "3133", "3134", "3135", "3136", "3137", "3138", "3140"}
+)
 
 
 def active_alert_examples(
@@ -50,6 +55,10 @@ def classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
 def _classify_alert(alert: dict[str, Any]) -> str:
     """Classify one alert so a routine reminder cannot hide an unknown problem."""
 
+    code = _bounded_scalar(alert.get("code"))
+    if code in _MAINTENANCE_ALERT_CODES:
+        return "maintenance"
+
     text = " ".join(
         str(alert.get(field) or "").lower()
         for field in ("code", "type", "severity", "text")
@@ -80,6 +89,8 @@ def _classify_alert(alert: dict[str, Any]) -> str:
     )
     if any(term in text for term in equipment_terms):
         return "equipment"
+    if code is not None and code.isdecimal():
+        return "unknown"
     if any(term in text for term in maintenance_terms):
         return "maintenance"
     return "unknown"

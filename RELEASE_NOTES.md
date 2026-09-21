@@ -3,6 +3,17 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.9.21.1
+
+- Classify Ecobee's documented maintenance reminders by their alert codes, so
+  furnace and AC reminders no longer appear as equipment faults.
+- Keep equipment faults and unrecognized alerts visible alongside reminders;
+  an unknown numeric code is not downgraded to maintenance by message keywords.
+
+Home Assistant Core 2026.8.0 remains the minimum; the current tested lane is
+Core 2026.9.3. Existing configuration, alert acknowledgments, thermostat commands,
+and Recorder history remain unchanged.
+
 ## Beestat Statistics v2026.9.21
 
 - Reuse normalized runtime and comfort-profile data, native button descriptions,
