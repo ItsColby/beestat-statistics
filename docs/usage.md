@@ -494,9 +494,11 @@ request for retries. Handle `status` before continuing an automation:
 
 A changed prior boundary/token or reused request ID with different contents is
 rejected. Never refresh the expected values just to force an old request through.
-The boundary is persisted before alert acknowledgment and runtime refresh;
-network failure can leave the replacement saved. Read back after an uncertain
-outcome, and retry the same request rather than creating a new replacement.
+The boundary is updated in config-entry options before alert acknowledgment and
+runtime refresh. Home Assistant schedules disk persistence; the response does
+not confirm that write has completed. Network failure can leave the replacement
+recorded. Read back after an uncertain outcome, and retry the same request rather
+than creating a new replacement.
 
 To refine an existing date without acknowledging its alerts:
 

@@ -50,64 +50,36 @@ else:
 
 PARALLEL_UPDATES = 0
 
-_THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, str, bool], ...] = (
-    ("auto_away_enabled", "Auto away enabled", "auto_away_enabled", "autoAway", False),
-    (
-        "follow_me_enabled",
-        "Follow me enabled",
-        "follow_me_enabled",
-        "followMeComfort",
-        False,
-    ),
+_THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, bool], ...] = (
+    ("auto_away_enabled", "Auto away enabled", "autoAway", False),
+    ("follow_me_enabled", "Follow me enabled", "followMeComfort", False),
     (
         "smart_circulation_enabled",
         "Smart circulation enabled",
-        "smart_circulation_enabled",
         "smartCirculation",
         False,
     ),
-    (
-        "preheating_enabled",
-        "Preheating enabled",
-        "preheating_enabled",
-        "disablePreHeating",
-        True,
-    ),
-    (
-        "precooling_enabled",
-        "Precooling enabled",
-        "precooling_enabled",
-        "disablePreCooling",
-        True,
-    ),
+    ("preheating_enabled", "Preheating enabled", "disablePreHeating", True),
+    ("precooling_enabled", "Precooling enabled", "disablePreCooling", True),
     (
         "hot_temperature_alert_enabled",
         "Hot temperature alert enabled",
-        "hot_temperature_alert_enabled",
         "hotTempAlertEnabled",
         False,
     ),
     (
         "cold_temperature_alert_enabled",
         "Cold temperature alert enabled",
-        "cold_temperature_alert_enabled",
         "coldTempAlertEnabled",
         False,
     ),
     (
         "wifi_offline_alert_enabled",
         "Wi-Fi offline alert enabled",
-        "wifi_offline_alert_enabled",
         "wifiOfflineAlert",
         False,
     ),
-    (
-        "service_reminder_enabled",
-        "Service reminder enabled",
-        "service_reminder_enabled",
-        "serviceRemindMe",
-        False,
-    ),
+    ("service_reminder_enabled", "Service reminder enabled", "serviceRemindMe", False),
 )
 
 
@@ -174,14 +146,11 @@ def _build_entities(
             thermostat,
             key=key,
             name=name,
-            translation_key=translation_key,
             setting_key=setting_key,
             inverted=inverted,
         )
         for thermostat in data.config.thermostats
-        for key, name, translation_key, setting_key, inverted in (
-            _THERMOSTAT_SETTING_BINARY_SENSORS
-        )
+        for key, name, setting_key, inverted in (_THERMOSTAT_SETTING_BINARY_SENSORS)
     )
     entities.extend(
         BeestatThermostatAudioBinarySensor(coordinator, thermostat)
@@ -266,7 +235,6 @@ class BeestatThermostatSettingBinarySensor(
         *,
         key: str,
         name: str,
-        translation_key: str,
         setting_key: str,
         inverted: bool,
     ) -> None:
@@ -276,7 +244,7 @@ class BeestatThermostatSettingBinarySensor(
         self._setting_key = setting_key
         self._inverted = inverted
         self._attr_name = name
-        self._attr_translation_key = translation_key
+        self._attr_translation_key = key
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
             key,

@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
-from .config_model import ConfiguredThermostat, filter_boundary_status
+from .config_model import ConfiguredThermostat
 from .const import DOMAIN, thermostat_entity_unique_id
 from .coordinator import BeestatRuntimeDataCoordinator
 from .entity import (
@@ -171,7 +171,6 @@ class BeestatFilterChangedDate(
                 if thermostat.filter_changed_at is not None
                 else None
             ),
-            "boundary_status": filter_boundary_status(thermostat),
             "change_day_runtime_baseline_seconds": (
                 thermostat.filter_change_day_runtime_baseline_seconds
             ),

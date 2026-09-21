@@ -396,9 +396,7 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_error_does_not_expose_response_body(self) -> None:
         secret = "http-response-secret"
-        session = _FakeSession(
-            [_FakeResponse({}, status=500, text=f"failure: {secret}")]
-        )
+        session = _FakeSession([_FakeResponse({"error": secret}, status=500)])
         client = self.api.BeestatClient(
             session,
             "secret-token",
@@ -735,14 +733,10 @@ class _FakeResponse:
         payload,
         *,
         status: int = 200,
-        text: str | None = None,
         json_error: BaseException | None = None,
         include_content_length: bool = True,
     ) -> None:
         self.status = status
-        self._payload = payload
-        self._text = text
-        self._json_error = json_error
         body = json.dumps(payload, separators=(",", ":")).encode()
         self.content = _FakeContent(body, json_error)
         self.content_length = len(body) if include_content_length else None
@@ -752,14 +746,6 @@ class _FakeResponse:
 
     async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
         return None
-
-    async def json(self, *, content_type=None):
-        if self._json_error is not None:
-            raise self._json_error
-        return self._payload
-
-    async def text(self) -> str:
-        return self._text if self._text is not None else str(self._payload)
 
 
 class _FakeContent:

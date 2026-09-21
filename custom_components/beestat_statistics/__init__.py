@@ -2205,38 +2205,15 @@ async def _async_handle_repair_filter_change_boundary(
 ) -> None:
     """Repair the filter change timestamp for an existing calendar date."""
 
-    entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
-    if (
-        entry is None
-        or entry.domain != DOMAIN
-        or entry.state is not ConfigEntryState.LOADED
-        or (runtime := getattr(entry, "runtime_data", None)) is None
-        or runtime.coordinator.data is None
-    ):
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="no_loaded_entry",
-        )
     thermostat_id = call.data[CONF_THERMOSTAT_ID]
-    thermostat = next(
-        (
-            item
-            for item in runtime.coordinator.data.config.thermostats
-            if item.thermostat_id == thermostat_id
-        ),
-        None,
+    coordinator = _loaded_filter_coordinator(
+        hass, call.data[ATTR_CONFIG_ENTRY_ID], thermostat_id
     )
-    if thermostat is None:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="unknown_thermostat_id",
-            translation_placeholders={"thermostat_id": str(thermostat_id)},
-        )
     changed_at = call.data[ATTR_CHANGED_AT]
     try:
         changed_at = resolve_filter_change_timestamp(
             changed_at,
-            runtime.coordinator.local_tz,
+            coordinator.local_tz,
         )
     except ValueError:
         raise ServiceValidationError(
@@ -2249,16 +2226,16 @@ async def _async_handle_repair_filter_change_boundary(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_out_of_range",
         )
-    prior_boundary = saved_filter_boundary(runtime.coordinator, thermostat_id)
+    prior_boundary = saved_filter_boundary(coordinator, thermostat_id)
     saved_date = prior_boundary[1]
-    repair_date = changed_at.astimezone(runtime.coordinator.local_tz).date()
+    repair_date = changed_at.astimezone(coordinator.local_tz).date()
     if saved_date is None or saved_date != repair_date:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_date_mismatch",
         )
     await async_mark_filter_changed(
-        runtime.coordinator,
+        coordinator,
         thermostat_id,
         changed_at,
         dismiss_alerts=False,
