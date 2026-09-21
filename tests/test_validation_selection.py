@@ -1141,7 +1141,8 @@ class ValidationSelectionTests(unittest.TestCase):
         plan = planner.build_plan([planner.PRODUCT + "/url_validation.py"])
         self.assertIn("tests/test_api_response.py", plan["unit_tests"])
         self.assertIn("tests/test_url_validation.py", plan["unit_tests"])
-        self.assertNotIn("tests/test_dependency_light_runner.py", plan["unit_tests"])
+        self.assertIn("tests/test_dependency_light_runner.py", plan["unit_tests"])
+        self.assertNotIn("tests/test_public_safety.py", plan["unit_tests"])
 
     @unittest.skipUnless(
         os.name == "posix" and shutil.which("bash"), "requires native Bash"
