@@ -111,7 +111,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "compressorProtectionMinTemp",
         "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
-        UnitOfTemperature.FAHRENHEIT,
+        "°F",
     ),
     ThermostatSettingSensorSpec(
         "heat_cool_minimum_delta",
@@ -119,7 +119,7 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
         "heatCoolMinDelta",
         "temperature",
         SensorDeviceClass.TEMPERATURE_DELTA,
-        UnitOfTemperature.FAHRENHEIT,
+        "°F",
     ),
     ThermostatSettingSensorSpec(
         "hold_action",

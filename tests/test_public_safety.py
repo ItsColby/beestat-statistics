@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import tempfile
 import unittest
@@ -160,6 +161,23 @@ class PublicSafetyGuardTests(unittest.TestCase):
             count, failures = run_guard(root)
             self.assertEqual(1, count)
             self.assertEqual(["<sensitive path>: GitHub token in filename"], failures)
+
+    def test_git_overrides_fail_before_enumeration_without_echoing_values(self) -> None:
+        for name, value in (
+            ("GIT_INDEX_FILE", ""),
+            ("GIT_INDEX_FILE", "private-index"),
+            ("GIT_DIR", "private-directory"),
+            ("GIT_CONFIG_COUNT", "1"),
+        ):
+            with (
+                self.subTest(name=name, value=value),
+                patch.dict(os.environ, {name: value}),
+                patch("scripts.check_public_safety.subprocess.run") as run,
+                redirect_stderr(io.StringIO()) as output,
+            ):
+                self.assertEqual(2, main([]))
+                run.assert_not_called()
+                self.assertNotIn("private-", output.getvalue())
 
     def test_git_enumeration_failure_cannot_fall_back_to_filtered_export(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

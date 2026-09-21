@@ -772,6 +772,11 @@ class SensorHelpersTest(unittest.TestCase):
             "playback_volume",
         ):
             self.assertIsNone(descriptions[key].state_class, key)
+        for key in (
+            "compressor_minimum_outdoor_temperature",
+            "heat_cool_minimum_delta",
+        ):
+            self.assertEqual("°F", descriptions[key].native_unit_of_measurement, key)
         for key in ("high_humidity_alert", "low_humidity_alert"):
             self.assertEqual("humidity", descriptions[key].device_class, key)
 
