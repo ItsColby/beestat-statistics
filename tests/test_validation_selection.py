@@ -567,6 +567,22 @@ class ValidationSelectionTests(unittest.TestCase):
                     {name: name == "unit" for name in planner.JOBS}, plan["jobs"]
                 )
 
+    def test_pytest_ini_selects_both_ha_consumers_without_product_typing(self):
+        plan = planner.build_plan(["pytest.ini"])
+        self.assertEqual([], plan["unresolved"])
+        self.assertIn(planner.METADATA_TEST, plan["unit_tests"])
+        self.assertTrue(plan["ha_tests"])
+        for lane in ("minimum", "current"):
+            self.assertTrue(plan["jobs"][lane])
+            self.assertEqual(plan["ha_tests"], plan["lane_tests"][lane])
+            self.assertEqual([], plan["lane_typing"][lane])
+            command = planner.lane_command(plan, lane)
+            self.assertIn("--home-assistant", command)
+            for path in plan["ha_tests"]:
+                self.assertIn(path, command)
+        self.assertFalse(plan["jobs"]["release"])
+        self.assertFalse(plan["jobs"]["hacs"])
+
     def test_only_changed_support_environment_runs(self):
         for path, lane, other in (
             ("requirements-ha-test.txt", "minimum", "current"),

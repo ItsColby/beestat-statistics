@@ -59,12 +59,12 @@ def dependency_light_test_files() -> tuple[Path, ...]:
     """Return every test module that does not directly require the HA harness."""
 
     test_files = tuple(sorted(TESTS.rglob("test_*.py")))
-    if any(path.parent != TESTS for path in test_files):
-        raise RuntimeError("Dependency-light discovery requires flat tests/test_*.py")
     ha_test_files = set(discover_home_assistant_test_files(test_files))
+    selected = tuple(path for path in test_files if path not in ha_test_files)
+    if any(path.parent != TESTS for path in selected):
+        raise RuntimeError("Dependency-light discovery requires flat tests/test_*.py")
     if not ha_test_files:
         raise RuntimeError("No Home Assistant test modules were discovered")
-    selected = tuple(path for path in test_files if path not in ha_test_files)
     if not selected:
         raise RuntimeError("No dependency-light test modules were discovered")
     return selected
@@ -148,11 +148,15 @@ def validate_test_selection(
 ) -> tuple[Path, ...]:
     """Reject missing, duplicate, traversal and wrong-lane test selections."""
     all_files = tuple(
-        sorted(set(TESTS.glob("test_*.py")) | set(TESTS.glob("*_test.py")))
+        sorted(set(TESTS.rglob("test_*.py")) | set(TESTS.rglob("*_test.py")))
     )
     ha = set(discover_home_assistant_test_files(all_files))
     ha.update(path for path in all_files if path.name.endswith("_test.py"))
-    allowed = ha if home_assistant else set(all_files) - ha
+    allowed = (
+        ha
+        if home_assistant
+        else {path for path in all_files if path not in ha and path.parent == TESTS}
+    )
     selected = tuple(ROOT / path for path in paths)
     if len(set(selected)) != len(selected) or any(
         path not in allowed for path in selected
@@ -182,7 +186,7 @@ API_AUDIT_INPUTS = {
 EXTRA_DEPENDENCIES: dict[str, set[str]] = {
     # HA's flow manager loads this module dynamically.
     "tests/test_config_flow_ha.py": {f"{PRODUCT}/config_flow.py"},
-    "tests/test_ha_quality_static.py": {"README.md", "RELEASE_NOTES.md"},
+    "tests/test_ha_quality_static.py": {"README.md", "RELEASE_NOTES.md", "pytest.ini"},
 }
 JOBS = ("unit", "minimum", "current", "release", "hacs")
 
@@ -693,6 +697,7 @@ def build_plan(
     unit_files, ha_files = _test_files(files)
     for test in ha_files:
         dependencies[test].update(path for path in files if path == "tests/conftest.py")
+        dependencies[test].add("pytest.ini")
     impacted = _consumer_closure(set(paths), dependencies)
     selected = (unit_files | ha_files) & impacted
     plan = {
@@ -724,7 +729,9 @@ def build_plan(
     )
     if selected & ha_files:
         plan["current"] = True
-        if any(path.startswith(PRODUCT + "/") for path in paths):
+        if "pytest.ini" in paths or any(
+            path.startswith(PRODUCT + "/") for path in paths
+        ):
             plan["minimum"] = True
     for lane in ("minimum", "current"):
         if plan[lane]:
@@ -733,6 +740,7 @@ def build_plan(
                 | (
                     (selected & ha_files)
                     if lane == "current"
+                    or "pytest.ini" in paths
                     or any(path.startswith(PRODUCT + "/") for path in paths)
                     else set()
                 )
@@ -802,8 +810,8 @@ def _route_path(
         plan["unit_tests"] = sorted(
             set(plan["unit_tests"]) | API_AUDIT_INPUTS.get(path, {METADATA_TEST})
         )
-    elif path == "pyproject.toml":
-        # The pinned base comparison selects the actual tool consumers below.
+    elif path in {"pyproject.toml", "pytest.ini"}:
+        # Pyproject uses the base comparison; pytest.ini has direct test consumers.
         pass
     elif path.endswith(".md") or path in {
         # Its offline consumer is declared in EXTRA_DEPENDENCIES.

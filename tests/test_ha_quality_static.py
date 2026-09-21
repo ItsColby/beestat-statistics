@@ -202,11 +202,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         test_files = tuple(sorted((ROOT / "tests").rglob("test_*.py")))
-        discovered_ha_filenames = {
-            path.name for path in discover_home_assistant_test_files(test_files)
-        }
         ha_modules = tuple(
-            f"tests/{filename}" for filename in sorted(discovered_ha_filenames)
+            path.relative_to(ROOT).as_posix()
+            for path in discover_home_assistant_test_files(test_files)
         )
 
         for relative_path in ha_modules:

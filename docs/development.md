@@ -34,7 +34,9 @@ uncommitted edits. An empty verified comparison selects no jobs. Missing compari
 input and unmapped changes fail with an unresolved applicability message.
 
 The product-owned planner traces local Python imports and reviewed direct-file
-consumers. Changed tests run in their native collector; runtime changes include
+consumers. Dependency-light unittest modules stay directly under `tests/`;
+HA pytest modules may use subdirectories and retain their relative paths in
+selected runs. Changed tests run in their native collector; runtime changes include
 the affected success, failure, and recovery consumers in both maintained HA
 environments. A support requirements change selects that environment, without
 invalidating the unchanged sibling lane. Runner and workflow dependency declarations
@@ -49,9 +51,11 @@ the owner of exact local tool versions. Tooling, workflow, public-content and
 metadata checks are selected independently of product tests. Parsed `pyproject.toml`
 changes select all Python static checks for Ruff settings, or the minimum lane's
 product typing checks for mypy settings. Comments and formatting select no tool
-consumers; the normal public-safety check still applies. Pytest uses `pytest.ini`,
-so a new pyproject pytest table has no mapped consumer. Malformed, unavailable,
-and other unmapped configuration changes remain unresolved for explicit review.
+consumers; the normal public-safety check still applies. Changes to `pytest.ini`
+select both HA test lanes and the static configuration check; native pytest
+validates the configuration when those lanes execute. A new pyproject pytest
+table has no mapped consumer. Malformed, unavailable, and other unmapped
+pyproject configuration changes remain unresolved for explicit review.
 
 Container execution rebuilds the affected plan from the captured payload, retaining
 the preview's resolved dependency baseline and selected paths. That plan contains
