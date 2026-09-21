@@ -10,8 +10,10 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .api import exception_fingerprint
-from .config_payload import update_thermostat_override_options
-from .config_rows import effective_override_items, override_id
+from .config_payload import (
+    effective_thermostat_override,
+    update_thermostat_override_options,
+)
 from .const import (
     CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
     CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
@@ -19,7 +21,6 @@ from .const import (
     CONF_FILTER_CHANGE_EVENT,
     CONF_FILTER_CHANGED_AT,
     CONF_FILTER_CHANGED_DATE,
-    CONF_THERMOSTATS,
 )
 from .filter_action import FilterChangeEvent, parse_filter_change_event
 
@@ -186,15 +187,7 @@ def _saved_filter_options(
     coordinator: BeestatRuntimeDataCoordinator, thermostat_id: int
 ) -> dict[str, Any]:
     entry = cast("BeestatStatisticsConfigEntry", coordinator.config_entry)
-    source = entry.options if CONF_THERMOSTATS in entry.options else entry.data
-    return next(
-        (
-            row
-            for row in effective_override_items(source.get(CONF_THERMOSTATS))
-            if override_id(row) == thermostat_id
-        ),
-        {},
-    )
+    return effective_thermostat_override(entry.data, entry.options, thermostat_id) or {}
 
 
 def _filter_change_event(
