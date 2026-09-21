@@ -636,6 +636,33 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertTrue(plan["jobs"]["current"])
         self.assertFalse(plan["jobs"]["minimum"])
 
+    def test_isolated_module_loader_reaches_all_direct_test_consumers(self):
+        names = {
+            "binary_sensor_helpers",
+            "config_flow_helpers",
+            "config_model",
+            "config_payload",
+            "configuration",
+            "coordinator_helpers",
+            "diagnostics",
+            "entity_helpers",
+            "entity_reference",
+            "entry_options",
+            "hourly_import_plan",
+            "sensor_helpers",
+            "statistics_builder",
+            "url_validation",
+        }
+        plan = planner.build_plan(["tests/_module_loader.py"])
+        self.assertEqual(
+            {f"tests/test_{name}.py" for name in names}, set(plan["unit_tests"])
+        )
+        self.assertEqual([], plan["ha_tests"])
+        self.assertEqual([], plan["unresolved"])
+        self.assertTrue(plan["jobs"]["unit"])
+        self.assertFalse(plan["jobs"]["minimum"])
+        self.assertFalse(plan["jobs"]["current"])
+
     def test_unknown_change_is_not_converted_to_a_full_plan(self):
         plan = planner.build_plan(["future/unknown.py"])
         self.assertEqual(["future/unknown.py"], plan["unresolved"])

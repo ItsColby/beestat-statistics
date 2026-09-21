@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import sys
 import types
 import unittest
@@ -11,22 +10,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+if __package__:
+    from ._module_loader import load_module
+else:
+    from _module_loader import load_module
+
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_diagnostics_test"
 
 
 def _load_module(name: str):
-    package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-    package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(
-        f"{PACKAGE}.{name}", ROOT / f"{name}.py"
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load {name}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return load_module(ROOT, PACKAGE, name)
 
 
 @dataclass
