@@ -71,9 +71,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             else:
                 sys.modules[key] = module
 
-    def test_runtime_summary_helpers_ignore_bad_dates_and_accumulate_fan_hours(
-        self,
-    ) -> None:
+    def test_latest_row_date_ignores_bad_dates(self) -> None:
         rows = [
             {"date": "2026-07-01", "sum_fan": 3600},
             {"date": "bad", "sum_fan": 9999},
@@ -81,39 +79,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         ]
 
         self.assertEqual(self.coordinator._latest_row_date(rows), date(2026, 7, 3))
-        self.assertEqual(
-            self.coordinator._sum_fan_seconds(
-                [
-                    {"sum_fan": 3600},
-                    {"sum_fan": "NaN"},
-                    {"sum_fan": "Infinity"},
-                ]
-            ),
-            3600,
-        )
-
-    def test_runtime_projections_reject_unrepresentable_finite_totals(self) -> None:
-        """Finite source fields cannot overflow cached runtime projections."""
-
-        rows = [
-            {"date": "2026-07-01", "sum_fan": 1e308},
-            {"date": "2026-07-02", "sum_fan": 1e308},
-        ]
-
-        self.assertIsNone(self.coordinator._sum_fan_seconds(rows))
-
-    def test_negative_or_boolean_runtime_cannot_reduce_filter_usage(self) -> None:
-        self.assertEqual(
-            self.coordinator._sum_fan_seconds(
-                [
-                    {"sum_fan": 3600},
-                    {"sum_fan": -1800},
-                    {"sum_fan": "-7200"},
-                    {"sum_fan": True},
-                ]
-            ),
-            3600,
-        )
 
     def test_profile_room_spread_uses_mapped_local_values_and_rejects_unknown(
         self,
@@ -746,42 +711,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(
             built,
             [(date(2026, 7, 1), ZoneInfo("Asia/Tokyo"), evaluated_at)],
-        )
-
-    def test_runtime_seconds_on_date_filters_thermostat_and_date(self) -> None:
-        rows = (
-            {"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 3600},
-            {"thermostat_id": 1002, "date": "2026-07-05", "sum_fan": 7200},
-            {"thermostat_id": 1001, "date": "2026-07-06", "sum_fan": 10800},
-            {"thermostat_id": 1001, "date": "bad", "sum_fan": 9999},
-        )
-
-        self.assertEqual(
-            self.coordinator._runtime_seconds_on_date(
-                rows,
-                thermostat_id=1001,
-                target_date=date(2026, 7, 5),
-            ),
-            3600,
-        )
-
-    def test_runtime_seconds_on_date_distinguishes_missing_row_from_zero(self) -> None:
-        rows = ({"thermostat_id": 1001, "date": "2026-07-05", "sum_fan": 0},)
-
-        self.assertEqual(
-            self.coordinator._runtime_seconds_on_date(
-                rows,
-                thermostat_id=1001,
-                target_date=date(2026, 7, 5),
-            ),
-            0,
-        )
-        self.assertIsNone(
-            self.coordinator._runtime_seconds_on_date(
-                rows,
-                thermostat_id=1001,
-                target_date=date(2026, 7, 6),
-            )
         )
 
     def test_unrepresentable_utc_timestamps_do_not_break_source_projection(

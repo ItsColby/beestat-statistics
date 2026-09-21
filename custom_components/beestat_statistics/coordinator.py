@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, time, timedelta
-from math import fsum, isfinite
+from math import isfinite
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -330,21 +330,6 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         """Return the non-optional config entry supplied at construction."""
 
         return self._beestat_config_entry
-
-    def filter_runtime_seconds_on_date(
-        self,
-        thermostat_id: int,
-        target_date: date,
-    ) -> float | None:
-        """Return the freshest known daily fan-runtime total for a thermostat."""
-
-        if self.data is None:
-            return None
-        return _runtime_seconds_on_date(
-            self.data.summary_rows,
-            thermostat_id=thermostat_id,
-            target_date=target_date,
-        )
 
     @callback
     def async_schedule_filter_boundary_reconcile(
@@ -1319,23 +1304,6 @@ def _latest_row_date(rows: list[dict[str, Any]]) -> date | None:
     return max(valid_dates) if valid_dates else None
 
 
-def _runtime_seconds_on_date(
-    rows: tuple[dict[str, Any], ...] | list[dict[str, Any]],
-    *,
-    thermostat_id: int,
-    target_date: date,
-) -> float | None:
-    matched_rows = [
-        row
-        for row in rows
-        if _row_int(row, "thermostat_id", "id") == thermostat_id
-        and _parse_date(row.get("date")) == target_date
-    ]
-    if not matched_rows:
-        return None
-    return _sum_fan_seconds(matched_rows)
-
-
 def _filter_boundary_fast_retry_due(
     changed_at: datetime | None,
     now: datetime,
@@ -1346,18 +1314,6 @@ def _filter_boundary_fast_retry_due(
         return False
     age = now.astimezone(UTC) - changed_at.astimezone(UTC)
     return timedelta(0) <= age <= _FILTER_BOUNDARY_FAST_RETRY_WINDOW
-
-
-def _sum_fan_seconds(rows: list[dict[str, Any]]) -> float | None:
-    return _finite_sum(_float_or_zero(row.get("sum_fan")) for row in rows)
-
-
-def _finite_sum(values: Iterable[float]) -> float | None:
-    try:
-        total = fsum(values)
-    except OverflowError:
-        return None
-    return total if isfinite(total) else None
 
 
 def _thermostat_row(
@@ -2008,13 +1964,3 @@ def _optional_bool(value: Any) -> bool | None:
         if normalized in {"false", "0", "no", "off"}:
             return False
     return None
-
-
-def _float_or_zero(value: Any) -> float:
-    if isinstance(value, bool):
-        return 0.0
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return 0.0
-    return parsed if isfinite(parsed) and parsed >= 0 else 0.0
