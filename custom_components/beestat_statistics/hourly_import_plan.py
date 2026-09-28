@@ -118,12 +118,6 @@ class SeriesImportPlan:
     rejected_timestamps: int
 
     @property
-    def legacy_statistic_id(self) -> str:
-        """Identify the preserved legacy series without querying or changing it."""
-
-        return hourly_base_id(self.statistic_id).removesuffix("_hourly_v2")
-
-    @property
     def unblocked_rows(self) -> tuple[HourlyStatisticRow, ...]:
         """Return locally reconciled rows, not authorized or native-verified writes."""
 

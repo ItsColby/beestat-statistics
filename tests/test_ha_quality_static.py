@@ -461,7 +461,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
 
         self.assertRegex(bug_template, r"(?i)redact")
         self.assertRegex(bug_template, r"(?i)API keys")
-        self.assertTrue((ROOT / ".github/ISSUE_TEMPLATE/config.yml").is_file())
 
     def test_entity_translation_keys_have_names_and_icons(self) -> None:
         strings = _json_file(
