@@ -666,6 +666,7 @@ class ValidationSelectionTests(unittest.TestCase):
 
     def test_isolated_module_loader_reaches_all_direct_test_consumers(self):
         names = {
+            "alerts",
             "binary_sensor_helpers",
             "config_flow_helpers",
             "config_model",
