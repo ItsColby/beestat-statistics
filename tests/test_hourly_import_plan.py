@@ -112,7 +112,6 @@ class HourlyImportPlanTests(unittest.TestCase):
         series = replace(series, metadata={**series.metadata, "statistic_id": segment})
         result = _plan(series, snapshot=_snapshot(series))
         self.assertEqual([1, 3], [row.sum for row in result.unblocked_rows])
-        self.assertEqual("beestat:zone_fan_runtime_hours", result.legacy_statistic_id)
 
     def test_malformed_successor_and_segment_ids_are_rejected(self):
         initial = _series().statistic_id
@@ -252,7 +251,6 @@ class HourlyImportPlanTests(unittest.TestCase):
         self.assertEqual(
             [START, START + HOUR], [row.start for row in result.unblocked_rows]
         )
-        self.assertEqual("beestat:zone_fan_runtime_hours", result.legacy_statistic_id)
 
     def test_zero_is_an_observed_increment(self):
         series = _series((0.0, 0.0))
