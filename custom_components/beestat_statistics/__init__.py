@@ -1164,8 +1164,7 @@ class BeestatStatisticsImporter:
                 runtime_data = self._coordinator.data
                 allowed_legacy_ids = current_partition.legacy_statistic_ids
 
-        if prepared is None:  # pragma: no cover - positive attempt constant
-            raise RuntimeError("Beestat statistics import was not prepared")
+        assert prepared is not None  # the loop either breaks or raises
 
         imported_rows = 0
         latest_start_by_id: dict[str, str | None] = {}
@@ -2039,7 +2038,6 @@ async def _async_handle_hourly_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> ServiceResponse:
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
-    ids = call.data.get(ATTR_STATISTIC_IDS)
     try:
         if call.data.get("contract_version") == 3:
             return await importer.async_get_hourly_history(dict(call.data))
@@ -2050,6 +2048,7 @@ async def _async_handle_hourly_service(
                 expected_revision=call.data[ATTR_EXPECTED_REVISION],
                 preview_digest=call.data.get(ATTR_PREVIEW_DIGEST),
             )
+        ids = call.data.get(ATTR_STATISTIC_IDS)
         return await importer.async_get_hourly_coverage(
             start=call.data[ATTR_START],
             end=call.data[ATTR_END],

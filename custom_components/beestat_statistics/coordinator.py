@@ -34,7 +34,7 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
-from .config_rows import row_resource_id
+from .config_rows import as_bool, finite_float_or_none, row_resource_id, string_or_none
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -1337,12 +1337,12 @@ def _build_sensor_metadata(
         metadata[sensor_id] = SensorMetadata(
             sensor_id=sensor_id,
             thermostat_id=row_resource_id(row, "thermostat_id"),
-            name=_string_or_none(row.get("name")),
-            identifier=_string_or_none(row.get("identifier")),
-            sensor_type=_string_or_none(row.get("type")),
+            name=string_or_none(row.get("name")),
+            identifier=string_or_none(row.get("identifier")),
+            sensor_type=string_or_none(row.get("type")),
             in_use=_optional_bool(row.get("in_use")),
-            inactive=_bool(row.get("inactive")),
-            deleted=_bool(row.get("deleted")),
+            inactive=as_bool(row.get("inactive")),
+            deleted=as_bool(row.get("deleted")),
         )
     return metadata
 
@@ -1495,7 +1495,7 @@ def _build_room_temperature_spreads(
             else None
         )
         projections[thermostat.thermostat_id] = RoomTemperatureSpread(
-            value=_finite_float(spread),
+            value=finite_float_or_none(spread),
             unit=resolved_unit,
             participating_sensor_count=len(participating_names),
             valid_sensor_count=len(valid),
@@ -1524,7 +1524,7 @@ def _temperature_state_value(
         "",
     }:
         return None
-    value = _finite_float(getattr(state, "state", None))
+    value = finite_float_or_none(getattr(state, "state", None))
     attributes = getattr(state, "attributes", None)
     if (
         not isinstance(attributes, dict)
@@ -1575,16 +1575,6 @@ def _canonical_temperature_unit(value: Any) -> str | None:
     if normalized in {"K", "°K", "KELVIN"}:
         return "K"
     return None
-
-
-def _finite_float(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, ""):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None
 
 
 def _unique_profile_sensors(
@@ -1661,7 +1651,7 @@ def _current_profile(
     program = row.get("program")
     if not isinstance(program, dict):
         return None, None, ()
-    current_ref = _string_or_none(program.get("currentClimateRef"))
+    current_ref = string_or_none(program.get("currentClimateRef"))
     if profiles_by_ref is None:
         profiles_by_ref = schedule_profiles_by_ref(program)
     if profile := profiles_by_ref.get(current_ref or ""):
@@ -1728,7 +1718,7 @@ def _valid_schedule(value: Any) -> bool:
 
 def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
     for field in ("timezone", "time_zone", "timeZone"):
-        value = _string_or_none(row.get(field))
+        value = string_or_none(row.get(field))
         if value is None:
             continue
         try:
@@ -1746,7 +1736,7 @@ def _ecobee_day_index(value: datetime) -> int:
 
 def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
     value = schedule[day_index][slot_index]
-    return _string_or_none(value)
+    return string_or_none(value)
 
 
 def _next_schedule_transition(
@@ -1786,7 +1776,7 @@ def _active_alert_rows(row: dict[str, Any]) -> Iterator[dict[str, Any]]:
     for alert in alerts:
         if not isinstance(alert, dict):
             continue
-        if _bool(alert.get("dismissed")):
+        if as_bool(alert.get("dismissed")):
             continue
         if str(alert.get("acknowledgement", "")).lower() == "acknowledged":
             continue
@@ -1798,7 +1788,7 @@ def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
     for alert in _active_alert_rows(row):
         if not _is_filter_alert(alert):
             continue
-        guid = _string_or_none(alert.get("guid"))
+        guid = string_or_none(alert.get("guid"))
         if guid is not None:
             guids.append(guid)
     return tuple(dict.fromkeys(guids))
@@ -1925,20 +1915,6 @@ def _effective_summary_rows(
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
-
-
-def _string_or_none(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in {"true", "1", "yes", "on"}
-    return bool(value)
 
 
 def _optional_bool(value: Any) -> bool | None:

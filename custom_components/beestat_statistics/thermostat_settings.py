@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from math import isfinite
 from typing import Any
 
-from .config_rows import positive_resource_id
+from .config_rows import (
+    finite_float_or_none,
+    positive_resource_id,
+    safe_mapping,
+)
 from .temperature import absolute_temperature_value
 
 # These fields are deliberately explicit. The upstream ecobee_thermostat row also
@@ -241,8 +243,8 @@ def build_thermostat_settings_snapshots(
         raw = raw_by_id.get(ecobee_thermostat_id)
         if raw is None or _truthy(raw.get("inactive")) or _truthy(raw.get("deleted")):
             continue
-        settings = _safe_mapping(raw.get("settings"), _all_setting_fields())
-        audio = _safe_mapping(raw.get("audio"), _AUDIO_FIELDS)
+        settings = safe_mapping(raw.get("settings"), _all_setting_fields())
+        audio = safe_mapping(raw.get("audio"), _AUDIO_FIELDS)
         groups = {
             group: {
                 key: _configuration_value(key, settings[key])
@@ -270,7 +272,7 @@ def temperature_fahrenheit(
 ) -> float | None:
     """Return one Ecobee tenths-Fahrenheit setting as Fahrenheit."""
 
-    value = _finite_float_or_none(snapshot.setting(key))
+    value = finite_float_or_none(snapshot.setting(key))
     return round(value / 10, 1) if value is not None else None
 
 
@@ -279,7 +281,7 @@ def absolute_temperature_fahrenheit(
 ) -> float | None:
     """Validate an absolute tenths-Fahrenheit setting before presentation rounding."""
 
-    value = _finite_float_or_none(snapshot.setting(key))
+    value = finite_float_or_none(snapshot.setting(key))
     scaled = absolute_temperature_value(
         value / 10 if value is not None else None, "°F", tenth_fahrenheit_source=True
     )
@@ -337,23 +339,12 @@ def _all_setting_fields() -> tuple[str, ...]:
     return tuple(key for keys in _SETTING_GROUPS.values() for key in keys)
 
 
-def _safe_mapping(value: Any, keys: tuple[str, ...]) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    result: dict[str, Any] = {}
-    for key in keys:
-        scalar = _safe_scalar(value.get(key))
-        if scalar is not None:
-            result[key] = scalar
-    return result
-
-
 def _configuration_value(key: str, value: Any) -> Any:
     """Attach units where raw Ecobee scalar semantics otherwise invite mistakes."""
 
     if (
         key in _TENTHS_FAHRENHEIT_FIELDS
-        and (parsed := _finite_float_or_none(value)) is not None
+        and (parsed := finite_float_or_none(value)) is not None
     ):
         return {"value": round(parsed / 10, 1), "unit": "°F"}
     if key in _SECOND_FIELDS:
@@ -363,29 +354,6 @@ def _configuration_value(key: str, value: Any) -> Any:
     if key in _PERCENT_FIELDS:
         return {"value": value, "unit": "%"}
     return value
-
-
-def _safe_scalar(value: Any) -> str | int | float | bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return value if isfinite(value) else None
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if value else None
-
-
-def _finite_float_or_none(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, ""):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None
 
 
 def _int_or_none(value: Any) -> int | None:

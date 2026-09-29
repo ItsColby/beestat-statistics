@@ -331,19 +331,9 @@ class BeestatClient:
         """Call Beestat and return a normalized list of row dictionaries."""
 
         return _normalize_rows(
-            await self.async_call_raw(resource, method, arguments),
+            await self._async_call_raw(resource, method, arguments),
             allow_boolean=allow_boolean_response,
         )
-
-    async def async_call_raw(
-        self,
-        resource: str,
-        method: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> Any:
-        """Call Beestat and return the unnormalized response data."""
-
-        return await self._async_call_raw(resource, method, arguments)
 
     async def _async_call_raw(
         self,
@@ -471,7 +461,7 @@ class BeestatClient:
     async def async_dismiss_alert(self, thermostat_id: int, guid: str) -> None:
         """Dismiss one Beestat alert by thermostat and alert GUID."""
 
-        await self.async_call_raw(
+        await self._async_call_raw(
             "thermostat",
             "dismiss_alert",
             {
@@ -508,7 +498,6 @@ class BeestatClient:
         end: str,
         *,
         raw_response: Literal[False] = False,
-        max_response_bytes: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @overload
@@ -556,7 +545,6 @@ class BeestatClient:
         end: str,
         *,
         raw_response: Literal[False] = False,
-        max_response_bytes: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @overload

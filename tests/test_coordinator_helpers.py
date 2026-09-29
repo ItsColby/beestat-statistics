@@ -495,13 +495,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
             self.coordinator._effective_resource_rows(rows, "id"),
             ({"id": 1, "name": "Real"},),
         )
-        self.assertEqual(self.coordinator.row_resource_id({"id": 1.0}, "id"), 1)
-        self.assertEqual(
-            self.coordinator.row_resource_id(
-                {"thermostat_id": True, "id": "2"}, "thermostat_id", "id"
-            ),
-            2,
-        )
 
     def test_projection_change_ignores_local_date_without_sensitive_state(self) -> None:
         projected_at = datetime(2026, 7, 1, 1, tzinfo=UTC)

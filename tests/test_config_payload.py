@@ -48,6 +48,15 @@ class ConfigPayloadTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIsNone(config_rows.positive_resource_id(value))
 
+    def test_row_resource_id_skips_malformed_fields(self) -> None:
+        self.assertEqual(config_rows.row_resource_id({"id": 1.0}, "id"), 1)
+        self.assertEqual(
+            config_rows.row_resource_id(
+                {"thermostat_id": True, "id": "2"}, "thermostat_id", "id"
+            ),
+            2,
+        )
+
     def test_malformed_resource_ids_cannot_shadow_valid_override(self) -> None:
         valid = {"id": 1, "filter_notice_days": 7}
         rows = [valid] + [

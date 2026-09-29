@@ -262,9 +262,6 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data, options = split_entry_payload(user_input)
                 except ValueError:
                     errors[CONF_API_BASE] = "invalid_api_base"
-                    data = None
-                    options = None
-                if data is None:
                     return self.async_show_form(
                         step_id="user",
                         data_schema=_connection_data_schema(
@@ -519,8 +516,6 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 except ValueError:
                     errors[CONF_API_BASE] = "invalid_api_base"
-                    data_updates = None
-                if data_updates is None:
                     return self.async_show_form(
                         step_id=step_id,
                         data_schema=_connection_data_schema(
