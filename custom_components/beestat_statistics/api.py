@@ -358,8 +358,6 @@ class BeestatClient:
 
         limit = self._max_response_bytes
         if max_response_bytes is not None:
-            if max_response_bytes <= 0:
-                raise ValueError("max_response_bytes must be positive")
             limit = min(limit, max_response_bytes)
 
         params: dict[str, str] = {
@@ -417,13 +415,9 @@ class BeestatClient:
                     break
                 await asyncio.sleep(2**attempt)
 
-        detail = (
-            self.redact_error(last_error)
-            if last_error is not None
-            else "Beestat request failed"
-        )
+        assert last_error is not None
         raise BeestatApiError(
-            f"Failed Beestat call {resource}.{method}: {detail} "
+            f"Failed Beestat call {resource}.{method}: {self.redact_error(last_error)} "
             f"[attempts={attempt}; "
             f"final_http_status={status if status is not None else 'unavailable'}]"
         ) from None
@@ -611,8 +605,6 @@ class BeestatClient:
         max_response_bytes: int | None,
     ) -> list[dict[str, Any]] | BeestatRawResponse:
         if not raw_response:
-            if max_response_bytes is None:
-                return await self.async_call(resource, "read", arguments)
             return _normalize_rows(
                 await self._async_call_raw(
                     resource, "read", arguments, max_response_bytes=max_response_bytes

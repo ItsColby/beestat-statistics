@@ -1937,7 +1937,7 @@ async def _async_handle_import_service(hass: HomeAssistant, call: ServiceCall) -
     try:
         await runtime.importer.async_import_statistics(
             point_lookback_days=call.data.get(CONF_POINT_LOOKBACK_DAYS),
-            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+            skip_sync=call.data[ATTR_SKIP_SYNC],
         )
     except BeestatAuthError as err:
         runtime.coordinator.async_record_import_error(err)
@@ -2046,7 +2046,7 @@ async def _async_handle_hourly_service(
         if call.service == SERVICE_SELECT_HOURLY_STATISTICS:
             return await importer.async_select_hourly_statistics(
                 epoch_start=call.data[ATTR_EPOCH_START],
-                statistic_ids=tuple(ids or ()),
+                statistic_ids=tuple(call.data[ATTR_STATISTIC_IDS]),
                 expected_revision=call.data[ATTR_EXPECTED_REVISION],
                 preview_digest=call.data.get(ATTR_PREVIEW_DIGEST),
             )
@@ -2153,7 +2153,7 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
         )
     try:
         await runtime.importer.async_import_statistics(
-            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+            skip_sync=call.data[ATTR_SKIP_SYNC],
             force_full_summary=True,
             rebuild_start=start_date,
             rebuild_end=end_date,

@@ -264,7 +264,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[CONF_API_BASE] = "invalid_api_base"
                     data = None
                     options = None
-                if data is None or options is None:
+                if data is None:
                     return self.async_show_form(
                         step_id="user",
                         data_schema=_connection_data_schema(
@@ -1463,9 +1463,9 @@ def _has_new_mapping_device_conflicts(
     entry: config_entries.ConfigEntry,
     entity_registry: Any,
     candidate_options: Mapping[str, Any],
-    device_registry: Any = None,
+    device_registry: Any,
     *,
-    hass: HomeAssistant | None = None,
+    hass: HomeAssistant | None,
 ) -> bool:
     """Return whether an options update introduces a mapping-device conflict."""
 

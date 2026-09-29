@@ -572,8 +572,8 @@ class HistoryWriter:
         request: dict[str, Any],
         state: dict[str, Any] | None,
         context: dict[str, Any],
-        provider_order: dict[str, Any] | None = None,
-        provider_supersedes: dict[str, Any] | None = None,
+        provider_order: dict[str, Any] | None,
+        provider_supersedes: dict[str, Any] | None,
     ) -> tuple[Any, dict[str, Any]]:
         history = state["history"] if state and state["version"] == 3 else {}
         sources, merged = await self.source_view(

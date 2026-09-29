@@ -884,7 +884,7 @@ class HourlyImportManager:
         series: tuple[HourlySeries, ...],
         identity: dict[str, Any],
         ordinary_start: datetime | None,
-        eligible_resources: Mapping[str, dict[str, Any]] | None = None,
+        eligible_resources: Mapping[str, dict[str, Any]] | None,
     ) -> dict[str, HourlySeries]:
         self._identity(identity)
         by_resource: dict[tuple[Any, ...], HourlySeries] = {}

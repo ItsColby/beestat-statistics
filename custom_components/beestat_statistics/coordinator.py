@@ -898,8 +898,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if not self.temporal_context_is_current(temporal_context):
             return True
         changed_at = thermostat.filter_changed_at
-        if changed_at is None:  # pragma: no cover - narrowed above
-            return False
+        assert changed_at is not None
         local_date = changed_at.astimezone(temporal_context.local_tz).date()
         window_start, next_midnight = local_day_bounds(
             local_date, temporal_context.local_tz
@@ -957,10 +956,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             _typed_config_entry(self).options,
             thermostat.thermostat_id,
         )
+        if current_override is None:
+            return False
         current_changed_at = _parse_datetime(
             current_override.get(CONF_FILTER_CHANGED_AT)
-            if current_override is not None
-            else None
         )
         if current_changed_at != changed_at:
             return current_changed_at is not None
@@ -1189,10 +1188,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
 def _filter_boundary_changes(
     boundary: ChangeDayObservation,
-    current_override: dict[str, Any] | None,
+    current: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Persist a corrected baseline once, or clear a no-longer-covered baseline."""
-    current = current_override or {}
     if boundary.baseline_seconds is None:
         changes = {
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: None,
@@ -1312,7 +1310,7 @@ def _filter_boundary_fast_retry_due(
 ) -> bool:
     """Return whether a pending click remains in the fast retry window."""
 
-    if changed_at is None or changed_at.tzinfo is None or now.tzinfo is None:
+    if changed_at is None:
         return False
     age = now.astimezone(UTC) - changed_at.astimezone(UTC)
     return timedelta(0) <= age <= _FILTER_BOUNDARY_FAST_RETRY_WINDOW
@@ -1747,8 +1745,6 @@ def _ecobee_day_index(value: datetime) -> int:
 
 
 def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
-    if not _valid_schedule(schedule):
-        return None
     value = schedule[day_index][slot_index]
     return _string_or_none(value)
 

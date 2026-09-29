@@ -1109,7 +1109,6 @@ def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
             temperature_entity_id=temperature_entity_id,
         )
         slug = _local_device_slug(
-            name,
             climate_entity_id=climate_entity_id,
             temperature_entity_id=temperature_entity_id,
         )
@@ -1227,25 +1226,22 @@ def _local_device_name(
         return _device_name(device) or _title_from_slug(
             _entity_object_slug(climate_entity_id)
         )
-    if temperature_entity_id:
-        return _clean_local_sensor_name(
-            _state_name(hass, temperature_entity_id)
-            or _title_from_slug(_entity_object_slug(temperature_entity_id))
-        )
-    return _device_name(device) or "Ecobee Sensor"
+    assert temperature_entity_id
+    return _clean_local_sensor_name(
+        _state_name(hass, temperature_entity_id)
+        or _title_from_slug(_entity_object_slug(temperature_entity_id))
+    )
 
 
 def _local_device_slug(
-    name: str,
     *,
     climate_entity_id: str | None,
     temperature_entity_id: str | None,
 ) -> str:
     if climate_entity_id:
         return _entity_object_slug(climate_entity_id)
-    if temperature_entity_id:
-        return _clean_local_sensor_slug(_entity_object_slug(temperature_entity_id))
-    return _slugify(name)
+    assert temperature_entity_id
+    return _clean_local_sensor_slug(_entity_object_slug(temperature_entity_id))
 
 
 def _device_name(device: Any) -> str | None:
