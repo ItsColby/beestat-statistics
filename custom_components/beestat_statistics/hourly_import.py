@@ -857,7 +857,6 @@ class HourlyImportManager:
         self,
         identity: dict[str, Any],
         *,
-        compare: bool = True,
         require_resources: bool = True,
     ) -> None:
         if (
@@ -870,7 +869,7 @@ class HourlyImportManager:
             raise HourlyImportError(
                 "Hourly imports require a verified account and resource identity"
             )
-        if compare and self._state is not None:
+        if self._state is not None:
             old = self._state["identity"]
             if (
                 old["entry_id"] != identity["entry_id"]

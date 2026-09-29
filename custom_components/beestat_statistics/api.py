@@ -310,7 +310,7 @@ class BeestatClient:
     def redact_error(self, err: Exception) -> str:
         """Return an error string safe to expose in Home Assistant state."""
 
-        if isinstance(err, BeestatAuthError | BeestatApiError):
+        if isinstance(err, BeestatApiError):
             return _redact_text(str(err), self._redactions)
         if isinstance(err, asyncio.TimeoutError):
             return "Beestat request timed out"

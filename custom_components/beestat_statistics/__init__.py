@@ -203,11 +203,7 @@ from .hourly_history_service import (
     STAGE_HISTORY_SCHEMA,
 )
 from .hourly_history_values import build_history_series
-from .hourly_import import (
-    HourlyImportError,
-    HourlyImportManager,
-    HourlyReconciliationError,
-)
+from .hourly_import import HourlyImportManager, HourlyReconciliationError
 from .hourly_recorder import HourlyRecorderError
 from .hourly_sources import stage_source
 from .hourly_statistics import HourlySeries, build_hourly_statistics
@@ -901,13 +897,7 @@ class BeestatStatisticsImporter:
             result = await async_refresh_history(
                 self, self._history_context(), lookback_days=lookback_days
             )
-        except (
-            ValueError,
-            HourlyImportError,
-            HourlyRecorderError,
-            HourlyStorageError,
-            BeestatApiError,
-        ) as err:
+        except (ValueError, BeestatApiError) as err:
             _LOGGER.warning("History refresh paused (%s)", exception_fingerprint(err))
             return "history_refresh_unverified"
         finally:

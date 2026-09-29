@@ -1692,7 +1692,7 @@ def _schedule_snapshot(
     tz = _row_timezone(row, local_tz)
     local_now = fetched_at.astimezone(tz)
     day_index = _ecobee_day_index(local_now)
-    slot_index = min(local_now.hour * 2 + (local_now.minute // 30), 47)
+    slot_index = local_now.hour * 2 + (local_now.minute // 30)
     scheduled_ref = _schedule_ref(schedule, day_index, slot_index)
     scheduled_profile = profiles_by_ref.get(scheduled_ref or "")
     next_ref, next_at = _next_schedule_transition(
