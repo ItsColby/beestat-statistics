@@ -34,7 +34,7 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
-from .config_rows import positive_resource_id
+from .config_rows import row_resource_id
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -911,7 +911,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_fingerprint = tuple(
             (row.get("count"), row.get("sum_fan"), row.get("deleted"))
             for row in summary_rows or []
-            if _row_int(row, "thermostat_id") == thermostat.thermostat_id
+            if row_resource_id(row, "thermostat_id") == thermostat.thermostat_id
             and _parse_date(row.get("date")) == local_date
         )
         source = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
@@ -1035,14 +1035,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         thermostat_row_by_id = {
             thermostat_id: row
             for row in thermostat_rows_tuple
-            if (thermostat_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (thermostat_id := row_resource_id(row, "thermostat_id", "id"))
+            is not None
         }
 
         for thermostat in config.thermostats:
             thermostat_rows = [
                 row
                 for row in rows_tuple
-                if _row_int(row, "thermostat_id") == thermostat.thermostat_id
+                if row_resource_id(row, "thermostat_id") == thermostat.thermostat_id
             ]
             latest_date = _latest_row_date(thermostat_rows)
             lag_days = (today - latest_date).days if latest_date is not None else None
@@ -1154,7 +1155,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         thermostat_row_by_id = {
             thermostat_id: row
             for row in thermostat_rows
-            if (thermostat_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (thermostat_id := row_resource_id(row, "thermostat_id", "id"))
+            is not None
         }
         for thermostat in config.thermostats:
             changed_date, _ = self._filter_changed_date(
@@ -1321,7 +1323,7 @@ def _thermostat_row(
     thermostat_id: int,
 ) -> dict[str, Any] | None:
     for row in rows:
-        if _row_int(row, "thermostat_id", "id") == thermostat_id:
+        if row_resource_id(row, "thermostat_id", "id") == thermostat_id:
             return row
     return None
 
@@ -1331,12 +1333,12 @@ def _build_sensor_metadata(
 ) -> dict[int, SensorMetadata]:
     metadata: dict[int, SensorMetadata] = {}
     for row in rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None:
             continue
         metadata[sensor_id] = SensorMetadata(
             sensor_id=sensor_id,
-            thermostat_id=_row_int(row, "thermostat_id"),
+            thermostat_id=row_resource_id(row, "thermostat_id"),
             name=_string_or_none(row.get("name")),
             identifier=_string_or_none(row.get("identifier")),
             sensor_type=_string_or_none(row.get("type")),
@@ -1901,13 +1903,6 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
-
-
 def _effective_resource_rows(
     rows: list[dict[str, Any]],
     *id_fields: str,
@@ -1916,7 +1911,7 @@ def _effective_resource_rows(
 
     effective: dict[int, dict[str, Any]] = {}
     for row in rows:
-        row_id = _row_int(row, *id_fields)
+        row_id = row_resource_id(row, *id_fields)
         if row_id is not None:
             effective[row_id] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
@@ -1929,7 +1924,7 @@ def _effective_summary_rows(
 
     effective: dict[tuple[int, date], dict[str, Any]] = {}
     for row in rows:
-        thermostat_id = _row_int(row, "thermostat_id")
+        thermostat_id = row_resource_id(row, "thermostat_id")
         local_day = _parse_date(row.get("date"))
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row

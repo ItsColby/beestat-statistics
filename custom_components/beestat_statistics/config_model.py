@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from math import isfinite
 from typing import Any
 
-from .config_rows import effective_override_items, override_id, positive_resource_id
+from .config_rows import effective_override_items, override_id, row_resource_id
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
@@ -230,7 +230,7 @@ def build_beestat_config(
     thermostat_by_id = {item.thermostat_id: item for item in thermostats}
     inherited_sensor_parents: dict[int, ConfiguredThermostat] = {}
     for row in sensor_rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None or not _is_thermostat_sensor(row):
             continue
         override = sensor_overrides.get(sensor_id, {})
@@ -238,7 +238,7 @@ def build_beestat_config(
             _bool(row.get("inactive")) and sensor_id not in sensor_overrides
         ):
             continue
-        parent_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
+        parent_id = row_resource_id(override, CONF_THERMOSTAT_ID) or row_resource_id(
             row, "thermostat_id"
         )
         if parent_id is not None and (parent := thermostat_by_id.get(parent_id)):
@@ -553,9 +553,9 @@ def _build_thermostats(
     )
 
     for row in sorted(
-        rows, key=lambda item: str(_row_int(item, "thermostat_id", "id") or "")
+        rows, key=lambda item: str(row_resource_id(item, "thermostat_id", "id") or "")
     ):
-        thermostat_id = _row_int(row, "thermostat_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id", "id")
         if thermostat_id is None:
             continue
         override = overrides.get(thermostat_id, {})
@@ -708,9 +708,9 @@ def _build_sensors(
     )
 
     for row in sorted(
-        rows, key=lambda item: str(_row_int(item, "sensor_id", "id") or "")
+        rows, key=lambda item: str(row_resource_id(item, "sensor_id", "id") or "")
     ):
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None:
             continue
         override = overrides.get(sensor_id, {})
@@ -734,8 +734,8 @@ def _build_sensors(
             if not (
                 _is_thermostat_sensor(row)
                 and (
-                    _row_int(override, CONF_THERMOSTAT_ID)
-                    or _row_int(row, "thermostat_id")
+                    row_resource_id(override, CONF_THERMOSTAT_ID)
+                    or row_resource_id(row, "thermostat_id")
                 )
                 in thermostat_by_id
             )
@@ -786,7 +786,7 @@ def _sensor_from_row(
     mapping_conflicted: bool,
     default_include_temperature: bool,
 ) -> ConfiguredSensor:
-    thermostat_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
+    thermostat_id = row_resource_id(override, CONF_THERMOSTAT_ID) or row_resource_id(
         row,
         "thermostat_id",
     )
@@ -1453,13 +1453,6 @@ def _clean_local_sensor_name(value: str) -> str:
 
 def _title_from_slug(value: str) -> str:
     return _clean_local_sensor_name(value.replace("_", " ").title())
-
-
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
 
 
 def _string_or_none(value: Any) -> str | None:

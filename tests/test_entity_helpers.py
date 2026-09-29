@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_entity_test"
@@ -44,27 +44,20 @@ class EntityHelpersTest(unittest.TestCase):
     """Validate shared Home Assistant entity helpers with lightweight stubs."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
+        preserve_modules(
+            self,
+            (
                 "homeassistant",
                 "homeassistant.helpers",
                 "homeassistant.helpers.device_registry",
                 "homeassistant.helpers.entity",
                 "homeassistant.helpers.entity_platform",
-            )
-        }
+            ),
+        )
         self._install_fake_homeassistant_modules()
         _load_module("const")
         self.config_model = _load_module("config_model")
         self.entity = _load_module("entity")
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_dynamic_entity_adds_only_new_unique_ids(self) -> None:
         coordinator = FakeCoordinator()

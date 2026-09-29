@@ -88,7 +88,7 @@ from .config_payload import (
     normalize_point_lookback_days,
     normalize_scan_interval_seconds,
 )
-from .config_rows import positive_resource_id
+from .config_rows import positive_resource_id, row_resource_id
 from .configuration import configuration_response
 from .const import (
     API_BASE,
@@ -3409,7 +3409,9 @@ def _filter_summary_rows_by_thermostat(
     if thermostat_id is None:
         return rows
     return [
-        row for row in rows if _row_int(row, "thermostat_id", "id") == thermostat_id
+        row
+        for row in rows
+        if row_resource_id(row, "thermostat_id", "id") == thermostat_id
     ]
 
 
@@ -3536,7 +3538,7 @@ def _observed_hourly_horizons(
         stamps = [
             stamp
             for row in rows
-            if _row_int(row, "thermostat_id") == thermostat_id
+            if row_resource_id(row, "thermostat_id") == thermostat_id
             and isinstance(row.get("timestamp"), str)
             and (stamp := _parse_beestat_time(row["timestamp"])) is not None
             and not (stamp.minute % 5 or stamp.second or stamp.microsecond)
@@ -3615,7 +3617,7 @@ def _hourly_identity(
         {
             hashlib.sha256(str(resource_id).encode()).hexdigest()
             for row in data.thermostat_rows
-            if (resource_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (resource_id := row_resource_id(row, "thermostat_id", "id")) is not None
         }
     )
     if not anchors and require_account:
@@ -3747,8 +3749,8 @@ def _format_beestat_time(value: datetime) -> str:
 def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
     mapping: dict[int, int] = {}
     for row in rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
-        thermostat_id = _row_int(row, "thermostat_id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id")
         if sensor_id is not None and thermostat_id is not None:
             mapping[sensor_id] = thermostat_id
     return mapping
@@ -3757,18 +3759,11 @@ def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
 def _thermostat_data_end_map(rows: list[dict[str, Any]]) -> dict[int, datetime]:
     mapping: dict[int, datetime] = {}
     for row in rows:
-        thermostat_id = _row_int(row, "thermostat_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id", "id")
         data_end = _parse_beestat_time(row.get("data_end"))
         if thermostat_id is not None and data_end is not None:
             mapping[thermostat_id] = data_end
     return mapping
-
-
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
 
 
 def _parse_beestat_time(value: Any) -> datetime | None:
@@ -3794,13 +3789,13 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
     deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
         key: tuple[Any, ...]
-        if (runtime_sensor_id := _row_int(row, "runtime_sensor_id")) is not None:
+        if (runtime_sensor_id := row_resource_id(row, "runtime_sensor_id")) is not None:
             key = ("runtime_sensor_id", runtime_sensor_id)
         elif (
-            runtime_thermostat_id := _row_int(row, "runtime_thermostat_id")
+            runtime_thermostat_id := row_resource_id(row, "runtime_thermostat_id")
         ) is not None:
             key = ("runtime_thermostat_id", runtime_thermostat_id)
-        elif (resource_id := _row_int(row, id_field)) is not None and (
+        elif (resource_id := row_resource_id(row, id_field)) is not None and (
             timestamp := _parse_beestat_time(row.get("timestamp"))
         ) is not None:
             key = (id_field, resource_id, "timestamp", timestamp)

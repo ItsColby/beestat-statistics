@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_config_model_test"
@@ -119,23 +119,16 @@ class ConfigModelTest(unittest.TestCase):
     """Validate generic mapping from HA HomeKit devices to Beestat rows."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
+        preserve_modules(
+            self,
+            (
                 "homeassistant",
                 "homeassistant.helpers",
                 "homeassistant.helpers.device_registry",
                 "homeassistant.helpers.entity_registry",
-            )
-        }
+            ),
+        )
         self._install_fake_homeassistant_modules(devices={}, entries=[])
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_maps_beestat_rows_to_homekit_devices_by_name(self) -> None:
         self._install_fake_homeassistant_modules(

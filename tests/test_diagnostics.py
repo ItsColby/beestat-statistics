@@ -11,9 +11,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_diagnostics_test"
@@ -36,9 +36,9 @@ class DiagnosticsTest(unittest.TestCase):
     """Validate diagnostics are useful without leaking local identifiers."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
+        preserve_modules(
+            self,
+            (
                 "aiohttp",
                 "homeassistant",
                 "homeassistant.components",
@@ -50,8 +50,8 @@ class DiagnosticsTest(unittest.TestCase):
                 "homeassistant.helpers",
                 "homeassistant.helpers.event",
                 "homeassistant.helpers.update_coordinator",
-            )
-        }
+            ),
+        )
         self._install_fake_homeassistant_modules()
         _load_module("const")
         _load_module("api")
@@ -59,13 +59,6 @@ class DiagnosticsTest(unittest.TestCase):
         self.coordinator = _load_module("coordinator")
         _load_module("runtime")
         self.diagnostics = _load_module("diagnostics")
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_unloaded_entry_keeps_diagnostics_available_for_malformed_options(self):
         entry = FakeEntry(

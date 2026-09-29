@@ -22,6 +22,15 @@ def positive_resource_id(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def row_resource_id(row: Mapping[str, Any], *fields: str) -> int | None:
+    """Return the first field holding an exact positive source identity."""
+
+    for field in fields:
+        if (value := positive_resource_id(row.get(field))) is not None:
+            return value
+    return None
+
+
 def override_id(item: Mapping[str, Any]) -> int | None:
     """Resolve the first present identity field; malformed owners remain unowned."""
 

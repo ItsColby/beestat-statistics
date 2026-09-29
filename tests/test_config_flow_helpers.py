@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_config_flow_helper_test"
@@ -24,9 +24,9 @@ class ConfigFlowHelpersTest(unittest.TestCase):
     """Validate config-flow helpers without a Home Assistant test harness."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
+        preserve_modules(
+            self,
+            (
                 "aiohttp",
                 "homeassistant",
                 "homeassistant.config_entries",
@@ -38,20 +38,13 @@ class ConfigFlowHelpersTest(unittest.TestCase):
                 "homeassistant.helpers.issue_registry",
                 "homeassistant.helpers.selector",
                 "voluptuous",
-            )
-        }
+            ),
+        )
         self._install_fake_modules()
         _load_module("const")
         _load_module("api")
         _load_module("config_payload")
         self.config_flow = _load_module("config_flow")
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_account_fingerprint_uses_hashed_thermostat_anchors(self) -> None:
         fingerprint = self.config_flow._account_fingerprint(

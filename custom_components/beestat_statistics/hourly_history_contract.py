@@ -220,13 +220,16 @@ class HistoryResponse(TypedDict):
     series: list[HistorySeriesResponse]
 
 
+def canonical_json(value: Any) -> bytes:
+    """Encode finite JSON values as compact, key-sorted UTF-8 bytes."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+
 def digest(value: Any) -> str:
     """Bind finite JSON values without Python's bool/int equality ambiguity."""
-    return sha256(
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode()
-    ).hexdigest()
+    return sha256(canonical_json(value)).hexdigest()
 
 
 def require_digest(value: Any) -> str:
