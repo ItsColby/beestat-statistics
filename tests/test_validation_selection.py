@@ -1165,7 +1165,7 @@ class ValidationSelectionTests(unittest.TestCase):
 import json, os, shutil, subprocess, sys
 from pathlib import Path
 args = sys.argv[1:]
-if args and (args[0].endswith("plan_validation.py") or "--plan" in args or args[0] == "-c"):
+if args and ("--plan" in args or args[0] == "-c"):
     raise SystemExit(subprocess.call([os.environ["SELECTION_REAL_PYTHON"], *args]))
 with Path(os.environ["SELECTION_LOG"]).open("a") as stream:
     stream.write(json.dumps(args) + "\n")

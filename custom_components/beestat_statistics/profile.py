@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from math import isfinite
 from typing import Any
+
+from .config_rows import finite_float_or_none
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +57,8 @@ def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
             sensors=tuple(
                 sensor.name for sensor in sensor_references if sensor.name is not None
             ),
-            heat_temperature=_finite_float_or_none(climate.get("heatTemp")),
-            cool_temperature=_finite_float_or_none(climate.get("coolTemp")),
+            heat_temperature=finite_float_or_none(climate.get("heatTemp")),
+            cool_temperature=finite_float_or_none(climate.get("coolTemp")),
             heat_fan=_enum_or_none(climate.get("heatFan"), {"auto", "on"}),
             cool_fan=_enum_or_none(climate.get("coolFan"), {"auto", "on"}),
             is_optimized=_bool_or_none(climate.get("isOptimized")),
@@ -118,16 +119,6 @@ def _text_or_none(value: Any) -> str | None:
         return None
     value = value.strip()
     return value if value else None
-
-
-def _finite_float_or_none(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, ""):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None
 
 
 def _nonnegative_int_or_none(value: Any) -> int | None:

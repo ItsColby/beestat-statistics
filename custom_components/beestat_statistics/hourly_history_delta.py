@@ -7,7 +7,6 @@ it deliberately does not claim to reconstruct or retain unchanged input bytes.
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from collections.abc import Mapping
 from copy import deepcopy
@@ -22,6 +21,7 @@ from .hourly_history_contract import (
     MAX_SOURCE_RESOURCES,
     MAX_SOURCE_ROWS,
     bounds,
+    canonical_json,
     digest,
     require_digest,
     utc,
@@ -274,12 +274,6 @@ def _changed_rows(
     return [*changed, *unplaced]
 
 
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-
-
 def _chunks(
     rows: list[dict[str, Any]],
     incoming: list[dict[str, Any]],
@@ -346,23 +340,23 @@ def _chunks(
 def _partition_rows(
     rows: list[dict[str, Any]], envelope: dict[str, Any]
 ) -> list[tuple[bytes, int]]:
-    base_size = len(_json_bytes(envelope))
+    base_size = len(canonical_json(envelope))
     if base_size >= MAX_SOURCE_BYTES:
         raise ValueError("history_delta_metadata_limit")
     result: list[tuple[bytes, int]] = []
     current: list[dict[str, Any]] = []
     size = base_size
     for row in rows:
-        row_size = len(_json_bytes(row))
+        row_size = len(canonical_json(row))
         if base_size + row_size > MAX_SOURCE_BYTES:
             raise ValueError("history_delta_row_limit")
         if current and (
             len(current) == MAX_SOURCE_ROWS or size + row_size + 1 > MAX_SOURCE_BYTES
         ):
-            result.append((_json_bytes({**envelope, "rows": current}), len(current)))
+            result.append((canonical_json({**envelope, "rows": current}), len(current)))
             current, size = [], base_size
         size += row_size + bool(current)
         current.append(row)
     if current:
-        result.append((_json_bytes({**envelope, "rows": current}), len(current)))
+        result.append((canonical_json({**envelope, "rows": current}), len(current)))
     return result

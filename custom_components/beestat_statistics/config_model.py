@@ -9,7 +9,13 @@ from datetime import UTC, date, datetime
 from math import isfinite
 from typing import Any
 
-from .config_rows import effective_override_items, override_id, positive_resource_id
+from .config_rows import (
+    as_bool,
+    effective_override_items,
+    override_id,
+    row_resource_id,
+    string_or_none,
+)
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_ENABLED,
@@ -230,15 +236,15 @@ def build_beestat_config(
     thermostat_by_id = {item.thermostat_id: item for item in thermostats}
     inherited_sensor_parents: dict[int, ConfiguredThermostat] = {}
     for row in sensor_rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None or not _is_thermostat_sensor(row):
             continue
         override = sensor_overrides.get(sensor_id, {})
         if _is_disabled(override) or (
-            _bool(row.get("inactive")) and sensor_id not in sensor_overrides
+            as_bool(row.get("inactive")) and sensor_id not in sensor_overrides
         ):
             continue
-        parent_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
+        parent_id = row_resource_id(override, CONF_THERMOSTAT_ID) or row_resource_id(
             row, "thermostat_id"
         )
         if parent_id is not None and (parent := thermostat_by_id.get(parent_id)):
@@ -389,7 +395,7 @@ def configured_unresolved_entity_ids(
                 if resolve_override_entity_id(entity_registry, item, field) is not None:
                     continue
                 unresolved.append(
-                    _string_or_none(item.get(field)) or f"unavailable {field}"
+                    string_or_none(item.get(field)) or f"unavailable {field}"
                 )
     return tuple(dict.fromkeys(unresolved))
 
@@ -530,7 +536,7 @@ def _override_entity_domain_errors(
         item_id = override_id(item)
         item_label = f"{item_type} {item_id}" if item_id is not None else item_type
         for field, expected_domain in domains:
-            entity_id = _string_or_none(item.get(field))
+            entity_id = string_or_none(item.get(field))
             if entity_id is None or _entity_domain(entity_id) == expected_domain:
                 continue
             errors.append(
@@ -553,15 +559,15 @@ def _build_thermostats(
     )
 
     for row in sorted(
-        rows, key=lambda item: str(_row_int(item, "thermostat_id", "id") or "")
+        rows, key=lambda item: str(row_resource_id(item, "thermostat_id", "id") or "")
     ):
-        thermostat_id = _row_int(row, "thermostat_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id", "id")
         if thermostat_id is None:
             continue
         override = overrides.get(thermostat_id, {})
         if _is_disabled(override):
             continue
-        if _bool(row.get("inactive")) and thermostat_id not in overrides:
+        if as_bool(row.get("inactive")) and thermostat_id not in overrides:
             continue
         items.append((thermostat_id, row, override))
         seen.add(thermostat_id)
@@ -616,14 +622,14 @@ def _thermostat_from_row(
     mapping_conflicted: bool,
 ) -> ConfiguredThermostat:
     fallback_name = (
-        _string_or_none(row.get("name"))
+        string_or_none(row.get("name"))
         or (local.name if local else None)
         or f"Thermostat {thermostat_id}"
     )
-    name = _string_or_none(override.get(CONF_OVERRIDE_NAME)) or (
+    name = string_or_none(override.get(CONF_OVERRIDE_NAME)) or (
         local.name if local else fallback_name
     )
-    slug_source = _string_or_none(override.get(CONF_SLUG)) or (
+    slug_source = string_or_none(override.get(CONF_SLUG)) or (
         local.slug if local else fallback_name
     )
     slug = _unique_slug(
@@ -708,15 +714,15 @@ def _build_sensors(
     )
 
     for row in sorted(
-        rows, key=lambda item: str(_row_int(item, "sensor_id", "id") or "")
+        rows, key=lambda item: str(row_resource_id(item, "sensor_id", "id") or "")
     ):
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None:
             continue
         override = overrides.get(sensor_id, {})
         if _is_disabled(override):
             continue
-        if _bool(row.get("inactive")) and sensor_id not in overrides:
+        if as_bool(row.get("inactive")) and sensor_id not in overrides:
             continue
         items.append((sensor_id, row, override))
         seen.add(sensor_id)
@@ -734,8 +740,8 @@ def _build_sensors(
             if not (
                 _is_thermostat_sensor(row)
                 and (
-                    _row_int(override, CONF_THERMOSTAT_ID)
-                    or _row_int(row, "thermostat_id")
+                    row_resource_id(override, CONF_THERMOSTAT_ID)
+                    or row_resource_id(row, "thermostat_id")
                 )
                 in thermostat_by_id
             )
@@ -786,7 +792,7 @@ def _sensor_from_row(
     mapping_conflicted: bool,
     default_include_temperature: bool,
 ) -> ConfiguredSensor:
-    thermostat_id = _row_int(override, CONF_THERMOSTAT_ID) or _row_int(
+    thermostat_id = row_resource_id(override, CONF_THERMOSTAT_ID) or row_resource_id(
         row,
         "thermostat_id",
     )
@@ -802,17 +808,17 @@ def _sensor_from_row(
         occupancy_entity_id = thermostat.occupancy_entity_id
         motion_entity_id = thermostat.motion_entity_id
     else:
-        fallback_name = _string_or_none(row.get("name")) or f"Sensor {sensor_id}"
+        fallback_name = string_or_none(row.get("name")) or f"Sensor {sensor_id}"
         fallback_slug = fallback_name
         device_id = local.device_id if local else None
         temperature_entity_id = local.temperature_entity_id if local else None
         occupancy_entity_id = local.occupancy_entity_id if local else None
         motion_entity_id = local.motion_entity_id if local else None
 
-    name = _string_or_none(override.get(CONF_OVERRIDE_NAME)) or (
+    name = string_or_none(override.get(CONF_OVERRIDE_NAME)) or (
         local.name if local else fallback_name
     )
-    slug_source = _string_or_none(override.get(CONF_SLUG)) or (
+    slug_source = string_or_none(override.get(CONF_SLUG)) or (
         local.slug if local else fallback_slug
     )
     slug = _unique_slug(
@@ -883,7 +889,7 @@ def _thermostat_match_candidate(
         return _LocalMatchCandidate(thermostat_id, explicit_devices[0], True, 3)
     if has_explicit_entity_mapping(override, THERMOSTAT_STABLE_ENTITY_FIELDS):
         return None
-    row_key = _slugify(_string_or_none(row.get("name")) or "")
+    row_key = _slugify(string_or_none(row.get("name")) or "")
     if row_key:
         local = _select_preferred_local_match(
             tuple(local for local in local_thermostats if row_key in local.match_keys)
@@ -913,7 +919,7 @@ def _sensor_match_candidate(
         return _LocalMatchCandidate(sensor_id, explicit_devices[0], True, 3)
     if has_explicit_entity_mapping(override, SENSOR_STABLE_ENTITY_FIELDS):
         return None
-    row_key = _slugify(_string_or_none(row.get("name")) or "")
+    row_key = _slugify(string_or_none(row.get("name")) or "")
     if row_key:
         local = _select_preferred_local_match(
             tuple(local for local in local_sensors if row_key in local.match_keys)
@@ -1000,7 +1006,7 @@ def _explicit_local_devices(
 
     matched: dict[str, LocalEcobeeDevice] = {}
     for field in fields:
-        entity_id = _string_or_none(override.get(field))
+        entity_id = string_or_none(override.get(field))
         if entity_id and (local := _find_local_by_entity(devices, entity_id)):
             matched[local.device_id] = local
     return tuple(matched.values())
@@ -1109,7 +1115,6 @@ def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
             temperature_entity_id=temperature_entity_id,
         )
         slug = _local_device_slug(
-            name,
             climate_entity_id=climate_entity_id,
             temperature_entity_id=temperature_entity_id,
         )
@@ -1227,30 +1232,27 @@ def _local_device_name(
         return _device_name(device) or _title_from_slug(
             _entity_object_slug(climate_entity_id)
         )
-    if temperature_entity_id:
-        return _clean_local_sensor_name(
-            _state_name(hass, temperature_entity_id)
-            or _title_from_slug(_entity_object_slug(temperature_entity_id))
-        )
-    return _device_name(device) or "Ecobee Sensor"
+    assert temperature_entity_id
+    return _clean_local_sensor_name(
+        _state_name(hass, temperature_entity_id)
+        or _title_from_slug(_entity_object_slug(temperature_entity_id))
+    )
 
 
 def _local_device_slug(
-    name: str,
     *,
     climate_entity_id: str | None,
     temperature_entity_id: str | None,
 ) -> str:
     if climate_entity_id:
         return _entity_object_slug(climate_entity_id)
-    if temperature_entity_id:
-        return _clean_local_sensor_slug(_entity_object_slug(temperature_entity_id))
-    return _slugify(name)
+    assert temperature_entity_id
+    return _clean_local_sensor_slug(_entity_object_slug(temperature_entity_id))
 
 
 def _device_name(device: Any) -> str | None:
     for attr in ("name_by_user", "default_name", "name"):
-        value = _string_or_none(getattr(device, attr, None))
+        value = string_or_none(getattr(device, attr, None))
         if value:
             return _clean_local_sensor_name(value)
     return None
@@ -1260,7 +1262,7 @@ def _state_name(hass: Any, entity_id: str) -> str | None:
     state = hass.states.get(entity_id)
     if state is None:
         return None
-    return _string_or_none(state.attributes.get("friendly_name"))
+    return string_or_none(state.attributes.get("friendly_name"))
 
 
 def _filter_changed_entity_id(
@@ -1268,7 +1270,7 @@ def _filter_changed_entity_id(
     slug: str,
     override: dict[str, Any],
 ) -> str | None:
-    entity_id = _string_or_none(override.get(CONF_FILTER_CHANGED_ENTITY_ID))
+    entity_id = string_or_none(override.get(CONF_FILTER_CHANGED_ENTITY_ID))
     if entity_id:
         return entity_id
     candidate = f"input_datetime.{slug}_hvac_filter_changed"
@@ -1293,7 +1295,7 @@ def _mapped_entity_id(
 ) -> str | None:
     """Keep an unresolved stable reference authoritative over device fallbacks."""
 
-    explicit = _string_or_none(override.get(field))
+    explicit = string_or_none(override.get(field))
     if entity_reference_field(field) in override:
         return explicit
     return explicit or fallback
@@ -1354,7 +1356,7 @@ def _configured_entity_id(
         resolved = resolve_override_entity_id(registry, item, field)
         if resolved is not None:
             return resolved
-    return _string_or_none(item.get(field))
+    return string_or_none(item.get(field))
 
 
 def _sensor_supports(
@@ -1455,19 +1457,6 @@ def _title_from_slug(value: str) -> str:
     return _clean_local_sensor_name(value.replace("_", " ").title())
 
 
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
-
-
-def _string_or_none(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
 def _date_or_none(value: Any) -> date | None:
     if isinstance(value, date):
         return value
@@ -1537,16 +1526,8 @@ def _override_bool(
 ) -> bool:
     if key not in override:
         return default
-    return _bool(override[key])
+    return as_bool(override[key])
 
 
 def _is_disabled(override: dict[str, Any]) -> bool:
     return override.get(CONF_ENABLED) is False
-
-
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in {"true", "1", "yes", "on"}
-    return bool(value)

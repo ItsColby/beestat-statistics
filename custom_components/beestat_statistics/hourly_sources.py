@@ -30,6 +30,7 @@ from .hourly_history_contract import (
     MAX_SOURCE_ROWS,
     SourceManifest,
     bounds,
+    canonical_json,
     digest,
     require_digest,
     utc,
@@ -55,12 +56,6 @@ class SynchronousSourceStore(Protocol):
     """Executor-only immutable writes inside the native upload context."""
 
     def write_object(self, kind: str, content: bytes) -> str: ...
-
-
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
 
 
 def _object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -546,7 +541,7 @@ def stage_source(
     sealed = _prepare_source(content, manifest, expected_sha256, identity)
     if store.write_object("source", content) != expected_sha256:
         raise ValueError("history_source_write_digest_mismatch")
-    source_id = store.write_object("manifest", _json_bytes(sealed))
+    source_id = store.write_object("manifest", canonical_json(sealed))
     return {"source_id": source_id, **sealed}
 
 
@@ -563,7 +558,7 @@ async def async_stage_source(
     )
     if await store.async_write_object("source", content) != expected_sha256:
         raise ValueError("history_source_write_digest_mismatch")
-    encoded = await store.async_process_source_job(_json_bytes, sealed)
+    encoded = await store.async_process_source_job(canonical_json, sealed)
     source_id = await store.async_write_object("manifest", encoded)
     return {"source_id": source_id, **sealed}
 

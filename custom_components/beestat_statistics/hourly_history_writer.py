@@ -24,6 +24,7 @@ from .hourly_history_contract import (
     MAX_SOURCE_CHUNKS,
     METHOD_VERSION,
     bounds,
+    canonical_json,
     capabilities,
     digest,
     quantity_id,
@@ -55,12 +56,6 @@ from .hourly_statistics import build_hourly_statistics
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
 _FIELDS = ("entry_id", "api_base", "account_anchors")
-
-
-def encoded(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode()
 
 
 def sealed(value: dict[str, Any]) -> dict[str, Any]:
@@ -223,7 +218,7 @@ def _validate_history_intent(state: dict[str, Any]) -> None:
                 not first <= stamp < end for stamp in stamps
             ):
                 raise ValueError("history_pending_rows_invalid")
-        if sha256(encoded(batch)).hexdigest() != pending["batch_object"]:
+        if digest(batch) != pending["batch_object"]:
             raise ValueError("history_pending_object_invalid")
     elif pending and pending.get("generation") != 2:
         raise ValueError("history_pending_generation_invalid")
@@ -442,12 +437,12 @@ class HistoryWriter:
     async def write_object(
         self, kind: str, value: dict[str, Any], context: dict[str, Any]
     ) -> str:
-        raw = await self.cpu(encoded, value, context=context)
+        raw = await self.cpu(canonical_json, value, context=context)
         reference = await self.manager._store.async_write_object(kind, raw)
         await self.guard(context)
         if (
             reference != sha256(raw).hexdigest()
-            or encoded(await self.read_object(kind, reference, context)) != raw
+            or canonical_json(await self.read_object(kind, reference, context)) != raw
         ):
             raise HourlyImportError("history_object_write_unverified")
         return cast(str, reference)
@@ -572,8 +567,8 @@ class HistoryWriter:
         request: dict[str, Any],
         state: dict[str, Any] | None,
         context: dict[str, Any],
-        provider_order: dict[str, Any] | None = None,
-        provider_supersedes: dict[str, Any] | None = None,
+        provider_order: dict[str, Any] | None,
+        provider_supersedes: dict[str, Any] | None,
     ) -> tuple[Any, dict[str, Any]]:
         history = state["history"] if state and state["version"] == 3 else {}
         sources, merged = await self.source_view(
@@ -707,10 +702,7 @@ class HistoryWriter:
         }
         references = {
             **history.get("source_catalog", {}),
-            **{
-                month: sha256(encoded(value)).hexdigest()
-                for month, value in catalogs.items()
-            },
+            **{month: digest(value) for month, value in catalogs.items()},
         }
         merged["merge_revision"] = merged["source_revision"]
         merged["source_revision"] = digest(
@@ -1178,7 +1170,7 @@ class HistoryWriter:
             ),
             "batches": [
                 {
-                    "object": sha256(encoded(batch)).hexdigest(),
+                    "object": digest(batch),
                     **{
                         key: batch[key]
                         for key in (

@@ -88,7 +88,7 @@ from .config_payload import (
     normalize_point_lookback_days,
     normalize_scan_interval_seconds,
 )
-from .config_rows import positive_resource_id
+from .config_rows import positive_resource_id, row_resource_id
 from .configuration import configuration_response
 from .const import (
     API_BASE,
@@ -203,11 +203,7 @@ from .hourly_history_service import (
     STAGE_HISTORY_SCHEMA,
 )
 from .hourly_history_values import build_history_series
-from .hourly_import import (
-    HourlyImportError,
-    HourlyImportManager,
-    HourlyReconciliationError,
-)
+from .hourly_import import HourlyImportManager, HourlyReconciliationError
 from .hourly_recorder import HourlyRecorderError
 from .hourly_sources import stage_source
 from .hourly_statistics import HourlySeries, build_hourly_statistics
@@ -901,13 +897,7 @@ class BeestatStatisticsImporter:
             result = await async_refresh_history(
                 self, self._history_context(), lookback_days=lookback_days
             )
-        except (
-            ValueError,
-            HourlyImportError,
-            HourlyRecorderError,
-            HourlyStorageError,
-            BeestatApiError,
-        ) as err:
+        except (ValueError, BeestatApiError) as err:
             _LOGGER.warning("History refresh paused (%s)", exception_fingerprint(err))
             return "history_refresh_unverified"
         finally:
@@ -1174,8 +1164,7 @@ class BeestatStatisticsImporter:
                 runtime_data = self._coordinator.data
                 allowed_legacy_ids = current_partition.legacy_statistic_ids
 
-        if prepared is None:  # pragma: no cover - positive attempt constant
-            raise RuntimeError("Beestat statistics import was not prepared")
+        assert prepared is not None  # the loop either breaks or raises
 
         imported_rows = 0
         latest_start_by_id: dict[str, str | None] = {}
@@ -1947,7 +1936,7 @@ async def _async_handle_import_service(hass: HomeAssistant, call: ServiceCall) -
     try:
         await runtime.importer.async_import_statistics(
             point_lookback_days=call.data.get(CONF_POINT_LOOKBACK_DAYS),
-            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+            skip_sync=call.data[ATTR_SKIP_SYNC],
         )
     except BeestatAuthError as err:
         runtime.coordinator.async_record_import_error(err)
@@ -2049,17 +2038,17 @@ async def _async_handle_hourly_service(
     hass: HomeAssistant, call: ServiceCall
 ) -> ServiceResponse:
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
-    ids = call.data.get(ATTR_STATISTIC_IDS)
     try:
         if call.data.get("contract_version") == 3:
             return await importer.async_get_hourly_history(dict(call.data))
         if call.service == SERVICE_SELECT_HOURLY_STATISTICS:
             return await importer.async_select_hourly_statistics(
                 epoch_start=call.data[ATTR_EPOCH_START],
-                statistic_ids=tuple(ids or ()),
+                statistic_ids=tuple(call.data[ATTR_STATISTIC_IDS]),
                 expected_revision=call.data[ATTR_EXPECTED_REVISION],
                 preview_digest=call.data.get(ATTR_PREVIEW_DIGEST),
             )
+        ids = call.data.get(ATTR_STATISTIC_IDS)
         return await importer.async_get_hourly_coverage(
             start=call.data[ATTR_START],
             end=call.data[ATTR_END],
@@ -2163,7 +2152,7 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
         )
     try:
         await runtime.importer.async_import_statistics(
-            skip_sync=call.data.get(ATTR_SKIP_SYNC, False),
+            skip_sync=call.data[ATTR_SKIP_SYNC],
             force_full_summary=True,
             rebuild_start=start_date,
             rebuild_end=end_date,
@@ -3409,7 +3398,9 @@ def _filter_summary_rows_by_thermostat(
     if thermostat_id is None:
         return rows
     return [
-        row for row in rows if _row_int(row, "thermostat_id", "id") == thermostat_id
+        row
+        for row in rows
+        if row_resource_id(row, "thermostat_id", "id") == thermostat_id
     ]
 
 
@@ -3536,7 +3527,7 @@ def _observed_hourly_horizons(
         stamps = [
             stamp
             for row in rows
-            if _row_int(row, "thermostat_id") == thermostat_id
+            if row_resource_id(row, "thermostat_id") == thermostat_id
             and isinstance(row.get("timestamp"), str)
             and (stamp := _parse_beestat_time(row["timestamp"])) is not None
             and not (stamp.minute % 5 or stamp.second or stamp.microsecond)
@@ -3615,7 +3606,7 @@ def _hourly_identity(
         {
             hashlib.sha256(str(resource_id).encode()).hexdigest()
             for row in data.thermostat_rows
-            if (resource_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (resource_id := row_resource_id(row, "thermostat_id", "id")) is not None
         }
     )
     if not anchors and require_account:
@@ -3747,8 +3738,8 @@ def _format_beestat_time(value: datetime) -> str:
 def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
     mapping: dict[int, int] = {}
     for row in rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
-        thermostat_id = _row_int(row, "thermostat_id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id")
         if sensor_id is not None and thermostat_id is not None:
             mapping[sensor_id] = thermostat_id
     return mapping
@@ -3757,18 +3748,11 @@ def _sensor_thermostat_map(rows: list[dict[str, Any]]) -> dict[int, int]:
 def _thermostat_data_end_map(rows: list[dict[str, Any]]) -> dict[int, datetime]:
     mapping: dict[int, datetime] = {}
     for row in rows:
-        thermostat_id = _row_int(row, "thermostat_id", "id")
+        thermostat_id = row_resource_id(row, "thermostat_id", "id")
         data_end = _parse_beestat_time(row.get("data_end"))
         if thermostat_id is not None and data_end is not None:
             mapping[thermostat_id] = data_end
     return mapping
-
-
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
 
 
 def _parse_beestat_time(value: Any) -> datetime | None:
@@ -3794,13 +3778,13 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
     deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
         key: tuple[Any, ...]
-        if (runtime_sensor_id := _row_int(row, "runtime_sensor_id")) is not None:
+        if (runtime_sensor_id := row_resource_id(row, "runtime_sensor_id")) is not None:
             key = ("runtime_sensor_id", runtime_sensor_id)
         elif (
-            runtime_thermostat_id := _row_int(row, "runtime_thermostat_id")
+            runtime_thermostat_id := row_resource_id(row, "runtime_thermostat_id")
         ) is not None:
             key = ("runtime_thermostat_id", runtime_thermostat_id)
-        elif (resource_id := _row_int(row, id_field)) is not None and (
+        elif (resource_id := row_resource_id(row, id_field)) is not None and (
             timestamp := _parse_beestat_time(row.get("timestamp"))
         ) is not None:
             key = (id_field, resource_id, "timestamp", timestamp)

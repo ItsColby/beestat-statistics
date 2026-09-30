@@ -34,7 +34,7 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
-from .config_rows import positive_resource_id
+from .config_rows import as_bool, finite_float_or_none, row_resource_id, string_or_none
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -898,8 +898,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         if not self.temporal_context_is_current(temporal_context):
             return True
         changed_at = thermostat.filter_changed_at
-        if changed_at is None:  # pragma: no cover - narrowed above
-            return False
+        assert changed_at is not None
         local_date = changed_at.astimezone(temporal_context.local_tz).date()
         window_start, next_midnight = local_day_bounds(
             local_date, temporal_context.local_tz
@@ -911,7 +910,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         summary_fingerprint = tuple(
             (row.get("count"), row.get("sum_fan"), row.get("deleted"))
             for row in summary_rows or []
-            if _row_int(row, "thermostat_id") == thermostat.thermostat_id
+            if row_resource_id(row, "thermostat_id") == thermostat.thermostat_id
             and _parse_date(row.get("date")) == local_date
         )
         source = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
@@ -957,10 +956,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             _typed_config_entry(self).options,
             thermostat.thermostat_id,
         )
+        if current_override is None:
+            return False
         current_changed_at = _parse_datetime(
             current_override.get(CONF_FILTER_CHANGED_AT)
-            if current_override is not None
-            else None
         )
         if current_changed_at != changed_at:
             return current_changed_at is not None
@@ -1035,14 +1034,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         thermostat_row_by_id = {
             thermostat_id: row
             for row in thermostat_rows_tuple
-            if (thermostat_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (thermostat_id := row_resource_id(row, "thermostat_id", "id"))
+            is not None
         }
 
         for thermostat in config.thermostats:
             thermostat_rows = [
                 row
                 for row in rows_tuple
-                if _row_int(row, "thermostat_id") == thermostat.thermostat_id
+                if row_resource_id(row, "thermostat_id") == thermostat.thermostat_id
             ]
             latest_date = _latest_row_date(thermostat_rows)
             lag_days = (today - latest_date).days if latest_date is not None else None
@@ -1154,7 +1154,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         thermostat_row_by_id = {
             thermostat_id: row
             for row in thermostat_rows
-            if (thermostat_id := _row_int(row, "thermostat_id", "id")) is not None
+            if (thermostat_id := row_resource_id(row, "thermostat_id", "id"))
+            is not None
         }
         for thermostat in config.thermostats:
             changed_date, _ = self._filter_changed_date(
@@ -1187,10 +1188,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
 def _filter_boundary_changes(
     boundary: ChangeDayObservation,
-    current_override: dict[str, Any] | None,
+    current: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Persist a corrected baseline once, or clear a no-longer-covered baseline."""
-    current = current_override or {}
     if boundary.baseline_seconds is None:
         changes = {
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: None,
@@ -1310,7 +1310,7 @@ def _filter_boundary_fast_retry_due(
 ) -> bool:
     """Return whether a pending click remains in the fast retry window."""
 
-    if changed_at is None or changed_at.tzinfo is None or now.tzinfo is None:
+    if changed_at is None:
         return False
     age = now.astimezone(UTC) - changed_at.astimezone(UTC)
     return timedelta(0) <= age <= _FILTER_BOUNDARY_FAST_RETRY_WINDOW
@@ -1321,7 +1321,7 @@ def _thermostat_row(
     thermostat_id: int,
 ) -> dict[str, Any] | None:
     for row in rows:
-        if _row_int(row, "thermostat_id", "id") == thermostat_id:
+        if row_resource_id(row, "thermostat_id", "id") == thermostat_id:
             return row
     return None
 
@@ -1331,18 +1331,18 @@ def _build_sensor_metadata(
 ) -> dict[int, SensorMetadata]:
     metadata: dict[int, SensorMetadata] = {}
     for row in rows:
-        sensor_id = _row_int(row, "sensor_id", "id")
+        sensor_id = row_resource_id(row, "sensor_id", "id")
         if sensor_id is None:
             continue
         metadata[sensor_id] = SensorMetadata(
             sensor_id=sensor_id,
-            thermostat_id=_row_int(row, "thermostat_id"),
-            name=_string_or_none(row.get("name")),
-            identifier=_string_or_none(row.get("identifier")),
-            sensor_type=_string_or_none(row.get("type")),
+            thermostat_id=row_resource_id(row, "thermostat_id"),
+            name=string_or_none(row.get("name")),
+            identifier=string_or_none(row.get("identifier")),
+            sensor_type=string_or_none(row.get("type")),
             in_use=_optional_bool(row.get("in_use")),
-            inactive=_bool(row.get("inactive")),
-            deleted=_bool(row.get("deleted")),
+            inactive=as_bool(row.get("inactive")),
+            deleted=as_bool(row.get("deleted")),
         )
     return metadata
 
@@ -1495,7 +1495,7 @@ def _build_room_temperature_spreads(
             else None
         )
         projections[thermostat.thermostat_id] = RoomTemperatureSpread(
-            value=_finite_float(spread),
+            value=finite_float_or_none(spread),
             unit=resolved_unit,
             participating_sensor_count=len(participating_names),
             valid_sensor_count=len(valid),
@@ -1524,7 +1524,7 @@ def _temperature_state_value(
         "",
     }:
         return None
-    value = _finite_float(getattr(state, "state", None))
+    value = finite_float_or_none(getattr(state, "state", None))
     attributes = getattr(state, "attributes", None)
     if (
         not isinstance(attributes, dict)
@@ -1575,16 +1575,6 @@ def _canonical_temperature_unit(value: Any) -> str | None:
     if normalized in {"K", "°K", "KELVIN"}:
         return "K"
     return None
-
-
-def _finite_float(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, ""):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None
 
 
 def _unique_profile_sensors(
@@ -1661,7 +1651,7 @@ def _current_profile(
     program = row.get("program")
     if not isinstance(program, dict):
         return None, None, ()
-    current_ref = _string_or_none(program.get("currentClimateRef"))
+    current_ref = string_or_none(program.get("currentClimateRef"))
     if profiles_by_ref is None:
         profiles_by_ref = schedule_profiles_by_ref(program)
     if profile := profiles_by_ref.get(current_ref or ""):
@@ -1690,7 +1680,7 @@ def _schedule_snapshot(
     tz = _row_timezone(row, local_tz)
     local_now = fetched_at.astimezone(tz)
     day_index = _ecobee_day_index(local_now)
-    slot_index = min(local_now.hour * 2 + (local_now.minute // 30), 47)
+    slot_index = local_now.hour * 2 + (local_now.minute // 30)
     scheduled_ref = _schedule_ref(schedule, day_index, slot_index)
     scheduled_profile = profiles_by_ref.get(scheduled_ref or "")
     next_ref, next_at = _next_schedule_transition(
@@ -1728,7 +1718,7 @@ def _valid_schedule(value: Any) -> bool:
 
 def _row_timezone(row: dict[str, Any], fallback: ZoneInfo) -> ZoneInfo:
     for field in ("timezone", "time_zone", "timeZone"):
-        value = _string_or_none(row.get(field))
+        value = string_or_none(row.get(field))
         if value is None:
             continue
         try:
@@ -1745,10 +1735,8 @@ def _ecobee_day_index(value: datetime) -> int:
 
 
 def _schedule_ref(schedule: Any, day_index: int, slot_index: int) -> str | None:
-    if not _valid_schedule(schedule):
-        return None
     value = schedule[day_index][slot_index]
-    return _string_or_none(value)
+    return string_or_none(value)
 
 
 def _next_schedule_transition(
@@ -1788,7 +1776,7 @@ def _active_alert_rows(row: dict[str, Any]) -> Iterator[dict[str, Any]]:
     for alert in alerts:
         if not isinstance(alert, dict):
             continue
-        if _bool(alert.get("dismissed")):
+        if as_bool(alert.get("dismissed")):
             continue
         if str(alert.get("acknowledgement", "")).lower() == "acknowledged":
             continue
@@ -1800,7 +1788,7 @@ def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
     for alert in _active_alert_rows(row):
         if not _is_filter_alert(alert):
             continue
-        guid = _string_or_none(alert.get("guid"))
+        guid = string_or_none(alert.get("guid"))
         if guid is not None:
             guids.append(guid)
     return tuple(dict.fromkeys(guids))
@@ -1901,13 +1889,6 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _row_int(row: dict[str, Any], *fields: str) -> int | None:
-    for field in fields:
-        if (value := positive_resource_id(row.get(field))) is not None:
-            return value
-    return None
-
-
 def _effective_resource_rows(
     rows: list[dict[str, Any]],
     *id_fields: str,
@@ -1916,7 +1897,7 @@ def _effective_resource_rows(
 
     effective: dict[int, dict[str, Any]] = {}
     for row in rows:
-        row_id = _row_int(row, *id_fields)
+        row_id = row_resource_id(row, *id_fields)
         if row_id is not None:
             effective[row_id] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
@@ -1929,25 +1910,11 @@ def _effective_summary_rows(
 
     effective: dict[tuple[int, date], dict[str, Any]] = {}
     for row in rows:
-        thermostat_id = _row_int(row, "thermostat_id")
+        thermostat_id = row_resource_id(row, "thermostat_id")
         local_day = _parse_date(row.get("date"))
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
-
-
-def _string_or_none(value: Any) -> str | None:
-    if value in (None, ""):
-        return None
-    return str(value)
-
-
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in {"true", "1", "yes", "on"}
-    return bool(value)
 
 
 def _optional_bool(value: Any) -> bool | None:

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import date
-from math import isfinite
 from typing import Any
 
 from .config_model import (
@@ -14,7 +13,7 @@ from .config_model import (
     ConfiguredThermostat,
     filter_boundary_status,
 )
-from .config_rows import positive_resource_id
+from .config_rows import positive_resource_id, safe_mapping, safe_scalar
 from .const import CONF_SENSORS, CONF_THERMOSTATS
 from .profile import schedule_profile_payload, schedule_profiles_by_ref
 from .thermostat_settings import ThermostatSettingsSnapshot
@@ -107,15 +106,15 @@ def _thermostat_source_details(
         item: dict[str, Any] = {"thermostat_id": thermostat.thermostat_id}
         _copy_scalar(item, row, "model_number")
         version_value = row.get("version")
-        version = _allowlisted_mapping(
+        version = safe_mapping(
             version_value,
             ("thermostatFirmwareVersion", "firmware_version", "version"),
         )
         if version:
             item["version"] = version
-        elif (version_scalar := _safe_scalar(version_value)) is not None:
+        elif (version_scalar := safe_scalar(version_value)) is not None:
             item["version"] = version_scalar
-        settings = _allowlisted_mapping(
+        settings = safe_mapping(
             row.get("settings"),
             ("differential_heat", "differential_cool"),
         )
@@ -124,7 +123,7 @@ def _thermostat_source_details(
         system_type = _system_type(row.get("system_type"))
         if system_type:
             item["system_type"] = system_type
-        property_details = _allowlisted_mapping(
+        property_details = safe_mapping(
             row.get("property"),
             ("age", "square_feet", "stories", "structure_type"),
         )
@@ -153,7 +152,7 @@ def _system_type(value: Any) -> dict[str, Any]:
         systems: dict[str, Any] = {}
         for system in ("heat", "auxiliary_heat", "cool"):
             system_value = source_value.get(system)
-            details = _allowlisted_mapping(system_value, ("equipment", "stages"))
+            details = safe_mapping(system_value, ("equipment", "stages"))
             if details:
                 systems[system] = details
         if systems:
@@ -161,38 +160,10 @@ def _system_type(value: Any) -> dict[str, Any]:
     return result
 
 
-def _allowlisted_mapping(value: Any, keys: tuple[str, ...]) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    result: dict[str, Any] = {}
-    for key in keys:
-        scalar = _safe_scalar(value.get(key))
-        if scalar is not None:
-            result[key] = scalar
-    return result
-
-
 def _copy_scalar(target: dict[str, Any], source: Mapping[str, Any], key: str) -> None:
-    value = _safe_scalar(source.get(key))
+    value = safe_scalar(source.get(key))
     if value is not None:
         target[key] = value
-
-
-def _safe_scalar(value: Any) -> str | int | float | bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return value if isfinite(value) else None
-    return _text_or_none(value)
-
-
-def _text_or_none(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if value else None
 
 
 def _saved_overrides(

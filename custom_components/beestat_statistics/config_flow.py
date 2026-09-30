@@ -262,13 +262,10 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data, options = split_entry_payload(user_input)
                 except ValueError:
                     errors[CONF_API_BASE] = "invalid_api_base"
-                    data = None
-                    options = None
-                if data is None or options is None:
                     return self.async_show_form(
                         step_id="user",
                         data_schema=_connection_data_schema(
-                            user_input or {}, allow_blank_api_key=False
+                            user_input, allow_blank_api_key=False
                         ),
                         errors=errors,
                     )
@@ -434,7 +431,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 try:
                     account_fingerprint = await _async_validate_input(self.hass, data)
-                except BeestatAuthError, BeestatApiError:
+                except BeestatApiError:
                     async_set_yaml_connection_change_issue(self.hass, active=True)
                     return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
                 except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
@@ -519,12 +516,10 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 except ValueError:
                     errors[CONF_API_BASE] = "invalid_api_base"
-                    data_updates = None
-                if data_updates is None:
                     return self.async_show_form(
                         step_id=step_id,
                         data_schema=_connection_data_schema(
-                            {**entry.data, **(user_input or {})},
+                            {**entry.data, **user_input},
                             allow_blank_api_key=not require_api_key,
                         ),
                         errors=errors,
@@ -1098,7 +1093,7 @@ async def _async_validate_initial_import(
 
     try:
         account_fingerprint = await _async_validate_input(hass, data)
-    except BeestatAuthError, BeestatApiError:
+    except BeestatApiError:
         return None, "yaml_connection_unavailable"
     except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
         _LOGGER.error(
@@ -1463,9 +1458,9 @@ def _has_new_mapping_device_conflicts(
     entry: config_entries.ConfigEntry,
     entity_registry: Any,
     candidate_options: Mapping[str, Any],
-    device_registry: Any = None,
+    device_registry: Any,
     *,
-    hass: HomeAssistant | None = None,
+    hass: HomeAssistant | None,
 ) -> bool:
     """Return whether an options update introduces a mapping-device conflict."""
 

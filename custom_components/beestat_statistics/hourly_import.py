@@ -857,7 +857,6 @@ class HourlyImportManager:
         self,
         identity: dict[str, Any],
         *,
-        compare: bool = True,
         require_resources: bool = True,
     ) -> None:
         if (
@@ -870,7 +869,7 @@ class HourlyImportManager:
             raise HourlyImportError(
                 "Hourly imports require a verified account and resource identity"
             )
-        if compare and self._state is not None:
+        if self._state is not None:
             old = self._state["identity"]
             if (
                 old["entry_id"] != identity["entry_id"]
@@ -885,7 +884,7 @@ class HourlyImportManager:
         series: tuple[HourlySeries, ...],
         identity: dict[str, Any],
         ordinary_start: datetime | None,
-        eligible_resources: Mapping[str, dict[str, Any]] | None = None,
+        eligible_resources: Mapping[str, dict[str, Any]] | None,
     ) -> dict[str, HourlySeries]:
         self._identity(identity)
         by_resource: dict[tuple[Any, ...], HourlySeries] = {}

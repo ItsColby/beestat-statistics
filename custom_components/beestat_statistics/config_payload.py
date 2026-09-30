@@ -131,9 +131,7 @@ def entry_data_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
 
     data: dict[str, Any] = {
         CONF_API_KEY: _clean_string(conf[CONF_API_KEY]),
-        CONF_API_BASE: normalize_api_base(
-            _clean_string(conf[CONF_API_BASE]) or API_BASE
-        ),
+        CONF_API_BASE: normalize_api_base(_clean_string(conf[CONF_API_BASE])),
     }
     if conf.get(CONF_THERMOSTATS):
         data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(conf[CONF_THERMOSTATS])
@@ -546,7 +544,7 @@ def _bounded_int(
     *,
     default: int,
     minimum: int,
-    maximum: int | None = None,
+    maximum: int,
 ) -> int:
     """Return one integer constrained to the persisted option contract."""
 
@@ -555,7 +553,7 @@ def _bounded_int(
     except TypeError, ValueError, OverflowError:
         return default
     parsed = max(parsed, minimum)
-    return min(parsed, maximum) if maximum is not None else parsed
+    return min(parsed, maximum)
 
 
 def _clean_string(value: Any) -> str:

@@ -836,7 +836,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         catalog["source_ids"] = sorted(set(catalog["source_ids"]) | set(older_ids))
         self.assertEqual(len(catalog["source_ids"]), writer.MAX_SOURCE_CHUNKS + 1)
         history["source_catalog"][month] = await self.store.async_write_object(
-            "operation", writer.encoded(catalog)
+            "operation", writer.canonical_json(catalog)
         )
         history["first_provider"]["runtime_thermostat:1"] = old_start.isoformat()
         history["source_revision"] = writer.digest(

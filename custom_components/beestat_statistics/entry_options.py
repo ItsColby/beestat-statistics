@@ -253,7 +253,7 @@ async def _async_apply_filter_change(
     *,
     changed_at: datetime | None,
     rebuild_from_cached_rows: bool,
-    dismiss_alerts: bool = True,
+    dismiss_alerts: bool,
     event: FilterChangeEvent,
 ) -> None:
     """Persist one filter change and refresh its derived runtime state."""

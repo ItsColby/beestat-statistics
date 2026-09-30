@@ -310,7 +310,7 @@ class BeestatClient:
     def redact_error(self, err: Exception) -> str:
         """Return an error string safe to expose in Home Assistant state."""
 
-        if isinstance(err, BeestatAuthError | BeestatApiError):
+        if isinstance(err, BeestatApiError):
             return _redact_text(str(err), self._redactions)
         if isinstance(err, asyncio.TimeoutError):
             return "Beestat request timed out"
@@ -331,19 +331,9 @@ class BeestatClient:
         """Call Beestat and return a normalized list of row dictionaries."""
 
         return _normalize_rows(
-            await self.async_call_raw(resource, method, arguments),
+            await self._async_call_raw(resource, method, arguments),
             allow_boolean=allow_boolean_response,
         )
-
-    async def async_call_raw(
-        self,
-        resource: str,
-        method: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> Any:
-        """Call Beestat and return the unnormalized response data."""
-
-        return await self._async_call_raw(resource, method, arguments)
 
     async def _async_call_raw(
         self,
@@ -358,8 +348,6 @@ class BeestatClient:
 
         limit = self._max_response_bytes
         if max_response_bytes is not None:
-            if max_response_bytes <= 0:
-                raise ValueError("max_response_bytes must be positive")
             limit = min(limit, max_response_bytes)
 
         params: dict[str, str] = {
@@ -417,13 +405,9 @@ class BeestatClient:
                     break
                 await asyncio.sleep(2**attempt)
 
-        detail = (
-            self.redact_error(last_error)
-            if last_error is not None
-            else "Beestat request failed"
-        )
+        assert last_error is not None
         raise BeestatApiError(
-            f"Failed Beestat call {resource}.{method}: {detail} "
+            f"Failed Beestat call {resource}.{method}: {self.redact_error(last_error)} "
             f"[attempts={attempt}; "
             f"final_http_status={status if status is not None else 'unavailable'}]"
         ) from None
@@ -477,7 +461,7 @@ class BeestatClient:
     async def async_dismiss_alert(self, thermostat_id: int, guid: str) -> None:
         """Dismiss one Beestat alert by thermostat and alert GUID."""
 
-        await self.async_call_raw(
+        await self._async_call_raw(
             "thermostat",
             "dismiss_alert",
             {
@@ -514,7 +498,6 @@ class BeestatClient:
         end: str,
         *,
         raw_response: Literal[False] = False,
-        max_response_bytes: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @overload
@@ -562,7 +545,6 @@ class BeestatClient:
         end: str,
         *,
         raw_response: Literal[False] = False,
-        max_response_bytes: int | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @overload
@@ -611,8 +593,6 @@ class BeestatClient:
         max_response_bytes: int | None,
     ) -> list[dict[str, Any]] | BeestatRawResponse:
         if not raw_response:
-            if max_response_bytes is None:
-                return await self.async_call(resource, "read", arguments)
             return _normalize_rows(
                 await self._async_call_raw(
                     resource, "read", arguments, max_response_bytes=max_response_bytes

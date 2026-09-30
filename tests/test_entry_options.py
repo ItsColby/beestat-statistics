@@ -12,9 +12,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_entry_options_test"
@@ -28,7 +28,7 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
     """Validate native filter-date option updates."""
 
     def setUp(self) -> None:
-        self._old_modules = {"aiohttp": sys.modules.get("aiohttp")}
+        preserve_modules(self, ("aiohttp",))
         aiohttp = types.ModuleType("aiohttp")
         aiohttp.ClientError = RuntimeError
         aiohttp.ClientSession = object
@@ -37,13 +37,6 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         _load_module("api")
         _load_module("config_payload")
         self.entry_options = _load_module("entry_options")
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_filter_change_timestamp_accepts_unique_local_and_explicit_folds(
         self,

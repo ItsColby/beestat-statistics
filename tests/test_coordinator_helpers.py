@@ -13,9 +13,9 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 if __package__:
-    from ._module_loader import load_module
+    from ._module_loader import load_module, preserve_modules
 else:
-    from _module_loader import load_module
+    from _module_loader import load_module, preserve_modules
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
 PACKAGE = "beestat_statistics_coordinator_test"
@@ -45,9 +45,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
     """Validate pure coordinator helpers without a Home Assistant runtime."""
 
     def setUp(self) -> None:
-        self._old_modules = {
-            key: sys.modules.get(key)
-            for key in (
+        preserve_modules(
+            self,
+            (
                 "aiohttp",
                 "homeassistant",
                 "homeassistant.core",
@@ -57,19 +57,12 @@ class CoordinatorHelpersTest(unittest.TestCase):
                 "homeassistant.helpers.entity_registry",
                 "homeassistant.helpers.event",
                 "homeassistant.helpers.update_coordinator",
-            )
-        }
+            ),
+        )
         self._install_fake_homeassistant_modules()
         _load_module("const")
         self.config_model = _load_module("config_model")
         self.coordinator = _load_module("coordinator")
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
 
     def test_latest_row_date_ignores_bad_dates(self) -> None:
         rows = [
@@ -501,13 +494,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(
             self.coordinator._effective_resource_rows(rows, "id"),
             ({"id": 1, "name": "Real"},),
-        )
-        self.assertEqual(self.coordinator._row_int({"id": 1.0}, "id"), 1)
-        self.assertEqual(
-            self.coordinator._row_int(
-                {"thermostat_id": True, "id": "2"}, "thermostat_id", "id"
-            ),
-            2,
         )
 
     def test_projection_change_ignores_local_date_without_sensitive_state(self) -> None:
@@ -1421,7 +1407,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
     """Validate pending boundary persistence across the real coordinator method."""
 
     setUp = CoordinatorHelpersTest.setUp
-    tearDown = CoordinatorHelpersTest.tearDown
     _install_fake_homeassistant_modules = (
         CoordinatorHelpersTest._install_fake_homeassistant_modules
     )
