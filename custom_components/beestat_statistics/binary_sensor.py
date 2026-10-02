@@ -415,6 +415,7 @@ class BeestatSensorInUseBinarySensor(
     """Expose Beestat's per-sensor in-use metadata without reinterpreting it."""
 
     _attr_has_entity_name = True
+    _attr_entity_registry_enabled_default = False
     _unrecorded_attributes = frozenset(
         {
             "beestat_name",
@@ -610,6 +611,7 @@ class BeestatFilterDueProblemBinarySensor(
     _attr_translation_key = "filter_due"
     _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _unrecorded_attributes = frozenset(
         {
             "changed_source",

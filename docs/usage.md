@@ -198,6 +198,16 @@ configured membership and Follow Me weighting; missing metadata is unknown.
 Spread needs at least two valid local readings and can understate the full range
 when rooms are missing. Its attributes identify the profile and coverage used.
 
+Detail telemetry is disabled by default for new entities: current comfort
+profile, next scheduled time, reported sensor use and in-use count, room
+temperature spread, active alert count, and cloud data end and lag. Enable any
+of them from the entity's settings; they then behave as described above.
+Runtime summary lag days stays enabled because the bundled stale-runtime
+blueprint selects it. Health and alert problem sensors, sync and import
+timestamps, skipped windows, active alert category, scheduled comfort profile,
+and runtime summary latest date remain enabled. Existing entities keep
+their current enabled or disabled setting when the integration is updated.
+
 Selected cached Ecobee settings are also exposed as diagnostic entities,
 including differentials, compressor protection, dissipation times, hold behavior,
 alert thresholds, service reminders, comfort features, and available audio
@@ -260,6 +270,11 @@ Read the quality attributes alongside the number: `runtime_coverage`,
 `runtime_threshold_reached`. When runtime is a lower bound, remaining runtime is
 an upper bound and the runtime-based due date is provisional. Recent complete
 and excluded day counts describe the rate's evidence.
+
+**Filter due date**, **Filter days remaining**, and **Filter changed date** are
+enabled by default. **Filter due**, **Filter due soon**, and the runtime, recent
+rate, remaining-runtime, runtime due date, and maximum-age due date sensors are
+disabled by default; the **Filter due date** attributes carry the same values.
 
 For automations, read the complete **Filter due date** attribute snapshot and
 `forecast_revision` rather than joining sibling sensors during sequential updates.

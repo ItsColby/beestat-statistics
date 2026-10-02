@@ -3,6 +3,24 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.10.2
+
+- Register detail telemetry disabled by default: current and next comfort
+  profile detail, reported sensor use and in-use count, room temperature spread,
+  active alert count, cloud data end and lag, the filter runtime, rate,
+  remaining-runtime and component due-date sensors, and Filter due / Filter due
+  soon. Their values remain available by enabling the entity; the Filter due
+  date attributes carry the complete filter forecast.
+- Keep health and alert problem sensors, sync and import health, active alert
+  category, scheduled comfort profile, runtime summary latest date and lag, and
+  filter due date, days remaining and changed date enabled.
+
+The new defaults apply only to newly registered entities; updating does not
+change an existing entity's enabled or disabled setting. Home Assistant Core
+2026.8.0 remains the minimum; the current tested lane is Core 2026.9.3.
+Existing configuration, alert acknowledgments, thermostat commands, and Recorder
+history remain unchanged.
+
 ## Beestat Statistics v2026.10.1
 
 - Simplify the integration's internals: share duplicated helpers and remove

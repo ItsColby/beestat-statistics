@@ -267,6 +267,8 @@ async def test_spread_recovers_and_changes_native_unit_with_its_value(
         for description in _thermostat_sensor_descriptions(thermostat=thermostat)
         if description.translation_key == "current_profile_room_temperature_spread"
     )
+    # Registered disabled by default; exercise the state a user enables.
+    description = replace(description, entity_registry_enabled_default=True)
     entity = BeestatSensor(coordinator, description, None)
     entity.entity_id = "sensor.profile_spread"
     assert entity.native_unit_of_measurement is None
@@ -344,6 +346,9 @@ async def test_filter_notice_remains_independent_of_due_uncertainty(
     notice = BeestatFilterDueSoonProblemBinarySensor(coordinator, thermostat)
     due.entity_id = "binary_sensor.filter_due"
     notice.entity_id = "binary_sensor.filter_notice"
+    # Registered disabled by default; exercise the states a user enables.
+    due._attr_entity_registry_enabled_default = True
+    notice._attr_entity_registry_enabled_default = True
     async with _entity_platform(coordinator, "binary_sensor") as platform:
         await platform.async_add_entities([due, notice])
         assert hass.states.get(due.entity_id).state == STATE_UNKNOWN
@@ -531,6 +536,8 @@ async def test_spread_context_tracks_cloud_membership_not_local_projection_time(
         for description in _thermostat_sensor_descriptions(thermostat=thermostat)
         if description.translation_key == "current_profile_room_temperature_spread"
     )
+    # Registered disabled by default; exercise the state a user enables.
+    description = replace(description, entity_registry_enabled_default=True)
     entity = BeestatSensor(coordinator, description, None)
     entity.entity_id = "sensor.profile_spread"
     async with _entity_platform(coordinator, "sensor") as platform:

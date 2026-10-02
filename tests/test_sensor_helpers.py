@@ -728,8 +728,29 @@ class SensorHelpersTest(unittest.TestCase):
             "service_reminder_date",
             "service_reminder_interval",
             "playback_volume",
+            "current_comfort_profile",
+            "next_scheduled_comfort_profile_time",
+            "active_sensor_count",
+            "current_profile_room_temperature_spread",
+            "cloud_data_end",
+            "cloud_data_lag_minutes",
+            "active_alert_count",
+            "filter_runtime_hours",
+            "filter_recent_runtime_hours_per_day",
+            "filter_remaining_runtime_hours",
+            "filter_runtime_due_date",
+            "filter_max_age_due_date",
         ):
             self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
+        for key in (
+            "runtime_summary_latest_date",
+            "runtime_summary_lag_days",
+            "scheduled_comfort_profile",
+            "active_alert_category",
+            "filter_due_date",
+            "filter_days_remaining",
+        ):
+            self.assertTrue(descriptions[key].entity_registry_enabled_default, key)
         self.assertEqual(
             "Configured profile room temperature spread",
             descriptions["current_profile_room_temperature_spread"].name,

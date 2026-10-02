@@ -184,6 +184,21 @@ class BinarySensorHelpersTest(unittest.TestCase):
             if getattr(entity, "_attr_translation_key", None)
         }
 
+        for key in ("sensor_in_use", "filter_due", "filter_due_soon"):
+            self.assertFalse(by_key[key]._attr_entity_registry_enabled_default, key)
+        for key in (
+            "active_alert",
+            "equipment_alert",
+            "runtime_summary_stale",
+            "cloud_data_stale",
+            "statistics_import_partial",
+            "homekit_mapping_incomplete",
+        ):
+            self.assertTrue(
+                getattr(by_key[key], "_attr_entity_registry_enabled_default", True),
+                key,
+            )
+
         self.assertTrue(by_key["active_alert"].is_on)
         self.assertFalse(by_key["equipment_alert"].is_on)
         self.assertFalse(by_key["filter_due"].is_on)

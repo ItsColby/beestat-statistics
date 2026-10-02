@@ -597,6 +597,7 @@ def _thermostat_sensor_descriptions(
             key="current_comfort_profile",
             name="Current comfort profile",
             translation_key="current_comfort_profile",
+            entity_registry_enabled_default=False,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
                 _thermostat_metadata_available,
@@ -634,6 +635,7 @@ def _thermostat_sensor_descriptions(
             key="next_scheduled_comfort_profile_time",
             name="Next scheduled comfort profile time",
             translation_key="next_scheduled_comfort_profile_time",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TIMESTAMP,
             available_fn=partial(
                 _thermostat_metadata_available,
@@ -653,6 +655,7 @@ def _thermostat_sensor_descriptions(
             key="active_sensor_count",
             name="Beestat-reported in-use sensor count",
             translation_key="active_sensor_count",
+            entity_registry_enabled_default=False,
             native_unit_of_measurement="sensors",
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -670,6 +673,7 @@ def _thermostat_sensor_descriptions(
             key="current_profile_room_temperature_spread",
             name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TEMPERATURE_DELTA,
             native_unit_fn=partial(
                 _room_temperature_spread_unit,
@@ -694,6 +698,7 @@ def _thermostat_sensor_descriptions(
             key="cloud_data_end",
             name="Cloud data end",
             translation_key="cloud_data_end",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TIMESTAMP,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
@@ -714,6 +719,7 @@ def _thermostat_sensor_descriptions(
             key="cloud_data_lag_minutes",
             name="Cloud data lag minutes",
             translation_key="cloud_data_lag_minutes",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.MINUTES,
             state_class=SensorStateClass.MEASUREMENT,
@@ -732,6 +738,7 @@ def _thermostat_sensor_descriptions(
             key="active_alert_count",
             name="Active alert count",
             translation_key="active_alert_count",
+            entity_registry_enabled_default=False,
             native_unit_of_measurement="alerts",
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
@@ -770,6 +777,7 @@ def _thermostat_sensor_descriptions(
             key="filter_runtime_hours",
             name="Filter runtime hours",
             translation_key="filter_runtime_hours",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
@@ -788,6 +796,7 @@ def _thermostat_sensor_descriptions(
             key="filter_recent_runtime_hours_per_day",
             name="Filter recent runtime hours per day",
             translation_key="filter_recent_runtime_hours_per_day",
+            entity_registry_enabled_default=False,
             native_unit_of_measurement="h/d",
             state_class=SensorStateClass.MEASUREMENT,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -805,6 +814,7 @@ def _thermostat_sensor_descriptions(
             key="filter_remaining_runtime_hours",
             name="Filter remaining runtime hours",
             translation_key="filter_remaining_runtime_hours",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.HOURS,
             state_class=SensorStateClass.MEASUREMENT,
@@ -828,6 +838,7 @@ def _thermostat_sensor_descriptions(
             key="filter_runtime_due_date",
             name="Filter runtime due date",
             translation_key="filter_runtime_due_date",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DATE,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
@@ -849,6 +860,7 @@ def _thermostat_sensor_descriptions(
             key="filter_max_age_due_date",
             name="Filter max age due date",
             translation_key="filter_max_age_due_date",
+            entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DATE,
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
