@@ -3,6 +3,21 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.10.3
+
+- Register duplicate health details disabled by default: Active alert, which
+  matches active alert count and category; Metadata sync last success, which
+  always equals Runtime sync last success; and Skipped windows, which Import
+  partial and the Status attributes also report.
+- Keep Equipment alert, the other health problem sensors, Runtime sync last
+  success, Last import success, and active alert category enabled.
+
+The new defaults apply only to newly registered entities; updating does not
+change an existing entity's enabled or disabled setting. Home Assistant Core
+2026.8.0 remains the minimum; the current tested lane is Core 2026.9.3.
+Existing configuration, alert acknowledgments, thermostat commands, and Recorder
+history remain unchanged.
+
 ## Beestat Statistics v2026.10.2
 
 - Register detail telemetry disabled by default: current and next comfort
