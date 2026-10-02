@@ -200,13 +200,17 @@ when rooms are missing. Its attributes identify the profile and coverage used.
 
 Detail telemetry is disabled by default for new entities: current comfort
 profile, next scheduled time, reported sensor use and in-use count, room
-temperature spread, active alert count, and cloud data end and lag. Enable any
-of them from the entity's settings; they then behave as described above.
-Runtime summary lag days stays enabled because the bundled stale-runtime
-blueprint selects it. Health and alert problem sensors, sync and import
-timestamps, skipped windows, active alert category, scheduled comfort profile,
-and runtime summary latest date remain enabled. Existing entities keep
-their current enabled or disabled setting when the integration is updated.
+temperature spread, active alert count, and cloud data end and lag. Duplicate
+health details are also disabled by default: Active alert (count and category
+carry the same signal), Metadata sync last success (always equal to Runtime
+sync last success), and Skipped windows (also in Import partial and Status
+attributes). Enable any of them from the entity's settings; they then behave as
+described above. Runtime summary lag days stays enabled because the bundled
+stale-runtime blueprint selects it. Equipment alert and the other health problem
+sensors, Runtime sync last success, Last import success, active alert category,
+scheduled comfort profile, and runtime summary latest date remain enabled.
+Existing entities keep their current enabled or disabled setting when the
+integration is updated.
 
 Selected cached Ecobee settings are also exposed as diagnostic entities,
 including differentials, compressor protection, dissipation times, hold behavior,
@@ -539,8 +543,9 @@ data:
   means more than one local day behind; cloud stale uses the larger of 120
   minutes or the configured interval plus 60 minutes. Repeated sync success
   does not prove the cloud source advanced.
-- **Import gaps:** inspect Import partial, Skipped windows, and Status. Last
-  import success can coexist with skipped windows. A supported window returning
+- **Import gaps:** inspect Import partial and the Status skipped-window
+  attributes, or enable Skipped windows. Last import success can coexist with
+  skipped windows. A supported window returning
   no rows is distinct from an unsupported skipped window. Increase lookback only
   when the desired point history is available; use rebuild for older summary
   corrections.

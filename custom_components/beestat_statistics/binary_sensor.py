@@ -493,6 +493,7 @@ class BeestatThermostatAlertProblemBinarySensor(
 
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _unrecorded_attributes = frozenset(
         {
             "active_alert_count",
@@ -569,6 +570,7 @@ class BeestatEquipmentAlertProblemBinarySensor(
     _attr_name = "Equipment alert"
     _attr_translation_key = "equipment_alert"
     _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_registry_enabled_default = True
 
     def __init__(
         self,

@@ -184,10 +184,9 @@ class BinarySensorHelpersTest(unittest.TestCase):
             if getattr(entity, "_attr_translation_key", None)
         }
 
-        for key in ("sensor_in_use", "filter_due", "filter_due_soon"):
+        for key in ("sensor_in_use", "active_alert", "filter_due", "filter_due_soon"):
             self.assertFalse(by_key[key]._attr_entity_registry_enabled_default, key)
         for key in (
-            "active_alert",
             "equipment_alert",
             "runtime_summary_stale",
             "cloud_data_stale",

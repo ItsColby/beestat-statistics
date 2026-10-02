@@ -641,6 +641,21 @@ class SensorHelpersTest(unittest.TestCase):
             "equipment",
         )
 
+    def test_global_surface_disables_duplicate_health_details(self) -> None:
+        descriptions = {
+            description.key: description
+            for description in self.sensor.GLOBAL_SENSOR_DESCRIPTIONS
+        }
+
+        for key in ("metadata_sync_last_success", "statistics_skipped_windows"):
+            self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
+        for key in (
+            "status",
+            "runtime_sync_last_success",
+            "statistics_last_import_success",
+        ):
+            self.assertTrue(descriptions[key].entity_registry_enabled_default, key)
+
     def test_entity_surface_keeps_primary_entities_and_classifies_details(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,

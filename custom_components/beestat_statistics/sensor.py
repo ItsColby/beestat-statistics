@@ -259,6 +259,7 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
         translation_key="metadata_sync_last_success",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         value_fn=lambda coordinator: (
             coordinator.data.metadata_sync_success_at if coordinator.data else None
         ),
@@ -320,6 +321,7 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
         translation_key="statistics_skipped_windows",
         native_unit_of_measurement="windows",
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         value_fn=lambda coordinator: coordinator.last_import_skipped_windows,
         uses_coordinator_availability=False,
     ),
