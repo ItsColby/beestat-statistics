@@ -169,6 +169,9 @@ class BinarySensorHelpersTest(unittest.TestCase):
             },
         )
         fake_coordinator = _FakeCoordinator(data)
+        fake_coordinator.last_import_partial = True
+        fake_coordinator.last_import_hourly_coverage_incomplete = True
+        fake_coordinator.last_import_writers = {"hourly_blocked_reason": "pending"}
         fake_coordinator.last_import_skipped_window_examples = (
             {
                 "resource": "runtime_sensor",
@@ -277,6 +280,20 @@ class BinarySensorHelpersTest(unittest.TestCase):
                     "end": "2026-07-02 00:00:00",
                 }
             ],
+        )
+
+        partial = by_key["statistics_import_partial"]
+        self.assertTrue(partial.is_on)
+        self.assertTrue(
+            partial.extra_state_attributes["last_import_hourly_coverage_incomplete"]
+        )
+        self.assertEqual(
+            partial.extra_state_attributes["last_import_hourly_blocked_reason"],
+            "pending",
+        )
+        fake_coordinator.last_import_writers = None
+        self.assertIsNone(
+            partial.extra_state_attributes["last_import_hourly_blocked_reason"]
         )
 
     def test_filter_due_sensor_uses_latest_thermostat_options(self) -> None:
@@ -483,6 +500,8 @@ class _FakeCoordinator:
         self.last_import_skipped_runtime_thermostat_windows = 0
         self.last_import_skipped_runtime_sensor_windows = 0
         self.last_import_skipped_window_examples = ()
+        self.last_import_hourly_coverage_incomplete = False
+        self.last_import_writers = None
 
 
 class _FakeCoordinatorEntity(_Subscriptable):

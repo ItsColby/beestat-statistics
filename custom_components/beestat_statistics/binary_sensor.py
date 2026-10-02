@@ -303,6 +303,8 @@ class BeestatImportPartialProblemBinarySensor(
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _unrecorded_attributes = frozenset(
         {
+            "last_import_hourly_blocked_reason",
+            "last_import_hourly_coverage_incomplete",
             "last_import_skipped_runtime_sensor_windows",
             "last_import_skipped_runtime_thermostat_windows",
             "last_import_skipped_windows",
@@ -324,15 +326,20 @@ class BeestatImportPartialProblemBinarySensor(
 
     @property
     def is_on(self) -> bool | None:
-        """Return true when the last import skipped one or more windows."""
+        """Return true when the last import skipped windows or hourly coverage."""
 
         return self.coordinator.last_import_partial
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
-        """Return skipped-window counts from the latest import."""
+        """Return the skipped-window and hourly-coverage causes of the last import."""
 
+        writers = self.coordinator.last_import_writers or {}
         return {
+            "last_import_hourly_coverage_incomplete": (
+                self.coordinator.last_import_hourly_coverage_incomplete
+            ),
+            "last_import_hourly_blocked_reason": writers.get("hourly_blocked_reason"),
             "last_import_skipped_windows": (
                 self.coordinator.last_import_skipped_windows
             ),
