@@ -191,7 +191,7 @@ the gap. Display-name or slug changes retain an already adopted hourly identity.
 | Runtime summary latest date / lag / stale | Age of daily summary coverage. |
 | Cloud data end / lag / stale | Age of the source's data horizon, independent of a successful request. |
 | Status / sync timestamps | Acquisition and import health. |
-| Import partial / skipped windows | Whether source windows were omitted or selected hourly coverage is incomplete; skipped-window counts describe acquisition gaps. Writer counts distinguish continuing daily imports from hourly work, and `hourly_blocked_reason` identifies a held hourly pass. Null hourly counts mean its effects could not be confirmed. |
+| Import partial / skipped windows | Whether source windows were omitted or selected hourly coverage is incomplete; skipped-window counts describe acquisition gaps. Import partial's `last_import_hourly_coverage_incomplete` and `last_import_hourly_blocked_reason` attributes identify an hourly cause when no window was skipped. Writer counts distinguish continuing daily imports from hourly work, and `hourly_blocked_reason` identifies a held hourly pass. Null hourly counts mean its effects could not be confirmed. |
 
 Profiles do not establish live hold state. Reported sensor use is separate from
 configured membership and Follow Me weighting; missing metadata is unknown.
@@ -543,8 +543,8 @@ data:
   means more than one local day behind; cloud stale uses the larger of 120
   minutes or the configured interval plus 60 minutes. Repeated sync success
   does not prove the cloud source advanced.
-- **Import gaps:** inspect Import partial and the Status skipped-window
-  attributes, or enable Skipped windows. Last import success can coexist with
+- **Import gaps:** inspect Import partial's skipped-window and hourly-coverage
+  attributes and Status, or enable Skipped windows. Last import success can coexist with
   skipped windows. A supported window returning
   no rows is distinct from an unsupported skipped window. Increase lookback only
   when the desired point history is available; use rebuild for older summary

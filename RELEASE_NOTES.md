@@ -3,6 +3,17 @@
 Released changes, newest first. Compatibility and validation details describe
 the release in which they appear.
 
+## Beestat Statistics v2026.10.4
+
+- Show why Import partial is on. Its new `last_import_hourly_coverage_incomplete`
+  and `last_import_hourly_blocked_reason` attributes identify incomplete or
+  held selected hourly coverage. Previously that cause turned the sensor on
+  while its attributes reported zero skipped windows.
+
+Home Assistant Core 2026.8.0 remains the minimum; the current tested lane is
+Core 2026.9.3. Existing configuration, entities, alert acknowledgments,
+thermostat commands, and Recorder history remain unchanged.
+
 ## Beestat Statistics v2026.10.3
 
 - Register duplicate health details disabled by default: Active alert, which

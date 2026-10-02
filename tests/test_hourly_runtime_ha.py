@@ -291,6 +291,7 @@ async def test_known_hourly_failure_continues_only_unselected_legacy_quantities(
     assert result.hourly_imported_rows is None
     assert result.legacy_imported_rows == sum(len(rows) for rows in written.values())
     assert coordinator.last_import_partial is True
+    assert coordinator.last_import_hourly_coverage_incomplete is True
     assert coordinator.last_import_writers["hourly_blocked_reason"] == reason
     if blocked_at != "async_import":
         manager.async_import.assert_not_awaited()
@@ -929,6 +930,7 @@ async def test_hourly_measurement_gap_marks_import_partial_without_fake_skips(
     }
     result = await importer.async_import_statistics(skip_sync=True)
     assert coordinator.last_import_partial is True
+    assert coordinator.last_import_hourly_coverage_incomplete is True
     assert result.skipped_windows == 0
     assert result.summary_fallback_reason == "hourly_coverage_incomplete"
     await entry._async_process_on_unload(hass)

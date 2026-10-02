@@ -225,6 +225,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_imported_rows: int | None = None
         self.last_import_source_rows: int | None = None
         self.last_import_partial: bool | None = None
+        self.last_import_hourly_coverage_incomplete: bool | None = None
         self.last_import_skipped_windows: int | None = None
         self.last_import_skipped_runtime_thermostat_windows: int | None = None
         self.last_import_skipped_runtime_sensor_windows: int | None = None
@@ -661,6 +662,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_imported_rows = imported_rows
         self.last_import_source_rows = source_rows
         self.last_import_partial = skipped_windows > 0 or coverage_incomplete
+        self.last_import_hourly_coverage_incomplete = coverage_incomplete
         self.last_import_skipped_windows = skipped_windows
         self.last_import_skipped_runtime_thermostat_windows = (
             skipped_runtime_thermostat_windows
