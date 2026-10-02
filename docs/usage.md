@@ -201,10 +201,11 @@ when rooms are missing. Its attributes identify the profile and coverage used.
 Detail telemetry is disabled by default for new entities: current comfort
 profile, next scheduled time, reported sensor use and in-use count, room
 temperature spread, active alert count, and cloud data end and lag. Enable any
-of them from the entity's settings; they then behave as described above. Runtime summary lag days stays enabled because the bundled
-stale-runtime blueprint selects it. Health and alert problem sensors, sync and
-import timestamps, skipped windows, active alert category, scheduled comfort
-profile, and runtime summary latest date remain enabled. Existing entities keep
+of them from the entity's settings; they then behave as described above.
+Runtime summary lag days stays enabled because the bundled stale-runtime
+blueprint selects it. Health and alert problem sensors, sync and import
+timestamps, skipped windows, active alert category, scheduled comfort profile,
+and runtime summary latest date remain enabled. Existing entities keep
 their current enabled or disabled setting when the integration is updated.
 
 Selected cached Ecobee settings are also exposed as diagnostic entities,
