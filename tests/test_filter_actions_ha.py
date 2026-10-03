@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import threading
 import types
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.components.recorder.statistics import (
@@ -48,6 +42,11 @@ from custom_components.beestat_statistics.statistics_builder import (
 from tests.test_runtime_ha import _coordinator_data
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def mock_recorder_before_hass(recorder_db_url: str) -> None:
+    """Resolve the recorder database before auto-enabled integrations use HA."""
 
 
 async def test_timestamped_action_persists_completion_time_and_safe_replay(

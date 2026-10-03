@@ -30,6 +30,13 @@ from tests.test_hourly_recorder_ha import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def mock_recorder_before_hass(recorder_db_url: str) -> None:
+    """Resolve the recorder database before auto-enabled integrations use HA."""
+
+
 NATIVE = "beestat:zone_a_fan_runtime_rate_hourly_v3"
 
 

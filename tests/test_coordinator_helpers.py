@@ -3,66 +3,59 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 import unittest
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_coordinator_test"
-
-
-class _FakeTranslatedHomeAssistantError(Exception):
-    """Minimal translated Home Assistant exception used by pure unit tests."""
-
-    def __init__(
-        self,
-        *args: object,
-        translation_domain: str | None = None,
-        translation_key: str | None = None,
-        translation_placeholders: dict[str, str] | None = None,
-    ) -> None:
-        super().__init__(*args or ((translation_key,) if translation_key else ()))
-        self.translation_domain = translation_domain
-        self.translation_key = translation_key
-        self.translation_placeholders = translation_placeholders
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import config_model, coordinator
 
 
 class CoordinatorHelpersTest(unittest.TestCase):
     """Validate pure coordinator helpers without a Home Assistant runtime."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "aiohttp",
-                "homeassistant",
-                "homeassistant.core",
-                "homeassistant.exceptions",
-                "homeassistant.helpers",
-                "homeassistant.helpers.device_registry",
-                "homeassistant.helpers.entity_registry",
-                "homeassistant.helpers.event",
-                "homeassistant.helpers.update_coordinator",
-            ),
+        self.config_model = config_model
+        self.coordinator = coordinator
+        for name in (
+            "__init__",
+            "async_set_update_error",
+            "async_set_updated_data",
+            "async_update_listeners",
+        ):
+            self.enterContext(
+                patch.object(
+                    DataUpdateCoordinator,
+                    name,
+                    getattr(_FakeDataUpdateCoordinator, name),
+                )
+            )
+        for name in ("async_call_later", "async_track_point_in_utc_time"):
+            self.enterContext(
+                patch.object(coordinator, name, lambda *_args, **_kwargs: lambda: None)
+            )
+        self.enterContext(
+            patch.object(
+                dr,
+                "async_get",
+                lambda _hass: types.SimpleNamespace(async_get=lambda _device_id: None),
+            )
         )
-        self._install_fake_homeassistant_modules()
-        _load_module("const")
-        self.config_model = _load_module("config_model")
-        self.coordinator = _load_module("coordinator")
+        self.enterContext(
+            patch.object(
+                er, "async_get", lambda _hass: types.SimpleNamespace(entities={})
+            )
+        )
 
     def test_latest_row_date_ignores_bad_dates(self) -> None:
         rows = [
@@ -1353,63 +1346,11 @@ class CoordinatorHelpersTest(unittest.TestCase):
             "import_failed",
         )
 
-    def _install_fake_homeassistant_modules(self) -> None:
-        homeassistant = types.ModuleType("homeassistant")
-        core = types.ModuleType("homeassistant.core")
-        exceptions = types.ModuleType("homeassistant.exceptions")
-        helpers = types.ModuleType("homeassistant.helpers")
-        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
-        entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
-        event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType(
-            "homeassistant.helpers.update_coordinator"
-        )
-        aiohttp = types.ModuleType("aiohttp")
-
-        core.HomeAssistant = object
-        core.callback = lambda func: func
-        exceptions.ConfigEntryAuthFailed = type(
-            "ConfigEntryAuthFailed", (_FakeTranslatedHomeAssistantError,), {}
-        )
-        update_coordinator.UpdateFailed = type(
-            "UpdateFailed", (_FakeTranslatedHomeAssistantError,), {}
-        )
-        update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
-        event.async_call_later = lambda *_args, **_kwargs: lambda: None
-        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
-        device_registry.async_get = lambda _hass: types.SimpleNamespace(
-            async_get=lambda _device_id: None
-        )
-        entity_registry.async_get = lambda _hass: types.SimpleNamespace(entities={})
-        aiohttp.ClientError = RuntimeError
-        aiohttp.ClientSession = object
-
-        helpers.device_registry = device_registry
-        helpers.entity_registry = entity_registry
-        helpers.update_coordinator = update_coordinator
-        helpers.event = event
-        homeassistant.core = core
-        homeassistant.exceptions = exceptions
-        homeassistant.helpers = helpers
-
-        sys.modules["aiohttp"] = aiohttp
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.core"] = core
-        sys.modules["homeassistant.exceptions"] = exceptions
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.device_registry"] = device_registry
-        sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
-        sys.modules["homeassistant.helpers.event"] = event
-        sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
-
 
 class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
     """Validate pending boundary persistence across the real coordinator method."""
 
     setUp = CoordinatorHelpersTest.setUp
-    _install_fake_homeassistant_modules = (
-        CoordinatorHelpersTest._install_fake_homeassistant_modules
-    )
 
     def _owned_coordinator(self):
         tasks = []
@@ -1863,9 +1804,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             ),
             async_set_update_error=recorded_errors.append,
         )
-        update_failed = sys.modules[
-            "homeassistant.helpers.update_coordinator"
-        ].UpdateFailed
+        update_failed = UpdateFailed
 
         with self.assertRaises(update_failed) as raised:
             await self.coordinator.BeestatRuntimeDataCoordinator._async_refresh_runtime(
@@ -1890,7 +1829,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             _async_fetch_runtime_data=fetch_runtime_data,
             _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
         )
-        auth_failed = sys.modules["homeassistant.exceptions"].ConfigEntryAuthFailed
+        auth_failed = ConfigEntryAuthFailed
 
         with self.assertRaises(auth_failed) as raised:
             await self.coordinator.BeestatRuntimeDataCoordinator._async_update_data(
@@ -1912,9 +1851,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             _async_fetch_runtime_data=fetch_runtime_data,
             _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
         )
-        update_failed = sys.modules[
-            "homeassistant.helpers.update_coordinator"
-        ].UpdateFailed
+        update_failed = UpdateFailed
 
         with self.assertRaises(update_failed) as raised:
             await self.coordinator.BeestatRuntimeDataCoordinator._async_update_data(
@@ -2329,10 +2266,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
 
 class _FakeDataUpdateCoordinator:
-    @classmethod
-    def __class_getitem__(cls, _item):
-        return cls
-
     def __init__(self, *args, **kwargs) -> None:
         self.data = None
 

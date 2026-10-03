@@ -3,35 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-import sys
-import types
 import unittest
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_task_coalescer_test"
-
-
-def _load_task_coalescer_module():
-    package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-    package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(
-        f"{PACKAGE}.task_coalescer", ROOT / "task_coalescer.py"
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load task_coalescer")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+from custom_components.beestat_statistics import task_coalescer
 
 
 class TaskCoalescerTest(unittest.IsolatedAsyncioTestCase):
     """Validate that bursts retain only one bounded follow-up run."""
 
     async def test_burst_is_coalesced_into_running_and_one_follow_up(self) -> None:
-        task_coalescer = _load_task_coalescer_module()
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         calls = 0
@@ -63,7 +43,6 @@ class TaskCoalescerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tasks), 1)
 
     async def test_cancelled_work_does_not_run_pending_follow_up(self) -> None:
-        task_coalescer = _load_task_coalescer_module()
         started = asyncio.Event()
         calls = 0
 
@@ -83,7 +62,6 @@ class TaskCoalescerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)
 
     async def test_failed_work_propagates_and_a_new_request_can_recover(self) -> None:
-        task_coalescer = _load_task_coalescer_module()
         calls = 0
 
         async def run() -> None:

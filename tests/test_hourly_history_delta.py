@@ -3,29 +3,15 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
-import sys
-import types
 import unittest
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_history_delta_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-module_spec = importlib.util.spec_from_file_location(
-    f"{PACKAGE}.hourly_history_delta", ROOT / "hourly_history_delta.py"
-)
-if module_spec is None or module_spec.loader is None:
-    raise RuntimeError("Unable to load history delta")
-delta = importlib.util.module_from_spec(module_spec)
-sys.modules[module_spec.name] = delta
-module_spec.loader.exec_module(delta)
-sources = sys.modules[f"{PACKAGE}.hourly_sources"]
+from custom_components.beestat_statistics import hourly_history_delta as delta
+from custom_components.beestat_statistics import hourly_sources as sources
+
 START = datetime(2026, 9, 1, tzinfo=UTC)
 HOUR = timedelta(hours=1)
 

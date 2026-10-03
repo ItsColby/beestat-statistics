@@ -5,24 +5,8 @@ from __future__ import annotations
 import types
 import unittest
 from datetime import date, timedelta
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_config_payload_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-_load_module("const")
-config_rows = _load_module("config_rows")
-config_payload = _load_module("config_payload")
+from custom_components.beestat_statistics import config_payload, config_rows
 
 
 class ConfigPayloadTest(unittest.TestCase):

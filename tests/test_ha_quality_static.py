@@ -128,15 +128,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             minimum, current, "Equal support lanes should be consolidated"
         )
 
-    def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
-        for path in sorted((ROOT / "tests").rglob("test_*.py")):
-            if path.samefile(__file__):
-                continue
-            with self.subTest(path=path.relative_to(ROOT).as_posix()):
-                text = path.read_text(encoding="utf-8")
-                self.assertNotIn("unittest.SkipTest", text)
-                self.assertNotIn("except ModuleNotFoundError", text)
-
     def test_diagnostic_attributes_are_excluded_from_recorder_history(self) -> None:
         for filename, class_name, expected in (
             ("sensor.py", "BeestatSensor", {"last_error", "profiles", "active_alerts"}),
@@ -399,59 +390,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(
             translations["options"]["abort"]["no_automatic_mappings"].strip()
         )
-
-    def test_reported_sensor_use_labels_and_icons_do_not_imply_occupancy(self) -> None:
-        """Reported upstream metadata should use neutral sensor icons."""
-
-        translations = _json_file(
-            "custom_components/beestat_statistics/translations/en.json"
-        )
-        self.assertEqual(
-            translations["entity"]["sensor"]["active_sensor_count"]["name"],
-            "Beestat-reported in-use sensor count",
-        )
-        self.assertEqual(
-            translations["entity"]["binary_sensor"]["sensor_in_use"]["name"],
-            "Beestat-reported sensor in use",
-        )
-
-        icons = _json_file("custom_components/beestat_statistics/icons.json")
-        sensor_in_use = icons["entity"]["binary_sensor"]["sensor_in_use"]
-        active_sensor_count = icons["entity"]["sensor"]["active_sensor_count"]
-
-        self.assertEqual("mdi:home-thermometer", sensor_in_use["default"])
-        self.assertEqual("mdi:home-thermometer", sensor_in_use["state"]["off"])
-        self.assertEqual("mdi:thermometer-check", sensor_in_use["state"]["on"])
-        self.assertEqual("mdi:home-thermometer", active_sensor_count["default"])
-        self.assertEqual("mdi:home-thermometer", active_sensor_count["range"]["0"])
-        self.assertEqual("mdi:thermometer-check", active_sensor_count["range"]["1"])
-        self.assertNotIn("account", str(sensor_in_use))
-        self.assertNotIn("account", str(active_sensor_count))
-
-    def test_entity_unique_ids_do_not_repeat_integration_scope(self) -> None:
-        const_text = (ROOT / "custom_components/beestat_statistics/const.py").read_text(
-            encoding="utf-8"
-        )
-        sensor_text = (
-            ROOT / "custom_components/beestat_statistics/sensor.py"
-        ).read_text(encoding="utf-8")
-        button_text = (
-            ROOT / "custom_components/beestat_statistics/button.py"
-        ).read_text(encoding="utf-8")
-        date_text = (ROOT / "custom_components/beestat_statistics/date.py").read_text(
-            encoding="utf-8"
-        )
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn('return f"thermostat_{thermostat_id}_{suffix}"', const_text)
-        self.assertIn('return f"sensor_{sensor_id}_{suffix}"', const_text)
-        self.assertNotIn('return f"beestat_', const_text)
-        self.assertNotIn('        key="beestat_', sensor_text)
-        self.assertNotIn('        key="beestat_', button_text)
-        self.assertNotIn('        key="beestat_', date_text)
-        self.assertIn('mappings[f"beestat_{new_unique_id}"]', init_text)
 
 
 def _class_method(

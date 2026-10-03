@@ -6,26 +6,10 @@ import math
 import unittest
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-_load_module("const")
-config_model = _load_module("config_model")
-statistics_builder = _load_module("statistics_builder")
+from custom_components.beestat_statistics import config_model, statistics_builder
 
 
 class StatisticsBuilderTest(unittest.TestCase):

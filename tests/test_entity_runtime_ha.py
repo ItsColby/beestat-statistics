@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import logging
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import attr
 import pytest

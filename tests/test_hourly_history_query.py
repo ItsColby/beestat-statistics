@@ -3,25 +3,11 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
-import sys
-import types
 import unittest
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_history_query_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-module_spec = importlib.util.spec_from_file_location(
-    f"{PACKAGE}.hourly_history_query", ROOT / "hourly_history_query.py"
-)
-if module_spec is None or module_spec.loader is None:
-    raise RuntimeError("Unable to load hourly history query")
-query_module = importlib.util.module_from_spec(module_spec)
-sys.modules[module_spec.name] = query_module
-module_spec.loader.exec_module(query_module)
+from custom_components.beestat_statistics import hourly_history_query as query_module
+
 history_response = query_module.history_response
 METHOD = "five_minute_complete_hour_v3"
 POLICY = "complete_points_else_legacy_day"

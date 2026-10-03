@@ -22,8 +22,6 @@ from custom_components.beestat_statistics.config_model import (
 )
 from custom_components.beestat_statistics.const import DOMAIN
 
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
-
 
 @pytest.fixture(autouse=True)
 def _skip_dependency_setup():

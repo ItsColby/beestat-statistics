@@ -4,15 +4,8 @@ from __future__ import annotations
 
 import unittest
 from itertools import permutations
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-alerts = load_module(ROOT, "beestat_statistics_alert_test", "alerts")
+from custom_components.beestat_statistics import alerts
 
 
 class AlertClassificationTest(unittest.TestCase):

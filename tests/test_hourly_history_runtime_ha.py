@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import threading
 from copy import deepcopy
 from dataclasses import replace
@@ -12,10 +11,6 @@ from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.core import Context

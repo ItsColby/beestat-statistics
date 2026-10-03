@@ -4,19 +4,12 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_configuration_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import (
+    config_model,
+    configuration,
+    thermostat_settings,
+)
 
 
 class ConfigurationResponseTest(unittest.TestCase):
@@ -24,10 +17,9 @@ class ConfigurationResponseTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        _load_module("const")
-        cls.config_model = _load_module("config_model")
-        cls.thermostat_settings = _load_module("thermostat_settings")
-        cls.configuration = _load_module("configuration")
+        cls.config_model = config_model
+        cls.thermostat_settings = thermostat_settings
+        cls.configuration = configuration
 
     def test_runtime_quality_is_effective_only_and_leaves_saved_overrides_literal(
         self,

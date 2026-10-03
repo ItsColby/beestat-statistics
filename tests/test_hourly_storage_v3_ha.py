@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from collections import namedtuple
 from hashlib import sha256
 from pathlib import Path
 from threading import get_ident
 from unittest.mock import AsyncMock, patch
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.core import HomeAssistant
