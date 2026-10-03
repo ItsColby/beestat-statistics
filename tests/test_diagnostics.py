@@ -3,24 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 import unittest
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_diagnostics_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import (
+    config_model,
+    coordinator,
+    diagnostics,
+)
 
 
 @dataclass
@@ -36,29 +28,9 @@ class DiagnosticsTest(unittest.TestCase):
     """Validate diagnostics are useful without leaking local identifiers."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "aiohttp",
-                "homeassistant",
-                "homeassistant.components",
-                "homeassistant.components.diagnostics",
-                "homeassistant.config_entries",
-                "homeassistant.const",
-                "homeassistant.core",
-                "homeassistant.exceptions",
-                "homeassistant.helpers",
-                "homeassistant.helpers.event",
-                "homeassistant.helpers.update_coordinator",
-            ),
-        )
-        self._install_fake_homeassistant_modules()
-        _load_module("const")
-        _load_module("api")
-        self.config_model = _load_module("config_model")
-        self.coordinator = _load_module("coordinator")
-        _load_module("runtime")
-        self.diagnostics = _load_module("diagnostics")
+        self.config_model = config_model
+        self.coordinator = coordinator
+        self.diagnostics = diagnostics
 
     def test_unloaded_entry_keeps_diagnostics_available_for_malformed_options(self):
         entry = FakeEntry(
@@ -304,84 +276,6 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertNotIn("Private Future Value", text)
         self.assertNotIn("future_private_field", text)
         self.assertIn("REDACTED", text)
-
-    def _install_fake_homeassistant_modules(self) -> None:
-        aiohttp = types.ModuleType("aiohttp")
-        homeassistant = types.ModuleType("homeassistant")
-        components = types.ModuleType("homeassistant.components")
-        diagnostics = types.ModuleType("homeassistant.components.diagnostics")
-        config_entries = types.ModuleType("homeassistant.config_entries")
-        const = types.ModuleType("homeassistant.const")
-        core = types.ModuleType("homeassistant.core")
-        exceptions = types.ModuleType("homeassistant.exceptions")
-        helpers = types.ModuleType("homeassistant.helpers")
-        event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType(
-            "homeassistant.helpers.update_coordinator"
-        )
-
-        aiohttp.ClientError = RuntimeError
-        aiohttp.ClientSession = object
-        diagnostics.async_redact_data = _redact_data
-        config_entries.ConfigEntry = _Generic
-        const.CONF_API_KEY = "api_key"
-        core.HomeAssistant = object
-        core.callback = lambda func: func
-        exceptions.ConfigEntryAuthFailed = type(
-            "ConfigEntryAuthFailed",
-            (Exception,),
-            {},
-        )
-        event.async_call_later = lambda *_args, **_kwargs: lambda: None
-        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
-        update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
-        update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
-
-        components.diagnostics = diagnostics
-        helpers.event = event
-        helpers.update_coordinator = update_coordinator
-        homeassistant.components = components
-        homeassistant.config_entries = config_entries
-        homeassistant.const = const
-        homeassistant.core = core
-        homeassistant.exceptions = exceptions
-        homeassistant.helpers = helpers
-
-        sys.modules["aiohttp"] = aiohttp
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.components"] = components
-        sys.modules["homeassistant.components.diagnostics"] = diagnostics
-        sys.modules["homeassistant.config_entries"] = config_entries
-        sys.modules["homeassistant.const"] = const
-        sys.modules["homeassistant.core"] = core
-        sys.modules["homeassistant.exceptions"] = exceptions
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.event"] = event
-        sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
-
-
-class _Generic:
-    def __class_getitem__(cls, _item):
-        return cls
-
-
-class _FakeDataUpdateCoordinator:
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-    def __class_getitem__(cls, _item):
-        return cls
-
-
-def _redact_data(value, to_redact):
-    if isinstance(value, dict):
-        return {
-            key: "REDACTED" if key in to_redact else _redact_data(item, to_redact)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_data(item, to_redact) for item in value]
-    return value
 
 
 if __name__ == "__main__":

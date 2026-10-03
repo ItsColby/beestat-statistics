@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 import types
 import unittest
 from dataclasses import dataclass
-from pathlib import Path
+from unittest.mock import patch
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
+from homeassistant.helpers import device_registry as dr
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_entity_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import config_model, entity
 
 
 @dataclass
@@ -44,20 +35,20 @@ class EntityHelpersTest(unittest.TestCase):
     """Validate shared Home Assistant entity helpers with lightweight stubs."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "homeassistant",
-                "homeassistant.helpers",
-                "homeassistant.helpers.device_registry",
-                "homeassistant.helpers.entity",
-                "homeassistant.helpers.entity_platform",
-            ),
-        )
-        self._install_fake_homeassistant_modules()
-        _load_module("const")
-        self.config_model = _load_module("config_model")
-        self.entity = _load_module("entity")
+        self.config_model = config_model
+        self.entity = entity
+        self.fake_device_registry = types.SimpleNamespace(calls=[])
+
+        def async_get(_hass):
+            return types.SimpleNamespace(
+                async_get=lambda device_id: types.SimpleNamespace(id=device_id),
+                async_get_or_create=lambda **kwargs: (
+                    self.fake_device_registry.calls.append(kwargs)
+                ),
+            )
+
+        self.enterContext(patch.object(dr, "async_get", async_get))
+        self.enterContext(patch.object(dr, "DeviceEntry", FakeDeviceEntry))
 
     def test_dynamic_entity_adds_only_new_unique_ids(self) -> None:
         coordinator = FakeCoordinator()
@@ -266,13 +257,19 @@ class EntityHelpersTest(unittest.TestCase):
 
     def test_device_ownership_cleanup_prefers_current_home_assistant_api(self) -> None:
         calls = []
-        self.entity.helper_integration = types.SimpleNamespace(
-            async_remove_helper_devices=lambda hass, **kwargs: calls.append(
-                ("current", hass, kwargs)
-            ),
-            async_remove_helper_config_entry_from_source_device=(
-                lambda hass, **kwargs: calls.append(("legacy", hass, kwargs))
-            ),
+        self.enterContext(
+            patch.object(
+                self.entity,
+                "helper_integration",
+                types.SimpleNamespace(
+                    async_remove_helper_devices=lambda hass, **kwargs: calls.append(
+                        ("current", hass, kwargs)
+                    ),
+                    async_remove_helper_config_entry_from_source_device=(
+                        lambda hass, **kwargs: calls.append(("legacy", hass, kwargs))
+                    ),
+                ),
+            )
         )
         hass = object()
 
@@ -299,9 +296,15 @@ class EntityHelpersTest(unittest.TestCase):
 
     def test_device_ownership_cleanup_supports_legacy_home_assistant_api(self) -> None:
         calls = []
-        self.entity.helper_integration = types.SimpleNamespace(
-            async_remove_helper_config_entry_from_source_device=(
-                lambda hass, **kwargs: calls.append((hass, kwargs))
+        self.enterContext(
+            patch.object(
+                self.entity,
+                "helper_integration",
+                types.SimpleNamespace(
+                    async_remove_helper_config_entry_from_source_device=(
+                        lambda hass, **kwargs: calls.append((hass, kwargs))
+                    )
+                ),
             )
         )
         hass = object()
@@ -347,39 +350,6 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertIsNone(
             self.entity.thermostat_suggested_object_id(homekit, "filter_due")
         )
-
-    def _install_fake_homeassistant_modules(self) -> None:
-        homeassistant = types.ModuleType("homeassistant")
-        helpers = types.ModuleType("homeassistant.helpers")
-        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
-        entity = types.ModuleType("homeassistant.helpers.entity")
-        entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
-        self.fake_device_registry = types.SimpleNamespace(calls=[])
-
-        def async_get(_hass):
-            return types.SimpleNamespace(
-                async_get=lambda device_id: types.SimpleNamespace(id=device_id),
-                async_get_or_create=lambda **kwargs: (
-                    self.fake_device_registry.calls.append(kwargs)
-                ),
-            )
-
-        device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
-        device_registry.DeviceEntry = FakeDeviceEntry
-        device_registry.async_get = async_get
-        entity.DeviceInfo = lambda **kwargs: kwargs
-        entity.Entity = object
-        entity_platform.AddConfigEntryEntitiesCallback = object
-
-        helpers.device_registry = device_registry
-        helpers.entity = entity
-        helpers.entity_platform = entity_platform
-        homeassistant.helpers = helpers
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.device_registry"] = device_registry
-        sys.modules["homeassistant.helpers.entity"] = entity
-        sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
 
 
 if __name__ == "__main__":

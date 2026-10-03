@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_history_legacy_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-module_spec = importlib.util.spec_from_file_location(
-    f"{PACKAGE}.hourly_history_legacy", ROOT / "hourly_history_legacy.py"
+from custom_components.beestat_statistics import hourly_history_legacy as legacy
+from custom_components.beestat_statistics.hourly_import_plan import (
+    HourlyStatisticRow as Row,
 )
-if module_spec is None or module_spec.loader is None:
-    raise RuntimeError("Unable to load legacy history")
-legacy = importlib.util.module_from_spec(module_spec)
-sys.modules[module_spec.name] = legacy
-module_spec.loader.exec_module(legacy)
-Row = sys.modules[f"{PACKAGE}.hourly_import_plan"].HourlyStatisticRow
-Snapshot = sys.modules[f"{PACKAGE}.hourly_import_plan"].RecorderSnapshot
+from custom_components.beestat_statistics.hourly_import_plan import (
+    RecorderSnapshot as Snapshot,
+)
+
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 START = datetime(2026, 9, 10, 4, tzinfo=UTC)

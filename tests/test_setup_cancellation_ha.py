@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.config_entries import ConfigEntryState
@@ -49,8 +43,13 @@ from custom_components.beestat_statistics.const import (
 
 pytestmark = [
     pytest.mark.asyncio,
-    pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations"),
+    pytest.mark.usefixtures("recorder_mock"),
 ]
+
+
+@pytest.fixture
+def mock_recorder_before_hass(recorder_db_url: str) -> None:
+    """Resolve the recorder database before auto-enabled integrations use HA."""
 
 
 @pytest.mark.parametrize(

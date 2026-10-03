@@ -2,49 +2,17 @@
 
 from __future__ import annotations
 
-import sys
 import types
 import unittest
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_config_flow_helper_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import config_flow
 
 
 class ConfigFlowHelpersTest(unittest.TestCase):
     """Validate config-flow helpers without a Home Assistant test harness."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "aiohttp",
-                "homeassistant",
-                "homeassistant.config_entries",
-                "homeassistant.const",
-                "homeassistant.core",
-                "homeassistant.helpers",
-                "homeassistant.helpers.aiohttp_client",
-                "homeassistant.helpers.entity_registry",
-                "homeassistant.helpers.issue_registry",
-                "homeassistant.helpers.selector",
-                "voluptuous",
-            ),
-        )
-        self._install_fake_modules()
-        _load_module("const")
-        _load_module("api")
-        _load_module("config_payload")
-        self.config_flow = _load_module("config_flow")
+        self.config_flow = config_flow
 
     def test_account_fingerprint_uses_hashed_thermostat_anchors(self) -> None:
         fingerprint = self.config_flow._account_fingerprint(
@@ -271,104 +239,6 @@ class ConfigFlowHelpersTest(unittest.TestCase):
         self.assertEqual(
             entry.options,
             {"thermostats": [{"id": 1001, "climate_entity_id": first.entity_id}]},
-        )
-
-    def _install_fake_modules(self) -> None:
-        aiohttp = types.ModuleType("aiohttp")
-        homeassistant = types.ModuleType("homeassistant")
-        config_entries = types.ModuleType("homeassistant.config_entries")
-        const = types.ModuleType("homeassistant.const")
-        core = types.ModuleType("homeassistant.core")
-        helpers = types.ModuleType("homeassistant.helpers")
-        aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
-        issue_registry = types.ModuleType("homeassistant.helpers.issue_registry")
-        entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
-        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
-        selector = types.ModuleType("homeassistant.helpers.selector")
-        voluptuous = types.ModuleType("voluptuous")
-
-        aiohttp.ClientError = RuntimeError
-        aiohttp.ClientSession = object
-        config_entries.ConfigFlow = _FakeConfigFlow
-        config_entries.ConfigFlowResult = dict
-        config_entries.ConfigEntry = object
-        config_entries.OptionsFlow = object
-        config_entries.OptionsFlowWithReload = object
-        const.CONF_API_KEY = "api_key"
-        core.HomeAssistant = object
-        core.callback = lambda func: func
-        aiohttp_client.async_get_clientsession = lambda _hass: object()
-        issue_registry.IssueSeverity = types.SimpleNamespace(WARNING="warning")
-        issue_registry.async_create_issue = lambda *args, **kwargs: None
-        issue_registry.async_delete_issue = lambda *args, **kwargs: None
-        entity_registry.async_get = lambda _hass: None
-        selector.BooleanSelector = _NoopInit
-        selector.EntitySelector = _NoopInit
-        selector.EntitySelectorConfig = _NoopInit
-        selector.NumberSelector = _NoopInit
-        selector.NumberSelectorConfig = _NoopInit
-        selector.NumberSelectorMode = types.SimpleNamespace(BOX="box")
-        selector.SelectOptionDict = lambda **kwargs: dict(kwargs)
-        selector.SelectSelector = _NoopInit
-        selector.SelectSelectorConfig = _NoopInit
-        selector.TextSelector = _NoopInit
-        selector.TextSelectorConfig = _NoopInit
-        selector.TextSelectorType = types.SimpleNamespace(
-            PASSWORD="password",
-            URL="url",
-        )
-        voluptuous.Schema = lambda schema, *args, **kwargs: schema
-        voluptuous.Required = lambda key, **kwargs: _SchemaKey(key, **kwargs)
-        voluptuous.Optional = lambda key, **kwargs: _SchemaKey(key, **kwargs)
-
-        homeassistant.config_entries = config_entries
-        homeassistant.const = const
-        homeassistant.core = core
-        helpers.aiohttp_client = aiohttp_client
-        helpers.issue_registry = issue_registry
-        helpers.entity_registry = entity_registry
-        helpers.device_registry = device_registry
-        helpers.selector = selector
-        homeassistant.helpers = helpers
-
-        sys.modules["aiohttp"] = aiohttp
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.config_entries"] = config_entries
-        sys.modules["homeassistant.const"] = const
-        sys.modules["homeassistant.core"] = core
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client
-        sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
-        sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
-        sys.modules["homeassistant.helpers.selector"] = selector
-        sys.modules["voluptuous"] = voluptuous
-
-
-class _FakeConfigFlow:
-    def __init_subclass__(cls, **kwargs) -> None:
-        return None
-
-
-class _NoopInit:
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-
-class _SchemaKey:
-    def __init__(self, key, **kwargs) -> None:
-        self.key = key
-        self.kwargs = kwargs
-
-    def __hash__(self) -> int:
-        return hash((self.key, tuple(sorted(self.kwargs.items()))))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, _SchemaKey) and (
-            self.key,
-            self.kwargs,
-        ) == (
-            other.key,
-            other.kwargs,
         )
 
 

@@ -7,18 +7,12 @@ They intentionally fail collection when the discovered HA harness is unavailable
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 import voluptuous as vol
@@ -113,10 +107,7 @@ from custom_components.beestat_statistics.issues import (
     async_set_yaml_connection_change_issue,
 )
 
-pytestmark = [
-    pytest.mark.asyncio,
-    pytest.mark.usefixtures("enable_custom_integrations"),
-]
+pytestmark = pytest.mark.asyncio
 
 
 USER_INPUT = {

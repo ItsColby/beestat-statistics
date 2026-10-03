@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.components import button
@@ -27,7 +21,12 @@ from tests.test_runtime_ha import _coordinator_data
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.mark.usefixtures("recorder_mock", "enable_custom_integrations")
+@pytest.fixture
+def mock_recorder_before_hass(recorder_db_url: str) -> None:
+    """Resolve the recorder database before auto-enabled integrations use HA."""
+
+
+@pytest.mark.usefixtures("recorder_mock")
 async def test_queued_filter_button_cannot_save_after_platform_unload(
     hass: HomeAssistant, freezer: Any
 ) -> None:

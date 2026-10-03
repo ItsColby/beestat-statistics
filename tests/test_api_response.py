@@ -3,49 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
-import sys
 import threading
 import traceback
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from custom_components.beestat_statistics import api
+
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_api_test"
-
-
-def _load_api_module():
-    package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-    package.__path__ = [str(ROOT)]
-    spec = importlib.util.spec_from_file_location(f"{PACKAGE}.api", ROOT / "api.py")
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load api")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
-    """Validate Beestat response helpers without requiring aiohttp."""
+    """Validate Beestat response helpers against fake HTTP sessions."""
 
     def setUp(self) -> None:
-        self._old_modules = {key: sys.modules.get(key) for key in ("aiohttp",)}
-        aiohttp = types.ModuleType("aiohttp")
-        aiohttp.ClientError = type("ClientError", (Exception,), {})
-        aiohttp.ClientSession = object
-        sys.modules["aiohttp"] = aiohttp
-        self.api = _load_api_module()
-
-    def tearDown(self) -> None:
-        for key, module in self._old_modules.items():
-            if module is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = module
+        self.api = api
 
     def test_error_true_with_auth_message_starts_reauth_path(self) -> None:
         with self.assertRaises(self.api.BeestatAuthError):

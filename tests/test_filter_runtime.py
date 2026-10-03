@@ -2,23 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 import unittest
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-SPEC = importlib.util.spec_from_file_location(
-    "filter_runtime_unit", ROOT / "filter_runtime.py"
-)
-assert SPEC is not None and SPEC.loader is not None
-runtime = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = runtime
-SPEC.loader.exec_module(runtime)
-
+from custom_components.beestat_statistics import filter_runtime as runtime
 
 UTC_ZONE = ZoneInfo("UTC")
 

@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.auth.const import GROUP_ID_USER

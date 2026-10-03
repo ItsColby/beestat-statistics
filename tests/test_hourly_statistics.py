@@ -2,29 +2,15 @@
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import sys
-import types
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_statistics_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-module_spec = importlib.util.spec_from_file_location(
-    f"{PACKAGE}.hourly_statistics", ROOT / "hourly_statistics.py"
-)
-if module_spec is None or module_spec.loader is None:
-    raise RuntimeError("Unable to load hourly statistics")
-hourly = importlib.util.module_from_spec(module_spec)
-sys.modules[module_spec.name] = hourly
-module_spec.loader.exec_module(hourly)
-config_model = sys.modules[f"{PACKAGE}.config_model"]
+from custom_components.beestat_statistics import config_model
+from custom_components.beestat_statistics import hourly_statistics as hourly
 
 
 class HourlyStatisticsTest(unittest.TestCase):

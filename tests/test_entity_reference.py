@@ -5,23 +5,8 @@ from __future__ import annotations
 import unittest
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_entity_reference_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-_load_module("const")
-entity_reference = _load_module("entity_reference")
+from custom_components.beestat_statistics import entity_reference
 
 
 @dataclass

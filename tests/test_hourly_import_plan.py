@@ -2,27 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
+from custom_components.beestat_statistics import config_model
+from custom_components.beestat_statistics import hourly_import_plan as planner
+from custom_components.beestat_statistics import hourly_statistics as builder
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_plan_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-builder = _load_module("hourly_statistics")
-planner = _load_module("hourly_import_plan")
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 4, tzinfo=UTC)
 
@@ -547,7 +534,6 @@ class HourlyImportPlanTests(unittest.TestCase):
     def test_actual_builder_output_reconciles_and_deleted_slot_preserves_stale_evidence(
         self,
     ):
-        config_model = sys.modules[f"{PACKAGE}.config_model"]
         config = config_model.BeestatConfig(
             thermostats=(config_model.ConfiguredThermostat(1, "zone", "Zone"),),
             sensors=(),
@@ -590,7 +576,6 @@ class HourlyImportPlanTests(unittest.TestCase):
         self.assertFalse(result.unblocked_rows)
 
     def test_invalid_late_concentration_correction_exposes_the_existing_hour(self):
-        config_model = sys.modules[f"{PACKAGE}.config_model"]
         config = config_model.BeestatConfig(
             thermostats=(),
             sensors=(

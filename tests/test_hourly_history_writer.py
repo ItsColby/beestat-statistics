@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import types
 import unittest
@@ -11,16 +10,18 @@ from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
-from test_hourly_import import Recorder as LegacyRecorder
-from test_hourly_import import Store as LegacyStore
-from test_hourly_import import identity, manager, source
+from custom_components.beestat_statistics import config_model as model
+from custom_components.beestat_statistics import hourly_history_delta as delta_builder
+from custom_components.beestat_statistics import (
+    hourly_history_values as representation,
+)
+from custom_components.beestat_statistics import hourly_history_writer as writer
+from custom_components.beestat_statistics import hourly_import as manager
+from custom_components.beestat_statistics import hourly_sources as sources
+from tests.test_hourly_import import Recorder as LegacyRecorder
+from tests.test_hourly_import import Store as LegacyStore
+from tests.test_hourly_import import identity, source
 
-PACKAGE = manager.__package__
-writer = importlib.import_module(f"{PACKAGE}.hourly_history_writer")
-sources = importlib.import_module(f"{PACKAGE}.hourly_sources")
-model = importlib.import_module(f"{PACKAGE}.config_model")
-representation = importlib.import_module(f"{PACKAGE}.hourly_history_values")
-delta_builder = importlib.import_module(f"{PACKAGE}.hourly_history_delta")
 HOUR = timedelta(hours=1)
 START = datetime(2026, 1, 31, 23, tzinfo=UTC)
 KEY = "thermostat:1:fan_runtime_hours"

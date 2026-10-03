@@ -7,17 +7,11 @@ schemas and English help live beside it. Keep user operations in the
 
 ## Run the checks
 
-The [Validate workflow](../.github/workflows/validate.yaml) runs on every pull
-request, `main` push and manual dispatch. Its **Release gate** requires every
-job to succeed:
-
-| Job | What it checks |
-| --- | --- |
-| Unit tests | `pre-commit run --all-files`: Ruff, ShellCheck, actionlint, zizmor, JSON and whitespace hygiene, and Gitleaks over the current tree and Git history |
-| Home Assistant minimum and current | The Core version pinned in `requirements-ha-test.txt` or `requirements-ha-current.txt` with its matching test harness, `pip check`, strict mypy and the complete pytest suite |
-| Hassfest and HACS | The official Home Assistant and HACS validation actions |
-
-Install the static checks once and run them before pushing:
+The [Validate workflow](../.github/workflows/validate.yaml) defines the CI jobs
+and the **Release gate** that requires them,
+[`.pre-commit-config.yaml`](../.pre-commit-config.yaml) the static hooks, and
+[`.github/dependabot.yml`](../.github/dependabot.yml) the dependency update
+policy. Install the static checks once and run them before pushing:
 
 ```bash
 python -m pip install --group dev
@@ -26,10 +20,9 @@ pre-commit run --all-files
 ```
 
 The Home Assistant suite needs Linux and Python 3.14. Use a separate virtual
-environment for each Core version and install it the way its workflow job
-does: the harness and mypy pins first, then the requirements file, then
-`python -m pip check`. Run `python -m pytest tests` for the complete suite or
-name individual test modules while iterating. Hassfest and HACS run only in CI.
+environment for each Core lane, install it the way its workflow job does, and
+run `python -m pytest tests` for the complete suite or name individual test
+modules while iterating. Hassfest and HACS run only in CI.
 
 Local checks do not replace the hosted jobs, authorize publication or establish
 live behavior.
@@ -63,22 +56,10 @@ before comparing with [the saved inventory](beestat-api-surface.json). Review
 actual source drift before using `--update`; that flag replaces the snapshot
 only after a complete acquisition. Integration-use decisions belong in the
 checker and must remain aligned with the generated inventory. A separate
-monthly workflow runs this check without changing the integration's API scope.
+[scheduled workflow](../.github/workflows/beestat-api-surface.yaml) runs this
+check without changing the integration's API scope.
 
 ## Prepare a release
 
-Validate the candidate through a pull request: require the Validate jobs, the
-**Release gate** and the configured CodeQL checks, then merge through branch
-protection and require the same checks on the resulting `main` commit. Inspect
-complete logs and code-scanning findings; a successful analysis job is not proof
-that it found no issues.
-
-Publish an immutable version tag and GitHub Release against that validated
-commit, matching the manifest version. The GitHub Release body holds that
-version's notes. Verify repository metadata, issues, relevant topics and the
-brand icon for HACS distribution. An already immutable release is not an
-editable staging area.
-
-Installing through HACS, restarting an HA instance and proving adoption are
-separate operational steps. A source test or published release does not prove
-which version an instance has loaded or that its consumers recovered.
+Releases are immutable [GitHub Releases](https://github.com/ItsColby/beestat-statistics/releases)
+whose tag matches the manifest version.

@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 import types
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 import pytest
 from homeassistant.const import CONF_API_KEY
@@ -38,6 +32,7 @@ from custom_components.beestat_statistics import (
     _async_track_time_zone_updates,
     _dedupe_rows,
     _filter_changed_entity_ids,
+    _migrate_legacy_unique_ids,
     _parse_beestat_time,
     _row_float,
     _row_start_datetime,
@@ -655,6 +650,70 @@ async def test_device_reconciliation_includes_all_owned_resource_entity_suffixes
     assert device_registry.async_get(fallback.id) is None
     assert entity_registry.async_get(unrelated.entity_id).device_id is None
     assert entity_registry.async_get(other_resource.entity_id).device_id is None
+    await entry._async_process_on_unload(hass)
+
+
+async def test_legacy_unique_ids_migrate_to_stable_resource_ids(
+    hass: HomeAssistant,
+    freezer: Any,
+) -> None:
+    """Slug-derived registry IDs move to stable IDs; occupied targets are kept."""
+
+    now = datetime(2026, 7, 1, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    thermostat = coordinator.data.config.thermostats[0]
+    data = replace(
+        coordinator.data,
+        config=replace(
+            coordinator.data.config,
+            sensors=(
+                ConfiguredSensor(
+                    sensor_id=10,
+                    slug="room",
+                    name="Room",
+                    thermostat_id=1,
+                    thermostat_slug=thermostat.slug,
+                    include_temperature=True,
+                    include_air_quality=False,
+                    include_co2=False,
+                    include_voc=False,
+                ),
+            ),
+        ),
+    )
+    registry = er.async_get(hass)
+
+    def create(domain: str, unique_id: str) -> er.RegistryEntry:
+        return registry.async_get_or_create(
+            domain, DOMAIN, unique_id, config_entry=entry
+        )
+
+    expected = {
+        create("sensor", f"beestat_{thermostat.slug}_hvac_cloud_data_end").entity_id: (
+            "thermostat_1_cloud_data_end"
+        ),
+        create("sensor", "beestat_thermostat_1_current_comfort_profile").entity_id: (
+            "thermostat_1_current_comfort_profile"
+        ),
+        create("binary_sensor", "beestat_room_sensor_in_use").entity_id: (
+            "sensor_10_sensor_in_use"
+        ),
+        create("sensor", "beestat_statistics_status").entity_id: "status",
+    }
+    occupied = create("sensor", "thermostat_1_cloud_data_lag_minutes")
+    conflicting = create(
+        "sensor", f"beestat_{thermostat.slug}_hvac_cloud_data_lag_minutes"
+    )
+    unrelated = create("sensor", "thermostat_11_other")
+
+    _migrate_legacy_unique_ids(hass, entry, data)
+
+    for entity_id, unique_id in expected.items():
+        assert registry.async_get(entity_id).unique_id == unique_id
+    assert registry.async_get(occupied.entity_id).unique_id == occupied.unique_id
+    assert registry.async_get(conflicting.entity_id).unique_id == conflicting.unique_id
+    assert registry.async_get(unrelated.entity_id).unique_id == "thermostat_11_other"
     await entry._async_process_on_unload(hass)
 
 

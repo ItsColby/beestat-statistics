@@ -2,27 +2,14 @@
 
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 from dataclasses import dataclass
-from pathlib import Path
+from unittest.mock import patch
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_config_model_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-_load_module("const")
-config_model = _load_module("config_model")
+from custom_components.beestat_statistics import config_model
 
 
 @dataclass
@@ -119,19 +106,10 @@ class ConfigModelTest(unittest.TestCase):
     """Validate generic mapping from HA HomeKit devices to Beestat rows."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "homeassistant",
-                "homeassistant.helpers",
-                "homeassistant.helpers.device_registry",
-                "homeassistant.helpers.entity_registry",
-            ),
-        )
-        self._install_fake_homeassistant_modules(devices={}, entries=[])
+        self._install_fake_registries(devices={}, entries=[])
 
     def test_maps_beestat_rows_to_homekit_devices_by_name(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -273,7 +251,7 @@ class ConfigModelTest(unittest.TestCase):
             ("registry-restored", "climate.zone_a_restored"),
         ):
             with self.subTest(registry_id=registry_id):
-                self._install_fake_homeassistant_modules(
+                self._install_fake_registries(
                     devices=devices,
                     entries=[
                         FakeEntityEntry(
@@ -306,7 +284,7 @@ class ConfigModelTest(unittest.TestCase):
                 )
 
     def test_unresolved_stable_override_does_not_fall_back_to_name(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -356,7 +334,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_unresolved_reference_blocks_same_device_and_thermostat_fallback(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={"source": FakeDeviceEntry(name="Zone A")},
             entries=[
                 FakeEntityEntry("climate.zone_a", "source"),
@@ -637,7 +615,7 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(thermostat.filter_notice_days, 7)
 
     def test_maps_homekit_entities_with_enum_like_device_classes(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -707,7 +685,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_maps_ecobee_shaped_homekit_devices_when_manufacturer_is_missing(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -761,7 +739,7 @@ class ConfigModelTest(unittest.TestCase):
         )
 
     def test_weak_homekit_thermostat_candidate_does_not_single_fallback(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_other_zone": FakeDeviceEntry(
                     name="Other Zone",
@@ -791,7 +769,7 @@ class ConfigModelTest(unittest.TestCase):
         self.assertIsNone(config.thermostats[0].device_id)
 
     def test_single_fallback_accepts_ecobee_signal_from_device_name(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_homekit": FakeDeviceEntry(
                     name="Ecobee HomeKit Thermostat",
@@ -823,7 +801,7 @@ class ConfigModelTest(unittest.TestCase):
         self.assertEqual(config.thermostats[0].device_id, "thermostat_homekit")
 
     def test_name_matching_prefers_strong_ecobee_signal_over_weak_shape(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "sensor_weak_room_sensor_c": FakeDeviceEntry(
                     name="Room Sensor C",
@@ -878,7 +856,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_ambiguous_weak_homekit_name_matches_do_not_map_by_registry_order(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "sensor_first_room_sensor_c": FakeDeviceEntry(
                     name="Room Sensor C",
@@ -936,7 +914,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_multiple_thermostats_do_not_share_single_strong_automatic_match(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -974,7 +952,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_named_thermostat_match_wins_over_competing_strong_fallback(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -1010,7 +988,7 @@ class ConfigModelTest(unittest.TestCase):
     def test_duplicate_beestat_sensor_names_do_not_share_automatic_match(
         self,
     ) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "sensor_room_a": FakeDeviceEntry(
                     name="Room A",
@@ -1050,7 +1028,7 @@ class ConfigModelTest(unittest.TestCase):
         )
 
     def test_explicit_mapping_reserves_device_from_automatic_match(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -1086,7 +1064,7 @@ class ConfigModelTest(unittest.TestCase):
         self.assertIsNone(thermostat_by_id[1002].device_id)
 
     def test_explicit_mapping_across_devices_fails_device_linking_closed(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -1142,7 +1120,7 @@ class ConfigModelTest(unittest.TestCase):
             FakeEntityEntry("climate.zone_a", "thermostat_zone_a"),
             FakeEntityEntry("climate.zone_a_secondary", "thermostat_zone_a"),
         ]
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -1200,7 +1178,7 @@ class ConfigModelTest(unittest.TestCase):
             ),
             FakeEntityEntry("climate.zone_a_secondary", "thermostat_zone_a"),
         ]
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "thermostat_zone_a": FakeDeviceEntry(
                     name="Zone A",
@@ -1314,7 +1292,7 @@ class ConfigModelTest(unittest.TestCase):
                 original_device_class="temperature",
             ),
         ]
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "sensor_room_a": FakeDeviceEntry(
                     name="Room A",
@@ -1407,7 +1385,7 @@ class ConfigModelTest(unittest.TestCase):
         )
 
     def test_builtin_sensor_override_checks_automatic_parent_mapping(self) -> None:
-        self._install_fake_homeassistant_modules(
+        self._install_fake_registries(
             devices={
                 "zone": FakeDeviceEntry(name="Zone"),
                 "other": FakeDeviceEntry(name="Other"),
@@ -1447,29 +1425,20 @@ class ConfigModelTest(unittest.TestCase):
                     None if conflicted else entity_id,
                 )
 
-    def _install_fake_homeassistant_modules(
+    def _install_fake_registries(
         self,
         *,
         devices: dict[str, FakeDeviceEntry],
         entries: list[FakeEntityEntry],
     ) -> None:
-        homeassistant = types.ModuleType("homeassistant")
-        helpers = types.ModuleType("homeassistant.helpers")
-        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
-        entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
-
         fake_device_registry = FakeDeviceRegistry(devices)
         fake_entity_registry = FakeEntityRegistry(entries)
-        device_registry.async_get = lambda _hass: fake_device_registry
-        entity_registry.async_get = lambda _hass: fake_entity_registry
-
-        helpers.device_registry = device_registry
-        helpers.entity_registry = entity_registry
-        homeassistant.helpers = helpers
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.device_registry"] = device_registry
-        sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
+        self.enterContext(
+            patch.object(dr, "async_get", return_value=fake_device_registry)
+        )
+        self.enterContext(
+            patch.object(er, "async_get", return_value=fake_entity_registry)
+        )
 
 
 def _sensor(sensors, sensor_id: int):

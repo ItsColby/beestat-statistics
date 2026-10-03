@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import sys
 import types
@@ -11,21 +10,13 @@ import unittest
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_writer_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-spec = importlib.util.spec_from_file_location(
-    f"{PACKAGE}.hourly_import", ROOT / "hourly_import.py"
-)
-manager = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = manager
-spec.loader.exec_module(manager)
-builder = sys.modules[f"{PACKAGE}.hourly_statistics"]
-planner = sys.modules[f"{PACKAGE}.hourly_import_plan"]
+from custom_components.beestat_statistics import config_model
+from custom_components.beestat_statistics import hourly_import as manager
+from custom_components.beestat_statistics import hourly_import_plan as planner
+from custom_components.beestat_statistics import hourly_statistics as builder
+
 datetime, UTC = manager.datetime, manager.UTC
 HOUR = manager._HOUR
 START = datetime(2026, 9, 10, tzinfo=UTC)
@@ -1051,7 +1042,7 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_real_sensor_builder_coverage_average_is_finite_and_read_only(self):
-        model = sys.modules[f"{PACKAGE}.config_model"]
+        model = config_model
         config = model.BeestatConfig(
             (model.ConfiguredThermostat(1, "zone", "Zone"),),
             (
@@ -1587,7 +1578,7 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
     async def test_real_builder_misrouted_resource_blocks_and_suppresses(self):
         await self.adopt()
         await self.writer.async_import((source(),), identity())
-        model = sys.modules[f"{PACKAGE}.config_model"]
+        model = config_model
         raw = [
             {
                 "thermostat_id": 2,

@@ -2,59 +2,37 @@
 
 from __future__ import annotations
 
-import sys
 import types
 import unittest
 from dataclasses import replace
 from datetime import UTC, date, datetime
-from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_binary_sensor_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import (
+    binary_sensor,
+    config_model,
+    coordinator,
+    entity,
+)
 
 
 class BinarySensorHelpersTest(unittest.TestCase):
     """Validate dependency-light binary sensor behavior."""
 
     def setUp(self) -> None:
-        preserve_modules(
-            self,
-            (
-                "aiohttp",
-                "homeassistant",
-                "homeassistant.components",
-                "homeassistant.components.binary_sensor",
-                "homeassistant.config_entries",
-                "homeassistant.const",
-                "homeassistant.core",
-                "homeassistant.exceptions",
-                "homeassistant.helpers",
-                "homeassistant.helpers.device_registry",
-                "homeassistant.helpers.entity",
-                "homeassistant.helpers.entity_platform",
-                "homeassistant.helpers.event",
-                "homeassistant.helpers.update_coordinator",
-            ),
+        self.config_model = config_model
+        self.coordinator = coordinator
+        self.binary_sensor = binary_sensor
+        self.enterContext(
+            patch.object(
+                entity.dr,
+                "async_get",
+                return_value=types.SimpleNamespace(
+                    async_get=lambda device_id: types.SimpleNamespace(id=device_id)
+                ),
+            )
         )
-        self._install_fake_homeassistant_modules()
-        _load_module("const")
-        self.config_model = _load_module("config_model")
-        _load_module("api")
-        self.coordinator = _load_module("coordinator")
-        _load_module("entity")
-        _load_module("filter_forecast")
-        _load_module("runtime")
-        self.binary_sensor = _load_module("binary_sensor")
 
     def test_binary_sensors_separate_advisory_and_problem_states(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
@@ -400,99 +378,12 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         self.assertTrue(entity.is_on)
 
-    def _install_fake_homeassistant_modules(self) -> None:
-        aiohttp = types.ModuleType("aiohttp")
-        homeassistant = types.ModuleType("homeassistant")
-        components = types.ModuleType("homeassistant.components")
-        binary_sensor = types.ModuleType("homeassistant.components.binary_sensor")
-        config_entries = types.ModuleType("homeassistant.config_entries")
-        const = types.ModuleType("homeassistant.const")
-        core = types.ModuleType("homeassistant.core")
-        exceptions = types.ModuleType("homeassistant.exceptions")
-        helpers = types.ModuleType("homeassistant.helpers")
-        device_registry = types.ModuleType("homeassistant.helpers.device_registry")
-        entity = types.ModuleType("homeassistant.helpers.entity")
-        entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
-        event = types.ModuleType("homeassistant.helpers.event")
-        update_coordinator = types.ModuleType(
-            "homeassistant.helpers.update_coordinator"
-        )
-
-        aiohttp.ClientError = RuntimeError
-        aiohttp.ClientSession = object
-        binary_sensor.BinarySensorDeviceClass = types.SimpleNamespace(PROBLEM="problem")
-        binary_sensor.BinarySensorEntity = object
-        config_entries.ConfigEntry = _Subscriptable
-        const.UnitOfTime = types.SimpleNamespace(DAYS="d")
-        core.HomeAssistant = object
-        core.callback = lambda func: func
-        exceptions.ConfigEntryAuthFailed = type(
-            "ConfigEntryAuthFailed",
-            (Exception,),
-            {},
-        )
-        device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
-        device_registry.async_get = lambda _hass: types.SimpleNamespace(
-            async_get=lambda device_id: types.SimpleNamespace(id=device_id),
-            async_get_or_create=lambda **_kwargs: None,
-        )
-        entity.DeviceInfo = lambda **kwargs: kwargs
-        entity.Entity = object
-        entity.EntityCategory = types.SimpleNamespace(
-            CONFIG="config",
-            DIAGNOSTIC="diagnostic",
-        )
-        entity_platform.AddConfigEntryEntitiesCallback = object
-        event.async_call_later = lambda *_args, **_kwargs: lambda: None
-        event.async_track_point_in_utc_time = lambda *_args, **_kwargs: lambda: None
-        update_coordinator.DataUpdateCoordinator = _FakeDataUpdateCoordinator
-        update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
-        update_coordinator.CoordinatorEntity = _FakeCoordinatorEntity
-
-        components.binary_sensor = binary_sensor
-        helpers.device_registry = device_registry
-        helpers.entity = entity
-        helpers.entity_platform = entity_platform
-        helpers.event = event
-        helpers.update_coordinator = update_coordinator
-        homeassistant.components = components
-        homeassistant.config_entries = config_entries
-        homeassistant.const = const
-        homeassistant.core = core
-        homeassistant.exceptions = exceptions
-        homeassistant.helpers = helpers
-
-        sys.modules["aiohttp"] = aiohttp
-        sys.modules["homeassistant"] = homeassistant
-        sys.modules["homeassistant.components"] = components
-        sys.modules["homeassistant.components.binary_sensor"] = binary_sensor
-        sys.modules["homeassistant.config_entries"] = config_entries
-        sys.modules["homeassistant.const"] = const
-        sys.modules["homeassistant.core"] = core
-        sys.modules["homeassistant.exceptions"] = exceptions
-        sys.modules["homeassistant.helpers"] = helpers
-        sys.modules["homeassistant.helpers.device_registry"] = device_registry
-        sys.modules["homeassistant.helpers.entity"] = entity
-        sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
-        sys.modules["homeassistant.helpers.event"] = event
-        sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator
-
-
-class _Subscriptable:
-    @classmethod
-    def __class_getitem__(cls, _item):
-        return cls
-
-
-class _FakeDataUpdateCoordinator(_Subscriptable):
-    def __init__(self, *args, **kwargs) -> None:
-        self.data = None
-
 
 class _FakeCoordinator:
     def __init__(self, data) -> None:
         self.data = data
         self.hass = object()
+        self.last_update_success = True
         self.local_tz = ZoneInfo("America/New_York")
         self.cloud_data_stale_threshold_minutes = 420
         self.last_import_partial = False
@@ -502,15 +393,6 @@ class _FakeCoordinator:
         self.last_import_skipped_window_examples = ()
         self.last_import_hourly_coverage_incomplete = False
         self.last_import_writers = None
-
-
-class _FakeCoordinatorEntity(_Subscriptable):
-    def __init__(self, coordinator) -> None:
-        self.coordinator = coordinator
-
-    @property
-    def available(self) -> bool:
-        return True
 
 
 if __name__ == "__main__":

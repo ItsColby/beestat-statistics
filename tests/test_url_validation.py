@@ -3,22 +3,8 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-if __package__:
-    from ._module_loader import load_module
-else:
-    from _module_loader import load_module
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_url_validation_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
-
-
-url_validation = _load_module("url_validation")
+from custom_components.beestat_statistics import url_validation
 
 
 class UrlValidationTest(unittest.TestCase):

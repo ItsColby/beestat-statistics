@@ -3,40 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import types
 import unittest
 from collections.abc import Callable
 from datetime import UTC, date, datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
-if __package__:
-    from ._module_loader import load_module, preserve_modules
-else:
-    from _module_loader import load_module, preserve_modules
-
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_statistics_entry_options_test"
-
-
-def _load_module(name: str):
-    return load_module(ROOT, PACKAGE, name)
+from custom_components.beestat_statistics import api, entry_options
 
 
 class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
     """Validate native filter-date option updates."""
 
     def setUp(self) -> None:
-        preserve_modules(self, ("aiohttp",))
-        aiohttp = types.ModuleType("aiohttp")
-        aiohttp.ClientError = RuntimeError
-        aiohttp.ClientSession = object
-        sys.modules["aiohttp"] = aiohttp
-        _load_module("const")
-        _load_module("api")
-        _load_module("config_payload")
-        self.entry_options = _load_module("entry_options")
+        self.entry_options = entry_options
 
     def test_filter_change_timestamp_accepts_unique_local_and_explicit_folds(
         self,
@@ -99,7 +79,6 @@ class EntryOptionsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(coordinator.rebuild_count, 0)
 
     async def test_replacement_refreshes_when_dismiss_fails(self) -> None:
-        api = sys.modules[f"{PACKAGE}.api"]
         for error in (api.BeestatApiError("failed"), RuntimeError("unexpected")):
             with self.subTest(error_type=type(error).__name__):
                 coordinator = _FakeCoordinator(dismiss_error=error)

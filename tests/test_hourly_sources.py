@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-import importlib
 import json
-import sys
-import types
 import unittest
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from pathlib import Path
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "beestat_statistics"
-PACKAGE = "beestat_hourly_sources_test"
-package = sys.modules.setdefault(PACKAGE, types.ModuleType(PACKAGE))
-package.__path__ = [str(ROOT)]
-sources = importlib.import_module(f"{PACKAGE}.hourly_sources")
+from custom_components.beestat_statistics import hourly_sources as sources
 
 
 def identity():

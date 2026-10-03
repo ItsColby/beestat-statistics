@@ -3,21 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import sys
 import threading
-import types
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from tests.test_api_response import (
-    PACKAGE,
-    _FakeResponse,
-    _FakeSession,
-    _load_api_module,
-)
+from custom_components.beestat_statistics import api, raw_points
+from custom_components.beestat_statistics import config_model as config
+from tests.test_api_response import _FakeResponse, _FakeSession
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
 END = START + timedelta(days=1)
@@ -25,15 +19,8 @@ END = START + timedelta(days=1)
 
 class RawPointsTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.old_aiohttp = sys.modules.get("aiohttp")
-        stub = types.ModuleType("aiohttp")
-        stub.ClientError = type("ClientError", (Exception,), {})
-        stub.ClientSession = object
-        sys.modules["aiohttp"] = stub
-        self.api = _load_api_module()
-        sys.modules.pop(f"{PACKAGE}.raw_points", None)
-        self.raw = importlib.import_module(f"{PACKAGE}.raw_points")
-        config = importlib.import_module(f"{PACKAGE}.config_model")
+        self.api = api
+        self.raw = raw_points
         self.config = config.BeestatConfig(
             (config.ConfiguredThermostat(1, "zone", "Zone"),),
             (
@@ -42,12 +29,6 @@ class RawPointsTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-
-    def tearDown(self):
-        if self.old_aiohttp is None:
-            sys.modules.pop("aiohttp", None)
-        else:
-            sys.modules["aiohttp"] = self.old_aiohttp
 
     def identity(self, request, **changes):
         params = {"config_entry_id": "fixture-entry", "metadata_fetched_at": START}
