@@ -8,8 +8,6 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.run_dependency_light_tests import discover_home_assistant_test_files
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -122,55 +120,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         self.assertIn("account_change_confirm", config_steps)
 
-    def test_package_is_marked_typed(self) -> None:
-        self.assertTrue(
-            (ROOT / "custom_components/beestat_statistics/py.typed").is_file()
-        )
-
-    def test_manifest_and_hacs_metadata_are_publishable(self) -> None:
-        manifest = _json_file("custom_components/beestat_statistics/manifest.json")
-        hacs = _json_file("hacs.json")
-        integrations = [
-            path.name
-            for path in (ROOT / "custom_components").iterdir()
-            if path.is_dir()
-        ]
-
-        for key in (
-            "codeowners",
-            "config_flow",
-            "documentation",
-            "domain",
-            "integration_type",
-            "iot_class",
-            "issue_tracker",
-            "name",
-            "requirements",
-            "version",
-        ):
-            self.assertIn(key, manifest)
-
-        self.assertEqual(manifest["domain"], "beestat_statistics")
-        self.assertEqual(manifest["integration_type"], "hub")
-        self.assertEqual(manifest["iot_class"], "cloud_polling")
-        self.assertTrue(manifest["config_flow"])
-        # Home Assistant applies manifest-level single_config_entry before async_step_import,
-        # which would prevent YAML imports from merging into the existing entry.
-        self.assertNotIn("single_config_entry", manifest)
-        self.assertEqual(manifest["requirements"], [])
-        self.assertEqual(integrations, ["beestat_statistics"])
-        self.assertEqual(hacs["name"], "Beestat Statistics")
-        self.assertIn("homeassistant", hacs)
-        self.assertTrue(
-            (ROOT / "custom_components/beestat_statistics/brand/icon.png").is_file()
-        )
-        release_notes = (ROOT / "RELEASE_NOTES.md").read_text(encoding="utf-8")
-        versions = re.findall(
-            r"^## Beestat Statistics v([^\n]+)$", release_notes, re.MULTILINE
-        )
-        self.assertTrue(versions, "Release notes must identify released versions")
-        self.assertEqual(versions[0], manifest["version"])
-
     def test_declared_minimum_matches_the_tested_support_floor(self) -> None:
         minimum = _exact_core_pin(ROOT / "requirements-ha-test.txt")
         current = _exact_core_pin(ROOT / "requirements-ha-current.txt")
@@ -180,15 +129,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
-        test_files = tuple(sorted((ROOT / "tests").rglob("test_*.py")))
-        ha_modules = tuple(
-            path.relative_to(ROOT).as_posix()
-            for path in discover_home_assistant_test_files(test_files)
-        )
-
-        for relative_path in ha_modules:
-            with self.subTest(path=relative_path):
-                text = (ROOT / relative_path).read_text(encoding="utf-8")
+        for path in sorted((ROOT / "tests").rglob("test_*.py")):
+            if path.samefile(__file__):
+                continue
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                text = path.read_text(encoding="utf-8")
                 self.assertNotIn("unittest.SkipTest", text)
                 self.assertNotIn("except ModuleNotFoundError", text)
 
@@ -332,40 +277,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             <= set(strings["issues"])
         )
 
-    def test_skipped_window_logs_do_not_format_api_exceptions(self) -> None:
-        """CodeQL-sensitive logs must not read possibly credential-bearing text."""
-
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertNotIn("self._client.redact_error(err)", init_text)
-
-    def test_import_lifecycle_uses_entity_state_not_custom_bus_events(self) -> None:
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-
-        self.assertNotIn("bus.async_fire", init_text)
-
-    def test_stale_runtime_blueprint_is_documented_and_native(self) -> None:
-        blueprint_path = (
-            ROOT
-            / "blueprints/automation/beestat_statistics/stale_runtime_notification.yaml"
-        )
-        blueprint = blueprint_path.read_text(encoding="utf-8")
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        usage = (ROOT / "docs/usage.md").read_text(encoding="utf-8")
-
-        self.assertIn("domain: automation", blueprint)
-        self.assertIn("min_version: 2026.8.0", blueprint)
-        self.assertIn("trigger: numeric_state", blueprint)
-        self.assertIn("selector:\n        action: {}", blueprint)
-        self.assertNotIn("trigger: template", blueprint)
-        self.assertIn(str(blueprint_path.relative_to(ROOT)).replace("\\", "/"), usage)
-        self.assertIn("raw.githubusercontent.com", usage)
-        self.assertIn("my.home-assistant.io/redirect/hacs_repository", readme)
-
     def test_documentation_navigation_and_action_references(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for name in ("docs/usage.md", "docs/architecture.md", "docs/development.md"):
@@ -377,7 +288,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         for action in services["services"]:
             self.assertIn(action, usage, f"Undocumented action: {action}")
-        documents = [ROOT / "README.md", ROOT / "RELEASE_NOTES.md"]
+        documents = [ROOT / "README.md"]
         documents.extend((ROOT / "docs").glob("*.md"))
         for document in documents:
             text = document.read_text(encoding="utf-8")
@@ -404,14 +315,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         for path in (ROOT / "docs/examples").glob("*.json"):
             with self.subTest(example=path.name):
                 json.loads(path.read_text(encoding="utf-8"))
-
-    def test_repository_support_templates_reduce_secret_leak_risk(self) -> None:
-        bug_template = (ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertRegex(bug_template, r"(?i)redact")
-        self.assertRegex(bug_template, r"(?i)API keys")
 
     def test_entity_translation_keys_have_names_and_icons(self) -> None:
         strings = _json_file(

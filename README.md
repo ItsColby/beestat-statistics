@@ -79,7 +79,8 @@ and latest mutation receipt.
   source identity, history, runtime estimates and action replay.
 - [Development](docs/development.md): reproducible checks, source inventory and
   release preparation.
-- [Release notes](RELEASE_NOTES.md): changes associated with each released version.
+- [Releases](https://github.com/ItsColby/beestat-statistics/releases): changes in
+  each released version.
 
 For a problem, start with the integration's **Status** sensor and Home Assistant
 Repairs. Download diagnostics from the integration entry and inspect them before
