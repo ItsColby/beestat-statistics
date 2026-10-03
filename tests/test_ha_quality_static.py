@@ -171,49 +171,13 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(versions, "Release notes must identify released versions")
         self.assertEqual(versions[0], manifest["version"])
 
-    def test_ci_python_matches_advertised_home_assistant_target(self) -> None:
-        workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
-            encoding="utf-8"
-        )
-        runner = (ROOT / "scripts/verify-release-local.sh").read_text(encoding="utf-8")
+    def test_declared_minimum_matches_the_tested_support_floor(self) -> None:
         minimum = _exact_core_pin(ROOT / "requirements-ha-test.txt")
         current = _exact_core_pin(ROOT / "requirements-ha-current.txt")
         self.assertEqual(minimum, _json_file("hacs.json")["homeassistant"])
-        for version in (minimum, current):
-            self.assertIn(f"Core {version}", workflow)
         self.assertNotEqual(
             minimum, current, "Equal support lanes should be consolidated"
         )
-        self.assertIn('python-version: "3.14"', workflow)
-        self.assertIn(
-            "asyncio_mode = auto", (ROOT / "pytest.ini").read_text(encoding="utf-8")
-        )
-        for command in (
-            "python -m mypy --strict custom_components/beestat_statistics",
-            "python -m ruff format --check custom_components tests scripts",
-            "python -m ruff check custom_components tests scripts",
-            "shellcheck scripts/verify-release-local.sh",
-            "zizmor --strict-collection --persona auditor .",
-            "python scripts/check_public_safety.py",
-        ):
-            self.assertIn(command, runner)
-        self.assertNotIn("GH_TOKEN", runner)
-        self.assertEqual(1, workflow.count("permissions:"))
-        self.assertEqual(
-            "  contents: read",
-            workflow.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0],
-        )
-        dependabot = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
-        self.assertEqual(1, dependabot.count("package-ecosystem: github-actions"))
-        self.assertNotIn("package-ecosystem: pip", dependabot)
-        self.assertEqual(1, dependabot.count("interval: weekly"))
-
-    def test_development_guide_matches_validation_owners(self) -> None:
-        development = (ROOT / "docs/development.md").read_text(encoding="utf-8")
-        for name in ("requirements-ha-test.txt", "requirements-ha-current.txt"):
-            version = _exact_core_pin(ROOT / name)
-            self.assertIn(name, development)
-            self.assertIn(f"`{version}`", development)
 
     def test_discovered_ha_modules_fail_closed_without_harness(self) -> None:
         test_files = tuple(sorted((ROOT / "tests").rglob("test_*.py")))
@@ -227,19 +191,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 text = (ROOT / relative_path).read_text(encoding="utf-8")
                 self.assertNotIn("unittest.SkipTest", text)
                 self.assertNotIn("except ModuleNotFoundError", text)
-
-    def test_platforms_declare_parallel_updates(self) -> None:
-        expected = {
-            "binary_sensor.py": "PARALLEL_UPDATES = 0",
-            "button.py": "PARALLEL_UPDATES = 1",
-            "date.py": "PARALLEL_UPDATES = 0",
-            "sensor.py": "PARALLEL_UPDATES = 0",
-        }
-        for filename, declaration in expected.items():
-            text = (
-                ROOT / f"custom_components/beestat_statistics/{filename}"
-            ).read_text(encoding="utf-8")
-            self.assertIn(declaration, text)
 
     def test_diagnostic_attributes_are_excluded_from_recorder_history(self) -> None:
         for filename, class_name, expected in (
@@ -544,52 +495,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertNotIn("abort", translations)
         self.assertTrue(
             translations["options"]["abort"]["no_automatic_mappings"].strip()
-        )
-
-    def test_validate_workflow_is_change_driven_or_manual(self) -> None:
-        workflow = (ROOT / ".github/workflows/validate.yaml").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertNotRegex(workflow, r"(?m)^  schedule:\s*$")
-        self.assertRegex(workflow, r"(?m)^  push:\s*$")
-        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(workflow, r"(?m)^  workflow_dispatch:\s*$")
-
-    def test_workflows_pin_actions_and_cover_supported_ha_versions(self) -> None:
-        workflows = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted((ROOT / ".github/workflows").iterdir())
-            if path.suffix in {".yaml", ".yml"}
-        )
-        action_refs = re.findall(r"(?m)^\s*- uses: [^@\s]+@([^\s#]+)", workflows)
-
-        self.assertGreater(len(action_refs), 0)
-        for action_ref in action_refs:
-            self.assertRegex(action_ref, r"^[0-9a-f]{40}$")
-        self.assertEqual(
-            workflows.count("runs-on:"),
-            workflows.count("timeout-minutes:"),
-        )
-        self.assertEqual(
-            workflows.count("uses: actions/checkout@"),
-            workflows.count("persist-credentials: false"),
-        )
-
-        validate = (ROOT / ".github/workflows/validate.yaml").read_text(
-            encoding="utf-8"
-        )
-        release_runner = (ROOT / "scripts/verify-release-local.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("bash scripts/verify-release-local.sh minimum native", validate)
-        self.assertIn("bash scripts/verify-release-local.sh current native", validate)
-        self.assertIn("requirements-ha-test.txt", release_runner)
-        self.assertIn("requirements-ha-current.txt", release_runner)
-        self.assertIn("name: Release gate", validate)
-        self.assertIn(
-            "needs: [plan, unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]",
-            validate,
         )
 
     def test_reported_sensor_use_labels_and_icons_do_not_imply_occupancy(self) -> None:

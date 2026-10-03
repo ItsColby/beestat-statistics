@@ -2191,138 +2191,48 @@ async def test_options_flow_confirms_scope_removal_and_preserves_other_options(
     assert entry.options == result["data"]
 
 
-async def test_options_flow_returns_to_source_scope_after_discovery_drift(
-    hass: HomeAssistant,
-) -> None:
-    """Test a stale destructive preview cannot commit after source discovery changes."""
-
-    entry = _add_mock_entry(hass)
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            )
-        ],
-        sensors=[],
-        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
-    )
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {"next_step_id": "source_scope"},
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            "included_thermostat_ids": [],
-            "included_sensor_ids": [],
-        },
-    )
-    assert result["step_id"] == "source_scope_confirm"
-
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            ),
-            ConfiguredThermostat(
-                thermostat_id=1002,
-                name="Zone B",
-                slug="zone_b",
-            ),
-        ],
-        sensors=[],
-        thermostat_rows=[
+_ZONE_A = ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
+_ZONE_B = ConfiguredThermostat(thermostat_id=1002, name="Zone B", slug="zone_b")
+_SCOPE_DRIFT = {
+    "discovery": {
+        "thermostats": [_ZONE_A, _ZONE_B],
+        "thermostat_rows": [
             {"id": 1001, "name": "Zone A"},
             {"id": 1002, "name": "Zone B"},
         ],
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_scope"
-    assert result["data_schema"]({})["included_thermostat_ids"] == ["1001", "1002"]
-    reload.assert_not_called()
-    assert entry.options == {
-        CONF_POINT_LOOKBACK_DAYS: 30,
-        CONF_SCAN_INTERVAL_SECONDS: 900,
-    }
+    },
+    "inactive_after_confirm": {
+        "thermostats": [],
+        "thermostat_rows": [{"id": 1001, "name": "Zone A", "inactive": True}],
+    },
+    "inactive": {
+        "thermostats": [_ZONE_A],
+        "thermostat_rows": [{"id": 1001, "name": "Zone A", "inactive": True}],
+    },
+}
 
 
-async def test_options_flow_returns_to_source_scope_after_inactive_drift(
-    hass: HomeAssistant,
+@pytest.mark.parametrize(
+    ("stage", "drift"),
+    [
+        ("confirm", "discovery"),
+        ("confirm", "inactive_after_confirm"),
+        ("initial_form", "discovery"),
+        ("initial_form", "inactive"),
+    ],
+)
+async def test_options_flow_returns_to_source_scope_after_source_drift(
+    hass: HomeAssistant, stage: str, drift: str
 ) -> None:
-    """Test a destructive preview expires when source activity changes."""
+    """Test source discovery or activity drift reopens the scope form unsaved.
+
+    A stale destructive preview cannot commit, and changes before the first
+    scope submission are shown instead of being saved.
+    """
 
     entry = _add_mock_entry(hass)
     entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            )
-        ],
-        sensors=[],
-        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
-    )
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {"next_step_id": "source_scope"},
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            "included_thermostat_ids": [],
-            "included_sensor_ids": [],
-        },
-    )
-    assert result["step_id"] == "source_scope_confirm"
-
-    entry.runtime_data = _runtime_data(
-        thermostats=[],
-        sensors=[],
-        thermostat_rows=[{"id": 1001, "name": "Zone A", "inactive": True}],
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_scope"
-    reload.assert_not_called()
-    assert entry.options == {
-        CONF_POINT_LOOKBACK_DAYS: 30,
-        CONF_SCAN_INTERVAL_SECONDS: 900,
-    }
-
-
-async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
-    hass: HomeAssistant,
-) -> None:
-    """Test discovery changes are shown before the first scope submission."""
-
-    entry = _add_mock_entry(hass)
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            )
-        ],
+        thermostats=[_ZONE_A],
         sensors=[],
         thermostat_rows=[{"id": 1001, "name": "Zone A"}],
     )
@@ -2332,94 +2242,47 @@ async def test_options_flow_refreshes_source_scope_after_initial_form_drift(
         {"next_step_id": "source_scope"},
     )
     assert result["data_schema"]({})["included_thermostat_ids"] == ["1001"]
-
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            ),
-            ConfiguredThermostat(
-                thermostat_id=1002,
-                name="Zone B",
-                slug="zone_b",
-            ),
-        ],
-        sensors=[],
-        thermostat_rows=[
-            {"id": 1001, "name": "Zone A"},
-            {"id": 1002, "name": "Zone B"},
-        ],
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+    if stage == "confirm":
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
             {
-                "included_thermostat_ids": ["1001"],
+                "included_thermostat_ids": [],
                 "included_sensor_ids": [],
             },
+        )
+        assert result["step_id"] == "source_scope_confirm"
+        submission: dict[str, list[str]] = {}
+    else:
+        submission = {
+            "included_thermostat_ids": ["1001"],
+            "included_sensor_ids": [],
+        }
+
+    entry.runtime_data = _runtime_data(sensors=[], **_SCOPE_DRIFT[drift])
+    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            submission,
         )
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "source_scope"
-    assert result["data_schema"]({})["included_thermostat_ids"] == ["1001", "1002"]
+    if drift == "discovery":
+        assert result["data_schema"]({})["included_thermostat_ids"] == [
+            "1001",
+            "1002",
+        ]
+    elif drift == "inactive":
+        thermostat_selector = next(iter(result["data_schema"].schema))
+        assert thermostat_selector.schema == "included_thermostat_ids"
+        assert "inactive" in str(
+            result["data_schema"].schema[thermostat_selector].config
+        )
     reload.assert_not_called()
     assert entry.options == {
         CONF_POINT_LOOKBACK_DAYS: 30,
         CONF_SCAN_INTERVAL_SECONDS: 900,
     }
-
-
-async def test_options_flow_refreshes_source_scope_after_initial_inactive_drift(
-    hass: HomeAssistant,
-) -> None:
-    """Test activity-label changes are shown before scope submission."""
-
-    entry = _add_mock_entry(hass)
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            )
-        ],
-        sensors=[],
-        thermostat_rows=[{"id": 1001, "name": "Zone A"}],
-    )
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {"next_step_id": "source_scope"},
-    )
-
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(
-                thermostat_id=1001,
-                name="Zone A",
-                slug="zone_a",
-            )
-        ],
-        sensors=[],
-        thermostat_rows=[{"id": 1001, "name": "Zone A", "inactive": True}],
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {
-                "included_thermostat_ids": ["1001"],
-                "included_sensor_ids": [],
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "source_scope"
-    thermostat_selector = next(iter(result["data_schema"].schema))
-    assert thermostat_selector.schema == "included_thermostat_ids"
-    assert "inactive" in str(result["data_schema"].schema[thermostat_selector].config)
-    reload.assert_not_called()
 
 
 async def test_options_flow_reconfirms_changed_scope_removal_count(
