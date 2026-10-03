@@ -76,3 +76,8 @@ python_version = "3.14"
 strict = true
 warn_unused_configs = true
 show_error_codes = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
