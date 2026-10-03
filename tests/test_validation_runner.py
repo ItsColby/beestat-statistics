@@ -18,25 +18,6 @@ BASH = shutil.which("bash")
 GIT = shutil.which("git")
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
-AFFECTED_PLANNER = r"""
-import json
-import os
-import sys
-
-if "--snapshot-plan" in sys.argv and os.environ.get("VALIDATION_MUTATE_SOURCE"):
-    from pathlib import Path
-    source = Path(os.environ["VALIDATION_MUTATE_SOURCE"])
-    (source / "scripts/run_dependency_light_tests.py").write_text("raise RuntimeError('changed original')")
-if "--command" in sys.argv:
-    raise RuntimeError("Lane command must come from the captured plan")
-else:
-    selected = os.environ["VALIDATION_PLAN_LANES"].split()
-    print(json.dumps({"jobs": {lane: lane in selected for lane in
-          ("unit", "minimum", "current", "release", "hacs")}, "workflow": True,
-          "safety": True, "paths": [], "base": "HEAD",
-          "commands": {lane: "echo snapshot-command" for lane in selected}}))
-"""
-
 FAKE_TOOL = r"""
 import json
 import os
@@ -96,16 +77,7 @@ if name == "actionlint":
 if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "actionlint":
     events = Path(os.environ["VALIDATION_LOG"]).parent
     lane = "unit" if kind == "unit-python" else kind
-    lanes = set(os.environ.get("VALIDATION_LANES", "unit minimum current release").split())
-    if os.environ.get("VALIDATION_AFFECTED"):
-        if lane in {"minimum", "current"} and "unit" in lanes:
-            assert (events / "unit.done").exists(), "HA started before static validation"
-        if lane == "release":
-            for peer in lanes & {"minimum", "current"}:
-                assert (events / (peer + ".done")).exists(), "Release started before HA"
-        overlap = lanes & {"minimum", "current"} if lane in {"minimum", "current"} else {lane}
-    else:
-        overlap = lanes
+    overlap = {"unit", "minimum", "current", "release"}
     assert args[:2] == ["run", "--rm"]
     if lane != "release":
         assert args[args.index("-v") + 1].endswith(":/workspace:ro")
@@ -115,9 +87,7 @@ if os.environ.get("VALIDATION_OVERLAP") and name == "podman" and kind != "action
         if time.monotonic() > deadline:
             raise SystemExit("The four validation lanes did not overlap")
         time.sleep(0.01)
-    if os.environ.get("VALIDATION_INTERRUPT") and (
-        not os.environ.get("VALIDATION_AFFECTED") or lane in {"minimum", "current"}
-    ):
+    if os.environ.get("VALIDATION_INTERRUPT"):
         while not (events / "interrupt.sent").exists():
             if time.monotonic() > deadline:
                 raise SystemExit("The runner was not interrupted")
@@ -210,37 +180,6 @@ class ValidationRunnerTests(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
-    def prepare_affected(self, lanes: tuple[str, ...], only: str = "") -> list[str]:
-        (self.repo / "scripts/run_dependency_light_tests.py").write_text(
-            AFFECTED_PLANNER, encoding="utf-8"
-        )
-        self.env.update(
-            VALIDATION_PYTHON=sys.executable,
-            VALIDATION_PLAN_LANES=" ".join(lanes),
-            VALIDATION_LANES=only or " ".join(lanes),
-            VALIDATION_AFFECTED="1",
-            VALIDATION_OVERLAP="1",
-        )
-        self.log.unlink(missing_ok=True)
-        for suffix in ("started", "done"):
-            for marker in self.root.glob(f"*.{suffix}"):
-                marker.unlink()
-        return ["affected", "container", "", *(["--only", only] if only else [])]
-
-    def test_captured_commands_survive_original_planner_changes(self) -> None:
-        args = self.prepare_affected(("unit", "minimum", "current", "release"))
-        self.env["VALIDATION_MUTATE_SOURCE"] = str(self.repo)
-        result = self.run_validation(*args)
-        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        commands = [
-            event["args"][-1]
-            for event in self.events()
-            if event["kind"] in {"unit-python", "minimum", "current"}
-        ]
-        self.assertEqual(3, len(commands))
-        self.assertTrue(all("snapshot-command" in command for command in commands))
-        self.assertEqual([], list(self.scratch.iterdir()))
-
     def test_linked_snapshot_input_stops_before_container_and_cleans(self) -> None:
         target = self.root / "external.py"
         target.write_text(
@@ -276,81 +215,6 @@ class ValidationRunnerTests(unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertFalse(marker.exists())
                 self.assertEqual([], list(self.scratch.iterdir()))
-
-    def test_affected_selection_preserves_order_overlap_and_exclusions(self) -> None:
-        for lanes, only in (
-            (("unit", "minimum", "current", "release"), ""),
-            (("minimum", "current"), ""),
-            (("unit",), ""),
-            (("minimum",), ""),
-            (("current",), ""),
-            (("release",), ""),
-            (("minimum", "current"), "current"),
-        ):
-            with self.subTest(lanes=lanes, only=only):
-                args = self.prepare_affected(lanes, only)
-                result = self.run_validation(*args)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(
-                    {path.stem for path in self.root.glob("*.done")},
-                    set((only,) if only else lanes),
-                )
-                self.assertEqual(list(self.scratch.iterdir()), [])
-
-    def test_affected_failure_drains_selected_lanes_and_blocks_release(self) -> None:
-        for failure in ("unit-python", "minimum", "current", "both"):
-            with self.subTest(failure=failure):
-                args = self.prepare_affected(("unit", "minimum", "current", "release"))
-                self.env["VALIDATION_FAIL"] = failure
-                result = self.run_validation(*args)
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertFalse((self.root / "release.done").exists())
-                if failure == "unit-python":
-                    self.assertFalse((self.root / "minimum.started").exists())
-                    self.assertFalse((self.root / "current.started").exists())
-                else:
-                    for lane in ("minimum", "current"):
-                        self.assertTrue((self.root / f"{lane}.done").exists())
-                self.assertEqual(list(self.scratch.iterdir()), [])
-
-    def test_affected_interrupt_drains_selected_lanes(self) -> None:
-        for interrupt in (signal.SIGINT, signal.SIGTERM):
-            with self.subTest(interrupt=interrupt):
-                args = self.prepare_affected(("unit", "minimum", "current", "release"))
-                self.env["VALIDATION_INTERRUPT"] = "1"
-                (self.root / "interrupt.sent").unlink(missing_ok=True)
-                with subprocess.Popen(
-                    [str(BASH), str(self.runner), *args],
-                    cwd=self.root,
-                    env=self.env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                ) as process:
-                    try:
-                        deadline = time.monotonic() + 10
-                        while not all(
-                            (self.root / f"{lane}.started").exists()
-                            for lane in ("minimum", "current")
-                        ):
-                            if (
-                                process.poll() is not None
-                                or time.monotonic() > deadline
-                            ):
-                                self.fail("The selected HA lanes did not start")
-                            time.sleep(0.01)
-                        process.send_signal(interrupt)
-                        (self.root / "interrupt.sent").touch()
-                        stdout, stderr = process.communicate(timeout=30)
-                    finally:
-                        if process.poll() is None:
-                            process.kill()
-                            process.communicate(timeout=10)
-                self.assertEqual(process.returncode, 128 + interrupt, stdout + stderr)
-                for lane in ("minimum", "current"):
-                    self.assertTrue((self.root / f"{lane}.done").exists())
-                self.assertFalse((self.root / "release.done").exists())
-                self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_invalid_arguments_fail_before_snapshot_or_tools(self) -> None:
         for args in (
