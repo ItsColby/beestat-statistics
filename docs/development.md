@@ -3,131 +3,80 @@
 The [architecture](architecture.md) explains the behavior that changes must
 preserve. Runtime code is in `custom_components/beestat_statistics/`; action
 schemas and English help live beside it. Keep user operations in the
-[user guide](usage.md), and describe release-specific behavior in
-[release notes](../RELEASE_NOTES.md).
+[user guide](usage.md).
 
-## Run the validation lanes
+## Run the checks
 
-Every pull request and `main` push runs every validation lane: unit and static
-checks, both maintained Home Assistant environments, Hassfest, and HACS. Manual
-workflow dispatch runs the same lanes. The stable **Release gate** requires all
-of them to succeed. Reuse evidence whose source and environment have not
-changed; a merge alone does not invalidate it. Local checks do not replace HACS,
-authorize publication, or establish live behavior.
+The [Validate workflow](../.github/workflows/validate.yaml) runs on every pull
+request, `main` push and manual dispatch. Its **Release gate** requires every
+job to succeed:
 
-The maintained runner executes the same validation lanes used by CI. On Windows,
-install Ubuntu 24.04 under WSL2 with rootless Podman, then run from the checkout:
+| Job | What it checks |
+| --- | --- |
+| Unit tests | `pre-commit run --all-files`: Ruff, ShellCheck, actionlint, zizmor, JSON and whitespace hygiene, and Gitleaks over the current tree and Git history |
+| Home Assistant minimum and current | The Core version pinned in `requirements-ha-test.txt` or `requirements-ha-current.txt` with its matching test harness, `pip check`, strict mypy and the complete pytest suite |
+| Hassfest and HACS | The official Home Assistant and HACS validation actions |
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release-local.ps1
-```
-
-On Linux with Podman:
+Install the static checks once and run them before pushing:
 
 ```bash
-bash scripts/verify-release-local.sh all
+python -m pip install --group dev
+pre-commit install
+pre-commit run --all-files
 ```
 
-Both default to `all`. Choose `-Mode unit`, `minimum`, `current` or `release` in
-PowerShell, or use that name instead of `all` in the shell command. Container
-snapshot admission needs an existing host Python 3.14, found through
-`python3.14`, an installed uv runtime, or `VALIDATION_PYTHON`. The public-safety
-path guard rejects linked leaves and ancestors before the payload is copied.
+The Home Assistant suite needs Linux and Python 3.14. Use a separate virtual
+environment for each Core version and install it the way its workflow job
+does: the harness and mypy pins first, then the requirements file, then
+`python -m pip check`. Run `python -m pytest tests` for the complete suite or
+name individual test modules while iterating. Hassfest and HACS run only in CI.
 
-| Lane | What it checks |
-| --- | --- |
-| `unit` | Dependency-light tests, Ruff, compilation, JSON and whitespace, public safety, actionlint, ShellCheck and workflow security checks |
-| `minimum` | Native pytest discovery excluding unit-owned modules in the supported-minimum HA environment, plus strict mypy |
-| `current` | Native pytest discovery excluding unit-owned modules in the current target HA environment |
-| `release` | Hassfest validation of the integration; this lane does not publish |
-
-The minimum is Core `2026.8.0` in
-[`requirements-ha-test.txt`](../requirements-ha-test.txt), paired with harness
-`pytest-homeassistant-custom-component==0.13.354`. The current target is Core
-`2026.9.3` in [`requirements-ha-current.txt`](../requirements-ha-current.txt),
-paired with harness `0.13.366`. Each lane installs Core after its matching
-harness and runs `python -m pip check` after the final dependency installation.
-The HA environments require Linux and Python 3.14.2 or later; native Windows
-Python cannot replace them. Hosted jobs select Python 3.14.
-
-The container backend validates one read-only snapshot of tracked and nonignored
-new files, including uncommitted edits. Its images and tool versions are pinned
-in the runner. `all` runs independent containers concurrently and returns failure
-if any lane fails. Each Python environment is isolated; the named Podman pip
-volume caches downloads, not validation results. On interruption, the container
-runner waits for active lanes before removing the snapshot and returns the
-interrupt status; this wait has no shutdown deadline. Only the unit container
-provisions Git; the Home Assistant lanes exclude the Git-dependent unit tests.
-
-CI passes `native` as the shell runner's second argument. That backend needs
-Python with pip and venv, Go for actionlint and Docker for Hassfest, and runs its
-lanes sequentially in separate temporary Python environments.
-Actionlint provisions the pinned ShellCheck version in its own temporary
-environment. The PowerShell wrapper resolves WSL paths and the checkout's Git
-directory; it is the supported Windows route to the container checks.
-
-For a quick dependency-light check without containers:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install tzdata
-.\.venv\Scripts\python.exe scripts\run_dependency_light_tests.py
-```
-
-The unit selector identifies dependency-light `test_*.py` modules by their imports
-and fails on invalid or empty discovery. Dependency-light unittest modules stay
-directly under `tests/`; HA pytest modules may use subdirectories. Both HA lanes pass `--home-assistant`
-to let pytest discover the complete test tree with the real harness, excluding
-only the modules already assigned to `unit`. New pytest-supported file patterns
-remain covered by native discovery.
-A dependency-light pass does not establish HA compatibility. Report skipped or
-unavailable checks separately from passes.
+Local checks do not replace the hosted jobs, authorize publication or establish
+live behavior.
 
 ## Keep source contracts verifiable
 
-The [Validate workflow](../.github/workflows/validate.yaml) runs the four lanes
-and the separate hosted HACS check, and its **Release gate** requires all five to
-succeed. The [quality inventory](../custom_components/beestat_statistics/quality_scale.yaml)
+The [quality inventory](../custom_components/beestat_statistics/quality_scale.yaml)
 records claimed HA rules; it is not an official certification or an obligation
 to implement every unlisted rule.
 
-The public-safety checker scans current tracked/nonignored files for private
-material, unsafe links and unreviewed binaries. It does not audit Git history.
-Keep diagnostics, household configuration, databases, credentials and deployment
-records outside the public source. Tests and examples use synthetic identities.
+Gitleaks uses its default credential rules plus the repository's
+[`.gitleaks.toml`](../.gitleaks.toml) rules for private paths, addresses,
+hostnames and non-example email addresses. Keep diagnostics, household
+configuration, databases, credentials and deployment records outside the public
+source. Tests and examples use synthetic identities.
 
 For documentation changes, verify claims against their implementation or schema,
 check relative links and examples, and preserve translated placeholders and
-stable labels. Historical records retain their version-specific facts. Avoid
-making prose layout or sentence wording a runtime compatibility requirement.
+stable labels. Avoid making prose layout or sentence wording a runtime
+compatibility requirement.
 
 The API inventory is generated by
 [`check_beestat_api_surface.py`](../scripts/check_beestat_api_surface.py):
 
-```powershell
-.\.venv\Scripts\python.exe scripts\check_beestat_api_surface.py
+```bash
+python scripts/check_beestat_api_surface.py
 ```
 
 The checker reads one immutable upstream revision and verifies the watched blobs
 before comparing with [the saved inventory](beestat-api-surface.json). Review
 actual source drift before using `--update`; that flag replaces the snapshot
 only after a complete acquisition. Integration-use decisions belong in the
-checker and must remain aligned with the generated inventory. The separate
+checker and must remain aligned with the generated inventory. A separate
 monthly workflow runs this check without changing the integration's API scope.
 
 ## Prepare a release
 
-Keep the manifest version and newest release-note version aligned. Validate the
-candidate, then require the protected pull request's validation jobs and
-aggregate check, together with the configured CodeQL checks. Merge through branch protection and require Validate and CodeQL on the resulting
-`main` commit. Inspect complete logs and code-scanning findings; a successful
-analysis job is not proof that it found no issues.
+Validate the candidate through a pull request: require the Validate jobs, the
+**Release gate** and the configured CodeQL checks, then merge through branch
+protection and require the same checks on the resulting `main` commit. Inspect
+complete logs and code-scanning findings; a successful analysis job is not proof
+that it found no issues.
 
 Publish an immutable version tag and GitHub Release against that validated
-commit, matching the manifest. Give the release the appropriate version's notes;
-when using GitHub CLI, pass a Markdown file through `--notes-file` and identify
-the target explicitly. Verify repository metadata, issues, relevant topics and
-the brand icon for HACS distribution. An already immutable release is not an
+commit, matching the manifest version. The GitHub Release body holds that
+version's notes. Verify repository metadata, issues, relevant topics and the
+brand icon for HACS distribution. An already immutable release is not an
 editable staging area.
 
 Installing through HACS, restarting an HA instance and proving adoption are

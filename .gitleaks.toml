@@ -1,0 +1,43 @@
+title = "Beestat Statistics public-source rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "windows-absolute-path"
+description = "Absolute Windows path"
+regex = '''\b[A-Za-z]:[\\/][^\s]'''
+
+[[rules]]
+id = "local-user-path"
+description = "Local user home path"
+regex = '''(?:^|[\s"'(=:])/(?:home|Users)/[^/\s]+/'''
+
+[[rules]]
+id = "private-ipv4"
+description = "Private IPv4 address"
+regex = '''\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b'''
+
+[[rules]]
+id = "local-hostname"
+description = "Local network hostname"
+regex = '''(?i)\b[a-z0-9_-]+\.(?:home|lan|local)(?:[^\w-]|$)'''
+
+[[rules]]
+id = "non-example-email"
+description = "Email address outside reserved example domains"
+regex = '''\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'''
+
+[[rules.allowlists]]
+regexTarget = "match"
+regexes = [
+  '''@example\.(?:com|net|org|test)$''',
+  '''^noreply@github\.com$''',
+  '''@users\.noreply\.github\.com$''',
+]
+
+[[allowlists]]
+description = "Hourly-history view tokens are deterministic query digests"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''"view_token": "[0-9a-f]{64}"''']

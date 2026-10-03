@@ -27,8 +27,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - name: Run product-owned unit and static validation
-        run: bash scripts/verify-release-local.sh unit native
+      - run: python -m pip install --group dev
+      - run: pre-commit run --all-files --show-diff-on-failure
 
   home_assistant_minimum:
     name: Home Assistant minimum integration tests (Core 2026.8.0)
@@ -37,13 +37,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - name: Run product-owned minimum-version validation
-        run: bash scripts/verify-release-local.sh minimum native
+      - run: |
+          python -m pip install "pytest-homeassistant-custom-component==0.13.354" "mypy==2.3.0"
+          python -m pip install --upgrade -r requirements-ha-test.txt
+          python -m pip check
+          python -m mypy custom_components/beestat_statistics
+          python -m pytest tests
 
   home_assistant_current:
     name: Home Assistant current integration tests (Core 2026.9.3)
@@ -52,13 +55,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - name: Run product-owned current-version validation
-        run: bash scripts/verify-release-local.sh current native
+      - run: |
+          python -m pip install "pytest-homeassistant-custom-component==0.13.366" "mypy==2.3.0"
+          python -m pip install --upgrade -r requirements-ha-current.txt
+          python -m pip check
+          python -m mypy custom_components/beestat_statistics
+          python -m pytest tests
 
   hassfest:
     name: Hassfest
@@ -67,13 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - name: Run product-owned Hassfest validation
-        run: bash scripts/verify-release-local.sh release native
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # zizmor: ignore[stale-action-refs] upstream publishes only from master
 
   hacs:
     name: HACS
