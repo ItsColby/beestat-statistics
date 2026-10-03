@@ -1,11 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("affected", "all", "unit", "minimum", "current", "release")]
-    [string]$Mode = "affected",
-    [string]$Base,
-    [string]$Head,
-    [string[]]$ChangedPath,
-    [switch]$PlanOnly
+    [ValidateSet("all", "unit", "minimum", "current", "release")]
+    [string]$Mode = "all"
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,22 +16,6 @@ $actualRoot = (& git --no-replace-objects -C $repoRoot rev-parse --show-toplevel
 if ($LASTEXITCODE -ne 0 -or -not $actualRoot -or (Resolve-Path -LiteralPath $actualRoot).Path -ne $repoRoot) {
     throw 'Git target root does not match the wrapper source root.'
 }
-$selection = @()
-if ($Mode -eq 'affected') {
-    foreach ($ref in @(@('--base', $Base), @('--head', $Head))) {
-        if ($ref[1]) {
-            $oid = (& git --no-replace-objects -C $repoRoot rev-parse --verify --end-of-options "$($ref[1])^{commit}")
-            if ($LASTEXITCODE -ne 0 -or -not $oid) { throw 'Could not bind the validation comparison to a commit.' }
-            $selection += @($ref[0], $oid.Trim())
-        }
-    }
-    foreach ($path in $ChangedPath) { $selection += @('--path', $path) }
-    if ($PlanOnly) {
-        & python (Join-Path $repoRoot 'scripts/run_dependency_light_tests.py') '--plan' @selection --plan-only
-        if ($LASTEXITCODE -ne 0) { throw 'Validation applicability could not be resolved.' }
-        return
-    }
-} elseif ($PlanOnly) { throw 'PlanOnly requires affected mode.' }
 $wslInput = $repoRoot -replace "\\", "/"
 $linuxRootOutput = & wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslInput
 if ($LASTEXITCODE -ne 0 -or -not $linuxRootOutput) { throw "Could not map the repository into Ubuntu-24.04." }
@@ -49,5 +29,5 @@ $linuxGitDirOutput = & wsl.exe -d Ubuntu-24.04 -- wslpath -a -u $wslGitInput
 if ($LASTEXITCODE -ne 0 -or -not $linuxGitDirOutput) { throw "Could not map the repository Git directory into Ubuntu-24.04." }
 $linuxGitDir = ($linuxGitDirOutput -join "`n").Trim()
 
-& wsl.exe -d Ubuntu-24.04 -- bash "$linuxRoot/scripts/verify-release-local.sh" $Mode container $linuxGitDir @selection
+& wsl.exe -d Ubuntu-24.04 -- bash "$linuxRoot/scripts/verify-release-local.sh" $Mode container $linuxGitDir
 if ($LASTEXITCODE -ne 0) { throw "Local release validation failed with exit code $LASTEXITCODE." }

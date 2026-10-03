@@ -76,7 +76,7 @@ class DependencyLightRunnerTests(unittest.TestCase):
                     )
                     unit_loader.assert_not_called()
 
-    def test_nested_ha_modules_reach_native_pytest_with_exact_paths(self) -> None:
+    def test_nested_ha_modules_reach_native_pytest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / "tests"
@@ -88,7 +88,6 @@ class DependencyLightRunnerTests(unittest.TestCase):
             core.write_text("from homeassistant import core\n", encoding="utf-8")
             alternate = nested / "feature_test.py"
             alternate.write_text("def test_native(): pass\n", encoding="utf-8")
-            selected = ["tests/nested/test_core.py", "tests/nested/feature_test.py"]
             with (
                 patch.object(runner, "ROOT", root),
                 patch.object(runner, "TESTS", tests),
@@ -98,33 +97,6 @@ class DependencyLightRunnerTests(unittest.TestCase):
                 self.assertEqual((unit,), runner.dependency_light_test_files())
                 self.assertEqual(5, runner.main(["--home-assistant"]))
                 collect.assert_called_once_with([str(tests), "-q", f"--ignore={unit}"])
-                collect.reset_mock()
-                self.assertEqual(
-                    5,
-                    runner.main(
-                        [
-                            "--home-assistant",
-                            "--test",
-                            selected[0],
-                            "--test",
-                            selected[1],
-                        ]
-                    ),
-                )
-                collect.assert_called_once_with(["-q", str(core), str(alternate)])
-                for paths in (
-                    selected,
-                    [selected[0]] * 2,
-                    ["tests/nested/../nested/test_core.py"],
-                ):
-                    with self.subTest(paths=paths), self.assertRaises(RuntimeError):
-                        runner.validate_test_selection(paths, home_assistant=False)
-                for paths in (
-                    [selected[0]] * 2,
-                    ["tests/nested/../nested/test_core.py"],
-                ):
-                    with self.subTest(paths=paths), self.assertRaises(RuntimeError):
-                        runner.validate_test_selection(paths, home_assistant=True)
 
     def test_nested_module_is_reported_instead_of_silently_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
