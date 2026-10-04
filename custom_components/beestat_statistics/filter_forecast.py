@@ -19,6 +19,7 @@ FILTER_FORECAST_QUALITY_FIELDS = frozenset(
         "runtime_is_lower_bound",
         "runtime_source_data_end",
         "runtime_unknown_interval_minutes",
+        "earliest_due_date",
         "runtime_boundary_uncertainty_minutes",
         "runtime_boundary_precision_minutes",
         "runtime_threshold_reached",
@@ -69,6 +70,8 @@ class FilterForecast:
     recent_runtime_window_end: date | None = None
     recent_runtime_complete_days: int = 0
     recent_runtime_excluded_days: int = 0
+    # Earliest replacement date if the whole unknown interval was fan runtime.
+    earliest_due_date: date | None = None
     # Revision input; the published uncertainty also includes the unreported tail.
     runtime_source_unknown_interval_minutes: float | None = None
 
@@ -100,15 +103,12 @@ def build_filter_forecast(
     )
     if threshold_reached is True:
         remaining_runtime_hours = 0.0
+    threshold_date = getattr(summary, "filter_runtime_threshold_date", None)
     runtime_due_date = _runtime_due_date(
         today,
         remaining_runtime_hours,
         recent_runtime_hours_per_day,
-        threshold_date=(
-            getattr(summary, "filter_runtime_threshold_date", None)
-            if summary is not None
-            else None
-        ),
+        threshold_date=threshold_date,
     )
     max_age_due_date = (
         _date_after_days(changed_date, thermostat.filter_max_age_days)
@@ -116,6 +116,28 @@ def build_filter_forecast(
         else None
     )
     due_date = _earliest_date(runtime_due_date, max_age_due_date)
+    unknown_interval_seconds = (
+        observation.unknown_interval_seconds if observation is not None else None
+    )
+    earliest_due_date = None
+    if runtime_hours is not None and unknown_interval_seconds is not None:
+        earliest_remaining_hours = (
+            0.0
+            if threshold_reached is True
+            else _remaining_runtime_hours(
+                runtime_hours + unknown_interval_seconds / 3600,
+                thermostat.filter_lifetime_runtime_hours,
+            )
+        )
+        earliest_due_date = _earliest_date(
+            _runtime_due_date(
+                today,
+                earliest_remaining_hours,
+                recent_runtime_hours_per_day,
+                threshold_date=threshold_date,
+            ),
+            max_age_due_date,
+        )
     days_remaining = (due_date - today).days if due_date is not None else None
     due = days_remaining <= 0 if days_remaining is not None else None
     due_soon = (
@@ -184,6 +206,7 @@ def build_filter_forecast(
         recent_runtime_window_end=rate.window_end if rate is not None else None,
         recent_runtime_complete_days=rate.complete_days if rate is not None else 0,
         recent_runtime_excluded_days=rate.excluded_days if rate is not None else 0,
+        earliest_due_date=earliest_due_date,
         runtime_source_unknown_interval_minutes=(
             observation.source_unknown_interval_seconds / 60
             if observation is not None
@@ -196,10 +219,13 @@ def build_filter_forecast(
 def filter_forecast_revision(forecast: FilterForecast) -> str:
     """Revise forecast semantics and source quality, not elapsed-only telemetry."""
 
+    # The unknown interval includes elapsed unreported time, and so does the
+    # earliest date derived from it.
+    elapsed_fields = {"runtime_unknown_interval_minutes", "earliest_due_date"}
     payload = "\x1f".join(
         _revision_value(getattr(forecast, field.name))
         for field in fields(forecast)
-        if field.name != "runtime_unknown_interval_minutes"
+        if field.name not in elapsed_fields
     )
     return sha256(payload.encode()).hexdigest()[:16]
 
