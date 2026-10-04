@@ -29,10 +29,6 @@ live behavior.
 
 ## Keep source contracts verifiable
 
-The [quality inventory](../custom_components/beestat_statistics/quality_scale.yaml)
-records claimed HA rules; it is not an official certification or an obligation
-to implement every unlisted rule.
-
 Gitleaks uses its default credential rules plus the repository's
 [`.gitleaks.toml`](../.gitleaks.toml) rules for private paths, addresses,
 hostnames and non-example email addresses. Keep diagnostics, household
