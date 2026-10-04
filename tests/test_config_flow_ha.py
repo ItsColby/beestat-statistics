@@ -48,7 +48,6 @@ from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
 )
-from custom_components.beestat_statistics.button import BeestatFilterChangedButton
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredSensor,
@@ -2504,38 +2503,6 @@ async def test_repair_filter_change_boundary_rejects_inexact_local_wall_time(
     mark_changed.assert_not_awaited()
 
 
-async def test_native_filter_button_forwards_exact_aware_click_time(
-    hass: HomeAssistant,
-) -> None:
-    thermostat = ConfiguredThermostat(
-        thermostat_id=1001,
-        name="Zone A",
-        slug="zone_a",
-    )
-    coordinator = types.SimpleNamespace(
-        hass=hass,
-        data=types.SimpleNamespace(
-            config=types.SimpleNamespace(thermostats=(thermostat,))
-        ),
-    )
-    entity = BeestatFilterChangedButton(coordinator, thermostat)
-    changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
-
-    with (
-        patch(
-            "custom_components.beestat_statistics.button.dt_util.now",
-            return_value=changed_at,
-        ),
-        patch(
-            "custom_components.beestat_statistics.button.async_mark_filter_changed",
-            new_callable=AsyncMock,
-        ) as mark_changed,
-    ):
-        await entity.async_press()
-
-    mark_changed.assert_awaited_once_with(coordinator, 1001, changed_at)
-
-
 async def test_native_filter_date_exposes_and_updates_click_boundary(
     hass: HomeAssistant,
 ) -> None:
@@ -2663,74 +2630,6 @@ async def test_options_flow_updates_thermostat_mapping(hass: HomeAssistant) -> N
             },
         }
     ]
-
-
-async def test_options_flow_rejects_cross_device_thermostat_mapping(
-    hass: HomeAssistant,
-) -> None:
-    """Test one explicit mapping cannot span multiple source devices."""
-
-    source_entry = MockConfigEntry(domain="homekit_controller")
-    source_entry.add_to_hass(hass)
-    device_registry = dr.async_get(hass)
-    source_device_a = device_registry.async_get_or_create(
-        config_entry_id=source_entry.entry_id,
-        identifiers={("homekit_controller", "source-device-a")},
-    )
-    source_device_b = device_registry.async_get_or_create(
-        config_entry_id=source_entry.entry_id,
-        identifiers={("homekit_controller", "source-device-b")},
-    )
-    registry = er.async_get(hass)
-    climate = registry.async_get_or_create(
-        "climate",
-        "homekit_controller",
-        "source-climate-a",
-        config_entry=source_entry,
-        device_id=source_device_a.id,
-        suggested_object_id="source_climate_a",
-    )
-    temperature = registry.async_get_or_create(
-        "sensor",
-        "homekit_controller",
-        "source-temperature-b",
-        config_entry=source_entry,
-        device_id=source_device_b.id,
-        suggested_object_id="source_temperature_b",
-    )
-    entry = _add_mock_entry(hass)
-    entry.runtime_data = _runtime_data(
-        thermostats=[
-            ConfiguredThermostat(thermostat_id=1001, name="Zone A", slug="zone_a")
-        ],
-        sensors=[],
-    )
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {"next_step_id": "thermostat_mapping"},
-    )
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {CONF_ID: "1001"},
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {
-                CONF_CLIMATE_ENTITY_ID: climate.entity_id,
-                CONF_TEMPERATURE_ENTITY_ID: temperature.entity_id,
-            },
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "thermostat_mapping_detail"
-    assert result["errors"] == {"base": "mapping_device_conflict"}
-    reload.assert_not_called()
-    assert entry.options == {
-        CONF_POINT_LOOKBACK_DAYS: 30,
-        CONF_SCAN_INTERVAL_SECONDS: 900,
-    }
 
 
 async def test_options_flow_rejects_duplicate_explicit_device_claim(

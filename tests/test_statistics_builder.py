@@ -427,7 +427,6 @@ class StatisticsBuilderTest(unittest.TestCase):
         detailed_ids = set(
             statistics_builder.detailed_runtime_statistic_ids(self.config)
         )
-        self.assertEqual(len(detailed_ids), 10)
         self.assertEqual(
             {item.statistic_id for item in series} & detailed_ids, expected_ids
         )

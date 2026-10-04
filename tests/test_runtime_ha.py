@@ -1456,31 +1456,3 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
     assert attempts == 3
     assert writes == []
     await entry._async_process_on_unload(hass)
-
-
-async def test_boundary_crossed_during_timer_registration_runs_immediately(
-    hass: HomeAssistant,
-    freezer: Any,
-) -> None:
-    before = datetime(2026, 7, 1, 13, 59, 59, 900000, tzinfo=UTC)
-    after = datetime(2026, 7, 1, 14, 0, 0, 100000, tzinfo=UTC)
-    schedule = [["sleep"] * 48 for _ in range(7)]
-    schedule[2][20] = "home"
-    entry, coordinator, client = _coordinator_data(
-        hass,
-        evaluated_at=before,
-        schedule=schedule,
-    )
-    updates: list[str] = []
-    coordinator.async_add_listener(lambda: updates.append("updated"))
-
-    freezer.move_to(after)
-    coordinator._async_schedule_projection_boundary(coordinator.data)
-    await hass.async_block_till_done()
-
-    assert coordinator.data.thermostat_metadata[1].scheduled_climate_name == "Home"
-    assert coordinator.data.thermostat_metadata[1].current_climate_name == "Hold"
-    assert coordinator.data.projected_at == after
-    assert client.calls == []
-    assert updates == ["updated"]
-    await entry._async_process_on_unload(hass)

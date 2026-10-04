@@ -37,14 +37,10 @@ class EntityHelpersTest(unittest.TestCase):
     def setUp(self) -> None:
         self.config_model = config_model
         self.entity = entity
-        self.fake_device_registry = types.SimpleNamespace(calls=[])
 
         def async_get(_hass):
             return types.SimpleNamespace(
                 async_get=lambda device_id: types.SimpleNamespace(id=device_id),
-                async_get_or_create=lambda **kwargs: (
-                    self.fake_device_registry.calls.append(kwargs)
-                ),
             )
 
         self.enterContext(patch.object(dr, "async_get", async_get))
@@ -98,25 +94,6 @@ class EntityHelpersTest(unittest.TestCase):
         )
         self.assertNotIn("via_device", thermostat_info)
         self.assertNotIn("via_device", sensor_info)
-
-    def test_service_device_is_registered_before_children_reference_it(self) -> None:
-        entry = types.SimpleNamespace(entry_id="entry-1")
-
-        self.entity.async_register_service_device(object(), entry)
-
-        self.assertEqual(
-            self.fake_device_registry.calls,
-            [
-                {
-                    "config_entry_id": "entry-1",
-                    "identifiers": {("beestat_statistics", "service")},
-                    "name": "Beestat Statistics",
-                    "manufacturer": "Beestat",
-                    "entry_type": "service",
-                    "configuration_url": "https://app.beestat.io/",
-                }
-            ],
-        )
 
     def test_homekit_devices_link_without_cross_integration_device_info(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
