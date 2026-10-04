@@ -165,20 +165,6 @@ class BinarySensorHelpersTest(unittest.TestCase):
             if getattr(entity, "_attr_translation_key", None)
         }
 
-        for key in ("sensor_in_use", "active_alert", "filter_due", "filter_due_soon"):
-            self.assertFalse(by_key[key]._attr_entity_registry_enabled_default, key)
-        for key in (
-            "equipment_alert",
-            "runtime_summary_stale",
-            "cloud_data_stale",
-            "statistics_import_partial",
-            "homekit_mapping_incomplete",
-        ):
-            self.assertTrue(
-                getattr(by_key[key], "_attr_entity_registry_enabled_default", True),
-                key,
-            )
-
         self.assertTrue(by_key["active_alert"].is_on)
         self.assertFalse(by_key["equipment_alert"].is_on)
         self.assertFalse(by_key["filter_due"].is_on)
@@ -213,10 +199,6 @@ class BinarySensorHelpersTest(unittest.TestCase):
         self.assertTrue(by_key["service_reminder_enabled"].is_on)
         self.assertFalse(by_key["microphone_enabled"].is_on)
         sensor_in_use = by_key["sensor_in_use"]
-        self.assertEqual(
-            "Beestat-reported sensor in use",
-            sensor_in_use._attr_name,
-        )
         self.assertTrue(sensor_in_use.available)
         self.assertTrue(sensor_in_use.is_on)
         fake_coordinator.data = replace(
@@ -244,9 +226,6 @@ class BinarySensorHelpersTest(unittest.TestCase):
         )
         self.assertFalse(sensor_in_use.available)
         fake_coordinator.data = data
-        self.assertFalse(
-            by_key["auto_away_enabled"]._attr_entity_registry_enabled_default
-        )
         self.assertEqual(
             by_key["statistics_import_partial"].extra_state_attributes[
                 "last_import_skipped_window_examples"

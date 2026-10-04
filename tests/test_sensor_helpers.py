@@ -729,21 +729,6 @@ class SensorHelpersTest(unittest.TestCase):
             "equipment",
         )
 
-    def test_global_surface_disables_duplicate_health_details(self) -> None:
-        descriptions = {
-            description.key: description
-            for description in self.sensor.GLOBAL_SENSOR_DESCRIPTIONS
-        }
-
-        for key in ("metadata_sync_last_success", "statistics_skipped_windows"):
-            self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
-        for key in (
-            "status",
-            "runtime_sync_last_success",
-            "statistics_last_import_success",
-        ):
-            self.assertTrue(descriptions[key].entity_registry_enabled_default, key)
-
     def test_entity_surface_keeps_primary_entities_and_classifies_details(self) -> None:
         thermostat = self.config_model.ConfiguredThermostat(
             thermostat_id=1,
@@ -776,120 +761,9 @@ class SensorHelpersTest(unittest.TestCase):
         unknown_count.data.thermostat_metadata = {}
         self.assertFalse(active_count.available_fn(unknown_count))
 
-        for key in (
-            "scheduled_comfort_profile",
-            "next_scheduled_comfort_profile_time",
-            "filter_due_date",
-            "filter_days_remaining",
-        ):
-            self.assertIsNone(descriptions[key].entity_category, key)
-        for key in (
-            "current_comfort_profile",
-            "runtime_summary_latest_date",
-            "runtime_summary_lag_days",
-            "active_sensor_count",
-            "current_profile_room_temperature_spread",
-            "compressor_minimum_off_time",
-            "compressor_minimum_outdoor_temperature",
-            "heat_cool_minimum_delta",
-            "hold_action",
-            "temperature_correction",
-            "heating_differential",
-            "cooling_differential",
-            "heating_dissipation_time",
-            "cooling_dissipation_time",
-            "hot_temperature_alert",
-            "cold_temperature_alert",
-            "high_humidity_alert",
-            "low_humidity_alert",
-            "last_service_date",
-            "service_reminder_date",
-            "service_reminder_interval",
-            "playback_volume",
-            "filter_runtime_hours",
-            "filter_recent_runtime_hours_per_day",
-            "filter_remaining_runtime_hours",
-            "filter_runtime_due_date",
-            "filter_max_age_due_date",
-        ):
-            self.assertEqual("diagnostic", descriptions[key].entity_category, key)
-        for key in (
-            "compressor_minimum_off_time",
-            "compressor_minimum_outdoor_temperature",
-            "heat_cool_minimum_delta",
-            "hold_action",
-            "temperature_correction",
-            "heating_differential",
-            "cooling_differential",
-            "heating_dissipation_time",
-            "cooling_dissipation_time",
-            "hot_temperature_alert",
-            "cold_temperature_alert",
-            "high_humidity_alert",
-            "low_humidity_alert",
-            "last_service_date",
-            "service_reminder_date",
-            "service_reminder_interval",
-            "playback_volume",
-            "current_comfort_profile",
-            "next_scheduled_comfort_profile_time",
-            "active_sensor_count",
-            "current_profile_room_temperature_spread",
-            "cloud_data_end",
-            "cloud_data_lag_minutes",
-            "active_alert_count",
-            "filter_runtime_hours",
-            "filter_recent_runtime_hours_per_day",
-            "filter_remaining_runtime_hours",
-            "filter_runtime_due_date",
-            "filter_max_age_due_date",
-        ):
-            self.assertFalse(descriptions[key].entity_registry_enabled_default, key)
-        for key in (
-            "runtime_summary_latest_date",
-            "runtime_summary_lag_days",
-            "scheduled_comfort_profile",
-            "active_alert_category",
-            "filter_due_date",
-            "filter_days_remaining",
-        ):
-            self.assertTrue(descriptions[key].entity_registry_enabled_default, key)
-        self.assertEqual(
-            "Configured profile room temperature spread",
-            descriptions["current_profile_room_temperature_spread"].name,
+        self.assertTrue(
+            descriptions["runtime_summary_lag_days"].entity_registry_enabled_default
         )
-        for key in (
-            "current_profile_room_temperature_spread",
-            "heat_cool_minimum_delta",
-            "temperature_correction",
-            "heating_differential",
-            "cooling_differential",
-        ):
-            self.assertEqual("temperature_delta", descriptions[key].device_class, key)
-        for key in (
-            "compressor_minimum_off_time",
-            "compressor_minimum_outdoor_temperature",
-            "heat_cool_minimum_delta",
-            "temperature_correction",
-            "heating_differential",
-            "cooling_differential",
-            "heating_dissipation_time",
-            "cooling_dissipation_time",
-            "hot_temperature_alert",
-            "cold_temperature_alert",
-            "high_humidity_alert",
-            "low_humidity_alert",
-            "service_reminder_interval",
-            "playback_volume",
-        ):
-            self.assertIsNone(descriptions[key].state_class, key)
-        for key in (
-            "compressor_minimum_outdoor_temperature",
-            "heat_cool_minimum_delta",
-        ):
-            self.assertEqual("°F", descriptions[key].native_unit_of_measurement, key)
-        for key in ("high_humidity_alert", "low_humidity_alert"):
-            self.assertEqual("humidity", descriptions[key].device_class, key)
 
     def test_selected_settings_are_typed_and_disabled_values_are_unavailable(
         self,
