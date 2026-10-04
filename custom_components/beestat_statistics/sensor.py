@@ -14,7 +14,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -54,14 +54,7 @@ from .thermostat_settings import (
 )
 
 if TYPE_CHECKING:
-    from homeassistant.const import EntityCategory
     from homeassistant.helpers.device_registry import DeviceInfo
-else:
-    try:
-        from homeassistant.const import EntityCategory
-        from homeassistant.helpers.device_registry import DeviceInfo
-    except ImportError:  # pragma: no cover - lightweight unit-test stubs
-        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 SensorValue = str | int | float | date | datetime | None
 

@@ -47,11 +47,6 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def mock_recorder_before_hass(recorder_db_url: str) -> None:
-    """Resolve the recorder database before auto-enabled integrations use HA."""
-
-
 @pytest.mark.parametrize(
     ("cancel_at", "rollback_error"),
     [

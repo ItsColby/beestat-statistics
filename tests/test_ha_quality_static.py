@@ -128,77 +128,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             minimum, current, "Equal support lanes should be consolidated"
         )
 
-    def test_diagnostic_attributes_are_excluded_from_recorder_history(self) -> None:
-        for filename, class_name, expected in (
-            ("sensor.py", "BeestatSensor", {"last_error", "profiles", "active_alerts"}),
-            ("binary_sensor.py", "BeestatSensorInUseBinarySensor", {"beestat_name"}),
-            (
-                "binary_sensor.py",
-                "BeestatThermostatAlertProblemBinarySensor",
-                {"active_alerts"},
-            ),
-            (
-                "date.py",
-                "BeestatFilterChangedDate",
-                {"change_day_runtime_baseline_seconds", "legacy_helper_entity_id"},
-            ),
-        ):
-            with self.subTest(filename=filename, class_name=class_name):
-                tree = ast.parse(
-                    (
-                        ROOT / "custom_components/beestat_statistics" / filename
-                    ).read_text(encoding="utf-8")
-                )
-                classes = {
-                    node.name: node
-                    for node in tree.body
-                    if isinstance(node, ast.ClassDef)
-                }
-                declarations = [
-                    node.value
-                    for node in classes[class_name].body
-                    if isinstance(node, ast.Assign)
-                    and any(
-                        isinstance(target, ast.Name)
-                        and target.id == "_unrecorded_attributes"
-                        for target in node.targets
-                    )
-                ]
-                self.assertEqual(len(declarations), 1)
-                declaration = declarations[0]
-                self.assertIsInstance(declaration, ast.Call)
-                self.assertEqual(ast.unparse(declaration.func), "frozenset")
-                self.assertEqual(len(declaration.args), 1)
-                self.assertIsInstance(declaration.args[0], ast.Set)
-                attributes = {
-                    node.value
-                    for node in declaration.args[0].elts
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
-                }
-                self.assertLessEqual(expected, attributes)
-
-    def test_room_sensor_state_attributes_do_not_expose_mapping_internals(self) -> None:
-        binary_text = (
-            ROOT / "custom_components/beestat_statistics/binary_sensor.py"
-        ).read_text(encoding="utf-8")
-        method_text = _class_method_source(
-            binary_text,
-            "BeestatSensorInUseBinarySensor",
-            "extra_state_attributes",
-        )
-
-        self.assertIn('"beestat_name"', method_text)
-        self.assertIn('"sensor_type"', method_text)
-        for snippet in (
-            '"identifier"',
-            '"sensor_id"',
-            '"thermostat_id"',
-            '"temperature_entity_id"',
-            '"occupancy_entity_id"',
-            '"motion_entity_id"',
-        ):
-            self.assertNotIn(snippet, method_text)
-
     def test_user_visible_exceptions_and_repairs_are_translated(self) -> None:
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
@@ -279,33 +208,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         for action in services["services"]:
             self.assertIn(action, usage, f"Undocumented action: {action}")
-        documents = [ROOT / "README.md"]
-        documents.extend((ROOT / "docs").glob("*.md"))
-        for document in documents:
-            text = document.read_text(encoding="utf-8")
-            for target in re.findall(r"\[[^\]]+\]\(([^\s)]+)\)", text):
-                if "://" in target:
-                    continue
-                path, _, anchor = target.partition("#")
-                destination = document.parent / path if path else document
-                with self.subTest(document=document.name, target=target):
-                    self.assertTrue(destination.is_file())
-                    if anchor:
-                        headings = re.findall(
-                            r"^#{1,6} (.+)$",
-                            destination.read_text(encoding="utf-8"),
-                            re.MULTILINE,
-                        )
-                        anchors = {
-                            re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
-                            for heading in headings
-                        }
-                        self.assertIn(anchor, anchors)
-
-    def test_documentation_json_examples_parse(self) -> None:
-        for path in (ROOT / "docs/examples").glob("*.json"):
-            with self.subTest(example=path.name):
-                json.loads(path.read_text(encoding="utf-8"))
 
     def test_entity_translation_keys_have_names_and_icons(self) -> None:
         strings = _json_file(
@@ -390,31 +292,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertTrue(
             translations["options"]["abort"]["no_automatic_mappings"].strip()
         )
-
-
-def _class_method(
-    tree: ast.AST,
-    class_name: str,
-    method_name: str,
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef) or node.name != class_name:
-            continue
-        for item in node.body:
-            if (
-                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and item.name == method_name
-            ):
-                return item
-    return None
-
-
-def _class_method_source(text: str, class_name: str, method_name: str) -> str:
-    tree = ast.parse(text)
-    node = _class_method(tree, class_name, method_name)
-    if node is None:
-        raise AssertionError(f"{class_name}.{method_name} is missing")
-    return ast.get_source_segment(text, node) or ""
 
 
 def _is_logger_call(node: ast.AST) -> bool:

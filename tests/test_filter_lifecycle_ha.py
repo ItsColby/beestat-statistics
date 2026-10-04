@@ -21,11 +21,6 @@ from tests.test_runtime_ha import _coordinator_data
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-def mock_recorder_before_hass(recorder_db_url: str) -> None:
-    """Resolve the recorder database before auto-enabled integrations use HA."""
-
-
 @pytest.mark.usefixtures("recorder_mock")
 async def test_queued_filter_button_cannot_save_after_platform_unload(
     hass: HomeAssistant, freezer: Any

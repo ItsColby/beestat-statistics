@@ -9,6 +9,9 @@ from datetime import UTC, date, datetime
 from math import isfinite
 from typing import Any
 
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+
 from .config_rows import (
     as_bool,
     effective_override_items,
@@ -1069,13 +1072,6 @@ def _explicit_registry_device_ids(
 
 
 def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
-    # Keep Home Assistant optional so pure config-model tests can import this module.
-    try:
-        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
-        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
-    except ImportError:
-        return ()
-
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
     entries_by_device: dict[str, list[Any]] = {}
@@ -1307,13 +1303,8 @@ def _mapping_device_conflicts_for_hass(
     *,
     inherited_sensor_parents: Mapping[int, ConfiguredThermostat] | None = None,
 ) -> tuple[MappingDeviceConflict, ...]:
-    """Return mapping conflicts when the Home Assistant registry is available."""
+    """Return mapping conflicts from the Home Assistant registries."""
 
-    try:
-        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
-        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
-    except ImportError:
-        return ()
     return configured_mapping_device_conflicts(
         config_data,
         er.async_get(hass),
@@ -1330,10 +1321,6 @@ def _resolved_override_map(
     """Return overrides with stable references resolved to current entity IDs."""
 
     overrides = _override_map(value)
-    try:
-        from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
-    except ImportError:
-        return overrides
     registry = er.async_get(hass)
     for item in overrides.values():
         for field in fields:

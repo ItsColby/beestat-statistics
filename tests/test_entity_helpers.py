@@ -255,7 +255,9 @@ class EntityHelpersTest(unittest.TestCase):
                     self.entity.is_beestat_only_device(device, "entry-1"), expected
                 )
 
-    def test_device_ownership_cleanup_prefers_current_home_assistant_api(self) -> None:
+    def test_device_ownership_cleanup_removes_helper_devices_once_per_source(
+        self,
+    ) -> None:
         calls = []
         self.enterContext(
             patch.object(
@@ -263,10 +265,7 @@ class EntityHelpersTest(unittest.TestCase):
                 "helper_integration",
                 types.SimpleNamespace(
                     async_remove_helper_devices=lambda hass, **kwargs: calls.append(
-                        ("current", hass, kwargs)
-                    ),
-                    async_remove_helper_config_entry_from_source_device=(
-                        lambda hass, **kwargs: calls.append(("legacy", hass, kwargs))
+                        (hass, kwargs)
                     ),
                 ),
             )
@@ -283,7 +282,6 @@ class EntityHelpersTest(unittest.TestCase):
             calls,
             [
                 (
-                    "current",
                     hass,
                     {
                         "helper_config_entry_id": "entry-1",
@@ -291,40 +289,6 @@ class EntityHelpersTest(unittest.TestCase):
                     },
                 )
                 for device_id in ("device-1", "device-2")
-            ],
-        )
-
-    def test_device_ownership_cleanup_supports_legacy_home_assistant_api(self) -> None:
-        calls = []
-        self.enterContext(
-            patch.object(
-                self.entity,
-                "helper_integration",
-                types.SimpleNamespace(
-                    async_remove_helper_config_entry_from_source_device=(
-                        lambda hass, **kwargs: calls.append((hass, kwargs))
-                    )
-                ),
-            )
-        )
-        hass = object()
-
-        self.entity.async_remove_cross_integration_device_ownership(
-            hass,
-            "entry-1",
-            ("device-1",),
-        )
-
-        self.assertEqual(
-            calls,
-            [
-                (
-                    hass,
-                    {
-                        "helper_config_entry_id": "entry-1",
-                        "source_device_id": "device-1",
-                    },
-                )
             ],
         )
 

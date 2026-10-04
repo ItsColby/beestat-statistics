@@ -110,8 +110,30 @@ The authoritative response structures are `HistoryIdentity`,
 `NotRequired` keys are absent when inapplicable; nullable keys are present with
 JSON null. Timestamps are offset-qualified ISO strings; counters/revisions are
 integers; numeric observations are finite numbers. No numeric string or boolean
-is an observation. [Synthetic response examples](examples/hourly-history-v3.json)
-are generated through the same logical query implementation.
+is an observation. One `ready` hourly runtime bucket (fan ran 30 of 60 minutes):
+
+```yaml
+start: '2026-09-10T04:00:00+00:00'
+end: '2026-09-10T05:00:00+00:00'
+value: 0.5
+min: null
+max: null
+reason: ready
+failure_reason: null
+valid_slots: 12
+expected_slots: 12
+verified_hours: 1
+expected_hours: 1
+closed_hours: 1
+observed_amount: 0.5
+complete_total: 0.5
+source_basis: points
+method_basis: five_minute_complete_hour_v3
+confidence: [provider_ordered]
+source_ids: ['<sealed-source-manifest-sha256>']
+eligible_intervals:
+  - ['2026-09-10T04:00:00+00:00', '2026-09-10T05:00:00+00:00']
+```
 
 `identity` contains exactly `entry_id: string`, `api_base: string` and
 `account_anchors: string[]`. The representation contains exactly
@@ -381,26 +403,9 @@ an older root cannot remove a verified hold.
 
 ## Consumer display semantics
 
-A `24h` display requests 24 aligned hourly buckets ending at the next whole UTC
-hour, including the current provisional bucket. Label the actual bounds; this
-is not an exact continuous now-minus-24-hours window. Week/Month use seven/thirty
-local dates ending today. Compare cooling/heating only on the same eligible UTC
-interval set and method basis, with stable Cooling/Heating order if incomparable
-or tied. Keep fan first and color/legend identities stable.
-
-One explicitly named conditioning-mode average uses its selected mode's own
-eligible denominator. For `24h`, select the mode with the larger amount only
-when both full displayed eligible hourly interval sets and their method match;
-cooling wins a tie. Otherwise select cooling when it has eligible observations,
-then heating. For Week/Month, select the mode from the intersection of comparable
-eligible complete local dates, with the same tie and fallback rules. That daily
-intersection does not establish which mode dominates the whole displayed range.
-
-After selecting the mode, average all its eligible closed hours (`24h`) or
-complete eligible local dates (Week/Month), including observed zeros. Do not
-restrict the average to the ranking intersection. For example, hourly cooling
-amounts `[0.1, 0.3]` and heating `[1.75, null]` have different eligible interval
-sets: select cooling and show its 12-minute average. Exclude provisional and
-partial observations. A legacy daily bar qualified with
-`historical_sample_completeness_unproven` is not eligible for the point-proven
-average. Omit the numeric line when the selected mode has no eligible denominator.
+The integration guarantees only the data contract above. Display windows,
+ranking, averaging and legend choices belong to each consumer. A consumer that
+compares quantities or averages buckets should use only `eligible_intervals`
+under one `method_basis`, exclude `provisional` and `partial` buckets, and treat
+a `legacy_day` carrying `historical_sample_completeness_unproven` as ineligible
+for point-proven averages.

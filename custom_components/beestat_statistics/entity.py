@@ -3,17 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.helpers import device_registry as dr
-
-helper_integration: Any
-try:
-    from homeassistant.helpers import helper_integration
-except ImportError:  # pragma: no cover - lightweight unit-test stubs
-    helper_integration = None
-
-from homeassistant.helpers.device_registry import DeviceEntryType
+from homeassistant.helpers import helper_integration
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -23,14 +17,8 @@ from .const import DOMAIN
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.device_registry import DeviceInfo
 
     from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
-else:
-    try:
-        from homeassistant.helpers.device_registry import DeviceInfo
-    except ImportError:  # pragma: no cover - lightweight unit-test stubs
-        from homeassistant.helpers.entity import DeviceInfo
 
 SERVICE_IDENTIFIER = (DOMAIN, "service")
 SERVICE_NAME = "Beestat Statistics"
@@ -112,34 +100,15 @@ def async_remove_cross_integration_device_ownership(
     entry_id: str,
     device_ids: Iterable[str | None],
 ) -> None:
-    """Remove legacy helper ownership using the current Home Assistant API."""
+    """Remove legacy helper ownership of mapped source devices."""
 
-    if helper_integration is None:
-        return
     mapped_device_ids = {device_id for device_id in device_ids if device_id is not None}
-    remove_helper_devices = getattr(
-        helper_integration,
-        "async_remove_helper_devices",
-        None,
-    )
-    remove_legacy_ownership = getattr(
-        helper_integration,
-        "async_remove_helper_config_entry_from_source_device",
-        None,
-    )
     for device_id in mapped_device_ids:
-        if remove_helper_devices is not None:
-            remove_helper_devices(
-                hass,
-                helper_config_entry_id=entry_id,
-                source_device_id=device_id,
-            )
-        elif remove_legacy_ownership is not None:
-            remove_legacy_ownership(
-                hass,
-                helper_config_entry_id=entry_id,
-                source_device_id=device_id,
-            )
+        helper_integration.async_remove_helper_devices(
+            hass,
+            helper_config_entry_id=entry_id,
+            source_device_id=device_id,
+        )
 
 
 def service_device_info() -> DeviceInfo:
