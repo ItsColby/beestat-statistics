@@ -7,6 +7,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from homeassistant.components.date import DateEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -31,14 +32,7 @@ from .filter_forecast import (
 from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 
 if TYPE_CHECKING:
-    from homeassistant.const import EntityCategory
     from homeassistant.helpers.device_registry import DeviceInfo
-else:
-    try:
-        from homeassistant.const import EntityCategory
-        from homeassistant.helpers.device_registry import DeviceInfo
-    except ImportError:  # pragma: no cover - lightweight unit-test stubs
-        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 PARALLEL_UPDATES = 0
 _LOGGER = logging.getLogger(__name__)

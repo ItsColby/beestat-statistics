@@ -18,14 +18,14 @@ body:
       description: >-
         Installed Beestat Statistics version, as shown by HACS or the integration
         manifest.
-      placeholder: v2026.8.3
+      placeholder: vYYYY.M.N
     validations:
       required: true
   - type: input
     id: home_assistant_version
     attributes:
       label: Home Assistant version
-      placeholder: 2026.8.0
+      placeholder: YYYY.M.N
     validations:
       required: true
   - type: dropdown

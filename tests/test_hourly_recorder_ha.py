@@ -48,11 +48,6 @@ from custom_components.beestat_statistics.hourly_statistics import (
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-def mock_recorder_before_hass(recorder_db_url: str) -> None:
-    """Resolve the recorder database before auto-enabled integrations use HA."""
-
-
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 16, tzinfo=UTC)  # New York noon.
 DAY_START = START - 12 * HOUR

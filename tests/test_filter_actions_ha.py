@@ -44,11 +44,6 @@ from tests.test_runtime_ha import _coordinator_data
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-def mock_recorder_before_hass(recorder_db_url: str) -> None:
-    """Resolve the recorder database before auto-enabled integrations use HA."""
-
-
 async def test_timestamped_action_persists_completion_time_and_safe_replay(
     hass: HomeAssistant, freezer: Any
 ) -> None:

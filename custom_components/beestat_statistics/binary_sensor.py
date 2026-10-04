@@ -8,6 +8,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -39,14 +40,7 @@ from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 from .thermostat_settings import audio_boolean_setting, boolean_setting
 
 if TYPE_CHECKING:
-    from homeassistant.const import EntityCategory
     from homeassistant.helpers.device_registry import DeviceInfo
-else:
-    try:
-        from homeassistant.const import EntityCategory
-        from homeassistant.helpers.device_registry import DeviceInfo
-    except ImportError:  # pragma: no cover - lightweight unit-test stubs
-        from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 
 PARALLEL_UPDATES = 0
 
