@@ -275,6 +275,14 @@ Read the quality attributes alongside the number: `runtime_coverage`,
 an upper bound and the runtime-based due date is provisional. Recent complete
 and excluded day counts describe the rate's evidence.
 
+`earliest_due_date` bounds that provisional date: it is the earlier of the
+maximum-age date and the runtime due date recomputed as if the entire unknown
+interval had been fan runtime. It equals the due date when coverage is complete
+and is unknown when the unknown interval is unbounded or runtime is missing.
+A gap whose earliest date is close to **Filter due date** is immaterial. Like
+`runtime_unknown_interval_minutes`, it can move as unreported time elapses and
+does not change `forecast_revision` by itself.
+
 **Filter due date**, **Filter days remaining**, and **Filter changed date** are
 enabled by default. **Filter due**, **Filter due soon**, and the runtime, recent
 rate, remaining-runtime, runtime due date, and maximum-age due date sensors are

@@ -501,6 +501,136 @@ class SensorHelpersTest(unittest.TestCase):
         self.assertTrue(proven.due)
         self.assertFalse(proven.runtime_due_date_is_projection)
 
+    def test_earliest_due_date_bounds_unknown_runtime_by_calendar_and_hours(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=1000,
+            filter_max_age_days=180,
+        )
+        observation = self.filter_runtime.FilterRuntimeObservation(
+            500 * 3600, "complete", 0, 0, "finalized", None
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 7, 1),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=500,
+            recent_runtime_hours_per_day=10,
+            filter_runtime_observation=observation,
+        )
+
+        def forecast(**changes):
+            summary.filter_runtime_observation = replace(observation, **changes)
+            return self.filter_forecast.build_filter_forecast(
+                thermostat, summary, today=date(2026, 7, 5)
+            )
+
+        complete = forecast()
+        self.assertEqual(complete.runtime_due_date, date(2026, 8, 24))
+        self.assertEqual(complete.earliest_due_date, complete.due_date)
+
+        small = forecast(coverage="partial", unknown_interval_seconds=7 * 3600)
+        self.assertEqual(small.due_date, date(2026, 8, 24))
+        self.assertEqual(small.earliest_due_date, date(2026, 8, 23))
+        larger = forecast(coverage="partial", unknown_interval_seconds=8 * 3600)
+        self.assertEqual(larger.earliest_due_date, date(2026, 8, 23))
+        self.assertEqual(
+            self.filter_forecast.filter_forecast_revision(larger),
+            self.filter_forecast.filter_forecast_revision(small),
+        )
+        large = forecast(coverage="partial", unknown_interval_seconds=100 * 3600)
+        self.assertEqual(large.earliest_due_date, date(2026, 8, 14))
+        self.assertEqual(
+            self.filter_forecast.filter_forecast_quality_attributes(large)[
+                "earliest_due_date"
+            ],
+            "2026-08-14",
+        )
+
+        # Unknown exposure that could consume the whole lifetime is due today.
+        unbounded_by_hours = forecast(
+            coverage="partial", unknown_interval_seconds=500 * 3600
+        )
+        self.assertEqual(unbounded_by_hours.earliest_due_date, date(2026, 7, 5))
+        self.assertEqual(unbounded_by_hours.due_date, date(2026, 8, 24))
+
+        self.assertIsNone(
+            forecast(
+                coverage="partial", unknown_interval_seconds=None
+            ).earliest_due_date
+        )
+
+    def test_earliest_due_date_is_the_calendar_limit_when_it_governs(self) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=1000,
+            filter_max_age_days=90,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=100,
+            recent_runtime_hours_per_day=10,
+            filter_runtime_observation=self.filter_runtime.FilterRuntimeObservation(
+                100 * 3600, "partial", 7 * 3600, 0, "source_gap", None
+            ),
+        )
+        forecast = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertEqual(forecast.max_age_due_date, date(2026, 9, 16))
+        self.assertEqual(forecast.due_date, date(2026, 9, 16))
+        self.assertEqual(forecast.earliest_due_date, date(2026, 9, 16))
+
+    def test_earliest_due_date_keeps_reached_threshold_and_missing_inputs(
+        self,
+    ) -> None:
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=1,
+            slug="main",
+            name="Main",
+            filter_lifetime_runtime_hours=250,
+            filter_max_age_days=90,
+        )
+        summary = types.SimpleNamespace(
+            filter_changed_date=date(2026, 6, 18),
+            filter_changed_source="home_assistant",
+            filter_runtime_hours=250,
+            recent_runtime_hours_per_day=10,
+            filter_runtime_threshold_date=date(2026, 7, 2),
+            filter_runtime_observation=self.filter_runtime.FilterRuntimeObservation(
+                250 * 3600, "partial", 3600, 0, "source_gap", None
+            ),
+        )
+        reached = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertTrue(reached.runtime_threshold_reached)
+        self.assertEqual(reached.earliest_due_date, date(2026, 7, 2))
+        self.assertEqual(reached.earliest_due_date, reached.due_date)
+
+        summary.filter_runtime_hours = None
+        summary.filter_runtime_observation = (
+            self.filter_runtime.FilterRuntimeObservation(
+                None, "partial", None, 0, "source_gap", None
+            )
+        )
+        unavailable = self.filter_forecast.build_filter_forecast(
+            thermostat, summary, today=date(2026, 7, 5)
+        )
+        self.assertIsNone(unavailable.earliest_due_date)
+        del summary.filter_runtime_observation
+        self.assertIsNone(
+            self.filter_forecast.build_filter_forecast(
+                thermostat, summary, today=date(2026, 7, 5)
+            ).earliest_due_date
+        )
+
     def test_filter_forecast_preserves_unknown_runtime_on_replacement_date(
         self,
     ) -> None:
