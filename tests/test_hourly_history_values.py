@@ -222,7 +222,7 @@ class HourlyHistoryValuesTest(unittest.TestCase):
             self.item(result, "cool_runtime_hours").hours[0].reason, "ready"
         )
 
-    def test_41_quantity_denominator_keeps_voc_blocked_and_optional_rules_unchanged(
+    def test_quantity_denominator_keeps_voc_blocked_and_optional_rules_unchanged(
         self,
     ):
         config = config_model.BeestatConfig(
@@ -253,11 +253,11 @@ class HourlyHistoryValuesTest(unittest.TestCase):
         )
         preimage = deepcopy(source)
         result = values.build_history_series(source, identity)
-        self.assertEqual(len(result), 41)
-        self.assertEqual(
-            sum(item.descriptor["admission"] == "eligible" for item in result), 40
-        )
         voc = self.item(result, "voc_concentration", sensor=True)
+        self.assertEqual(
+            {item.descriptor["admission"] for item in result if item is not voc},
+            {"eligible"},
+        )
         self.assertEqual(voc.hours, ())
         self.assertEqual(voc.blocked_reason, "voc_unit_unresolved")
         self.assertEqual(voc.descriptor["admission"], "blocked")

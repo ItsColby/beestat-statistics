@@ -51,7 +51,10 @@ from custom_components.beestat_statistics.coordinator import (
     RoomTemperatureSpread,
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
-from custom_components.beestat_statistics.entity import is_beestat_only_device
+from custom_components.beestat_statistics.entity import (
+    async_register_service_device,
+    is_beestat_only_device,
+)
 from custom_components.beestat_statistics.runtime import BeestatStatisticsRuntime
 from custom_components.beestat_statistics.sensor import (
     BeestatSensor,
@@ -111,6 +114,23 @@ async def test_fallback_ownership_uses_native_device_metadata(
         is expected_fallback
     )
     assert devices.async_get(device.id) is device
+
+
+async def test_service_device_is_registered_once_in_the_real_registry(
+    hass: HomeAssistant,
+) -> None:
+    """The service device exists after registration and repeats are idempotent."""
+
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+
+    async_register_service_device(hass, entry)
+    async_register_service_device(hass, entry)
+
+    devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert [
+        (device.identifiers, device.name, device.entry_type) for device in devices
+    ] == [({(DOMAIN, "service")}, "Beestat Statistics", dr.DeviceEntryType.SERVICE)]
 
 
 @pytest.mark.skipif(
