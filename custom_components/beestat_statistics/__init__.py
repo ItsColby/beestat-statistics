@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -158,7 +159,6 @@ from .const import (
     SUMMARY_MEAN_STATISTICS,
     SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
-    sensor_entity_unique_id,
     thermostat_entity_unique_id,
 )
 from .coordinator import (
@@ -290,6 +290,10 @@ _GLOBAL_UNIQUE_ID_MIGRATION = {
     "beestat_refresh_runtime": "refresh_runtime",
     "beestat_import_statistics": "import_statistics",
 }
+_LEGACY_RESOURCE_UNIQUE_ID = re.compile(
+    r"beestat_(?P<unique_id>(?P<kind>thermostat|sensor)_\d+_(?P<suffix>.+))"
+)
+_UNIQUE_ID_MIGRATION_MINOR_VERSION = 6
 
 _CLIMATE_ENTITY_ID_SCHEMA = vol.All(cv.entity_id, cv.entity_domain("climate"))
 _FILTER_CHANGED_ENTITY_ID_SCHEMA = vol.All(
@@ -2437,7 +2441,6 @@ async def async_setup_entry(
 
     await coordinator.async_config_entry_first_refresh()
     async_register_service_device(hass, entry)
-    _migrate_legacy_unique_ids(hass, entry, coordinator.data)
     _async_enable_default_problem_entities(hass, entry, coordinator.data)
     _async_migrate_homekit_device_assignments(hass, entry, coordinator.data)
     _async_track_source_device_relinks(hass, entry)
@@ -2583,6 +2586,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return False
 
+    if entry.minor_version < _UNIQUE_ID_MIGRATION_MINOR_VERSION:
+        _migrate_legacy_unique_ids(hass, entry)
+
     migrated_data, migrated_options = migrate_entry_payload(
         entry.data,
         entry.options,
@@ -2657,23 +2663,14 @@ def _current_beestat_device_identifiers(
     return identifiers
 
 
-@callback
-def _migrate_legacy_unique_ids(
-    hass: HomeAssistant,
-    entry: BeestatStatisticsConfigEntry,
-    data: BeestatRuntimeData | None,
-) -> None:
-    """Migrate slug-derived entity unique IDs to stable Beestat ID keys."""
-
-    if data is None:
-        return
+def _migrate_legacy_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Move `beestat_`-prefixed entity unique IDs to stable resource-ID keys."""
 
     registry = er.async_get(hass)
-    mappings = _legacy_unique_id_migration(data)
     skipped_conflicts = 0
     for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
-        new_unique_id = mappings.get(entity_entry.unique_id)
-        if new_unique_id is None or new_unique_id == entity_entry.unique_id:
+        new_unique_id = _current_unique_id(entity_entry.unique_id)
+        if new_unique_id is None:
             continue
         existing_entity_id = registry.async_get_entity_id(
             entity_entry.domain,
@@ -3089,33 +3086,20 @@ def _async_track_source_device_relinks(
     return removers
 
 
-def _legacy_unique_id_migration(data: BeestatRuntimeData) -> dict[str, str]:
-    """Return old slug-based unique IDs mapped to stable ID-based values."""
+def _current_unique_id(unique_id: str) -> str | None:
+    """Return the stable unique ID for a legacy `beestat_`-prefixed one."""
 
-    mappings = dict(_GLOBAL_UNIQUE_ID_MIGRATION)
-    for thermostat in data.config.thermostats:
-        old_prefix = f"beestat_{thermostat.slug}_hvac"
-        for suffix in _THERMOSTAT_ENTITY_SUFFIXES:
-            new_unique_id = thermostat_entity_unique_id(
-                thermostat.thermostat_id,
-                suffix,
-            )
-            mappings[f"{old_prefix}_{suffix}"] = new_unique_id
-            mappings[f"beestat_{new_unique_id}"] = new_unique_id
-        active_alert_unique_id = thermostat_entity_unique_id(
-            thermostat.thermostat_id,
-            "active_alert",
-        )
-        mappings[f"{old_prefix}_active_alert"] = active_alert_unique_id
-        mappings[f"beestat_{active_alert_unique_id}"] = active_alert_unique_id
-    for sensor in data.config.sensors:
-        new_unique_id = sensor_entity_unique_id(
-            sensor.sensor_id,
-            "sensor_in_use",
-        )
-        mappings[f"beestat_{sensor.slug}_sensor_in_use"] = new_unique_id
-        mappings[f"beestat_{new_unique_id}"] = new_unique_id
-    return mappings
+    if (global_unique_id := _GLOBAL_UNIQUE_ID_MIGRATION.get(unique_id)) is not None:
+        return global_unique_id
+    match = _LEGACY_RESOURCE_UNIQUE_ID.fullmatch(unique_id)
+    if match is None:
+        return None
+    suffixes = (
+        (*_THERMOSTAT_ENTITY_SUFFIXES, "active_alert")
+        if match["kind"] == "thermostat"
+        else ("sensor_in_use",)
+    )
+    return match["unique_id"] if match["suffix"] in suffixes else None
 
 
 def _filter_changed_entity_ids(data: BeestatRuntimeData | None) -> set[str]:

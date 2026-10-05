@@ -8,7 +8,7 @@ from datetime import timedelta
 DOMAIN = "beestat_statistics"
 
 API_BASE = "https://api.beestat.io/"
-CONFIG_ENTRY_MINOR_VERSION = 5
+CONFIG_ENTRY_MINOR_VERSION = 6
 CONFIG_ENTRY_UNIQUE_ID = "beestat_statistics"
 CONFIG_ENTRY_VERSION = 1
 CONFIG_TITLE = "Beestat Statistics"
