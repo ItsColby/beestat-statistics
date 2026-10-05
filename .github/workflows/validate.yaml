@@ -41,11 +41,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: requirements-ha-test.txt
       - run: |
+          python -m pip install "uv==0.12.23"
           uv pip install --system "pytest-homeassistant-custom-component==0.13.354" "mypy==2.3.0"
           uv pip install --system --upgrade -r requirements-ha-test.txt
           python -m pip check
@@ -63,11 +60,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: requirements-ha-current.txt
       - run: |
+          python -m pip install "uv==0.12.23"
           uv pip install --system "pytest-homeassistant-custom-component==0.13.367" "mypy==2.3.0"
           uv pip install --system --upgrade -r requirements-ha-current.txt
           python -m pip check
