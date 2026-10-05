@@ -31,7 +31,7 @@ jobs:
       - run: pre-commit run --all-files --show-diff-on-failure
 
   home_assistant_minimum:
-    name: Home Assistant minimum integration tests (Core 2026.8.0)
+    name: Home Assistant minimum integration tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -49,7 +49,7 @@ jobs:
           python -m pytest tests
 
   home_assistant_current:
-    name: Home Assistant current integration tests (Core 2026.9.4)
+    name: Home Assistant current integration tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
