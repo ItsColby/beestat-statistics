@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from homeassistant.helpers import entity_registry as er
+
 from .config_rows import effective_override_items, override_id
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
@@ -260,3 +262,19 @@ def _nonempty_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def entity_registry_event_matches_references(
+    registry: er.EntityRegistry,
+    changed_entity_ids: set[str],
+    references: tuple[Mapping[str, Any], ...],
+) -> bool:
+    """Return whether a current registry event restores a stable source identity."""
+
+    for entity_id in changed_entity_ids:
+        entry = registry.async_get(entity_id)
+        if entry is not None and any(
+            entity_reference_matches_entry(reference, entry) for reference in references
+        ):
+            return True
+    return False

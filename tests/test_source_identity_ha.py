@@ -13,7 +13,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.beestat_statistics import _async_track_source_device_relinks
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredThermostat,
@@ -21,6 +20,9 @@ from custom_components.beestat_statistics.config_model import (
     configured_mapping_device_conflicts,
 )
 from custom_components.beestat_statistics.const import DOMAIN
+from custom_components.beestat_statistics.tracking import (
+    _async_track_source_device_relinks,
+)
 
 
 @pytest.fixture(autouse=True)

@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from custom_components import beestat_statistics as integration
+from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics import raw_points
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
@@ -44,7 +45,7 @@ async def _runtime(hass, freezer, monkeypatch, payloads):
     )
     session = _FakeSession(payloads)
     client = BeestatClient(session, "fixture-secret", "https://api.test/", retries=1)
-    importer = integration.BeestatStatisticsImporter(
+    importer = importer_module.BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
     entry.runtime_data = SimpleNamespace(
@@ -74,7 +75,7 @@ async def _runtime(hass, freezer, monkeypatch, payloads):
             monkeypatch.setattr(owner, method, spy)
             forbidden.append(spy)
     for owner, method in (
-        (integration, "async_add_external_statistics"),
+        (importer_module, "async_add_external_statistics"),
         (hass.config_entries, "async_update_entry"),
         (Store, "async_delay_save"),
         (entry, "async_start_reauth_if_available"),

@@ -268,9 +268,7 @@
       "account_identity_unavailable": "The connection could not be saved because Beestat returned no usable thermostat identity.",
       "configuration_changed": "The saved configuration changed while this form was open. Reopen the form to review the current settings.",
       "reauth_successful": "Beestat authentication updated.",
-      "reconfigure_successful": "Beestat connection updated.",
-      "yaml_connection_unavailable": "The Beestat connection in YAML could not be validated. Check its API key and URL.",
-      "yaml_connection_change_requires_reconfigure": "The YAML connection could not be confirmed as the saved account. Open Reconfigure for Beestat Statistics to validate and confirm it, then make YAML match the saved connection."
+      "reconfigure_successful": "Beestat connection updated."
     }
   },
   "exceptions": {
@@ -345,10 +343,6 @@
     "insecure_api_base": {
       "title": "Beestat API URL is invalid or insecure",
       "description": "The saved API URL was rejected before sending credentials. Open Reconfigure and use the default Beestat endpoint or another trusted HTTPS endpoint without embedded credentials, a query string, or a fragment."
-    },
-    "yaml_connection_change_requires_reconfigure": {
-      "title": "Beestat YAML connection change needs confirmation",
-      "description": "The YAML connection could not be confirmed as the saved Beestat account. Open Reconfigure to review its API key and URL and confirm any account switch. Keep YAML aligned with the connection you choose."
     }
   },
   "services": {

@@ -22,8 +22,8 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.file import WriteError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components import beestat_statistics as integration
 from custom_components.beestat_statistics import hourly_recorder
+from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredSensor,
@@ -805,7 +805,7 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
 
     client.async_read_runtime_thermostat = AsyncMock(side_effect=read_source)
     client.async_read_runtime_sensor = AsyncMock(return_value=[])
-    importer = integration.BeestatStatisticsImporter(
+    importer = importer_module.BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
     store = importer.hourly._store
@@ -964,7 +964,7 @@ async def test_real_importer_scopes_expanded_source_validation_per_quantity(
 
     client.async_read_runtime_thermostat = AsyncMock(side_effect=read_source)
     client.async_read_runtime_sensor = AsyncMock(return_value=[])
-    importer = integration.BeestatStatisticsImporter(
+    importer = importer_module.BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
     store, recorder = importer.hourly._store, importer.hourly._recorder

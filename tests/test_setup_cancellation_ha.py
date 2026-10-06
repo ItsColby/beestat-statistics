@@ -150,7 +150,7 @@ async def test_cancelled_setup_releases_resources_and_retries(
             "custom_components.beestat_statistics.BeestatClient", return_value=client
         ),
         patch(
-            "custom_components.beestat_statistics.async_add_external_statistics"
+            "custom_components.beestat_statistics.importer.async_add_external_statistics"
         ) as recorder_write,
     ):
         try:

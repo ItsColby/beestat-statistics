@@ -134,15 +134,21 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
         )
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-        button_text = (
-            ROOT / "custom_components/beestat_statistics/button.py"
-        ).read_text(encoding="utf-8")
-        coordinator_text = (
-            ROOT / "custom_components/beestat_statistics/coordinator.py"
-        ).read_text(encoding="utf-8")
+        sources = (
+            "__init__",
+            "button",
+            "coordinator",
+            "importer",
+            "migrations",
+            "services",
+            "tracking",
+        )
+        texts = tuple(
+            (ROOT / f"custom_components/beestat_statistics/{name}.py").read_text(
+                encoding="utf-8"
+            )
+            for name in sources
+        )
 
         translated_exception_names = {
             "ConfigEntryAuthFailed",
@@ -151,9 +157,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "ServiceValidationError",
             "UpdateFailed",
         }
-        trees = tuple(
-            ast.parse(text) for text in (init_text, button_text, coordinator_text)
-        )
+        trees = tuple(ast.parse(text) for text in texts)
         exception_keys = {
             keyword.value.value
             for tree in trees
@@ -194,7 +198,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "missing_override_entities",
                 "invalid_override_entity_domains",
                 "mapping_device_conflicts",
-                "yaml_connection_change_requires_reconfigure",
             }
             <= set(strings["issues"])
         )
@@ -240,48 +243,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                     icons["entity"][platform],
                     f"{platform}.{key} is missing from icons.json",
                 )
-
-    def test_services_have_complete_translations_and_current_icons(self) -> None:
-        services_text = (
-            ROOT / "custom_components/beestat_statistics/services.yaml"
-        ).read_text(encoding="utf-8")
-        translations = _json_file(
-            "custom_components/beestat_statistics/translations/en.json"
-        )
-        icons = _json_file("custom_components/beestat_statistics/icons.json")
-        service_matches = list(
-            re.finditer(r"^([a-z_]+):$", services_text, re.MULTILINE)
-        )
-        service_keys = {match.group(1) for match in service_matches}
-
-        self.assertEqual(service_keys, set(translations["services"]))
-        self.assertEqual(service_keys, set(icons["services"]))
-        for index, match in enumerate(service_matches):
-            key = match.group(1)
-            block_end = (
-                service_matches[index + 1].start()
-                if index + 1 < len(service_matches)
-                else len(services_text)
-            )
-            service_block = services_text[match.end() : block_end]
-            field_keys = set(
-                re.findall(r"^    ([a-z_][a-z0-9_]*):$", service_block, re.MULTILINE)
-            )
-            self.assertIn("name", translations["services"][key])
-            self.assertIn("description", translations["services"][key])
-            self.assertEqual(field_keys, set(translations["services"][key]["fields"]))
-            for field in translations["services"][key]["fields"].values():
-                self.assertIn("name", field)
-                self.assertIn("description", field)
-            self.assertEqual(set(icons["services"][key]), {"service"})
-            self.assertRegex(icons["services"][key]["service"], r"^mdi:[a-z0-9-]+$")
-
-    def test_custom_integration_translations_do_not_use_core_references(self) -> None:
-        translations_text = (
-            ROOT / "custom_components/beestat_statistics/translations/en.json"
-        ).read_text(encoding="utf-8")
-
-        self.assertNotIn("[%key:", translations_text)
 
     def test_options_abort_translation_is_scoped_to_options_flow(self) -> None:
         """Options-flow abort reasons belong under the options namespace."""

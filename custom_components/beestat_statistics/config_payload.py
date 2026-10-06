@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
-from uuid import uuid4
 
 from .config_rows import effective_override_items, override_id
 from .const import (
@@ -48,7 +47,6 @@ from .const import (
     MIN_SCAN_INTERVAL_SECONDS,
 )
 from .entity_reference import migrate_option_entity_references
-from .filter_action import FilterChangeEvent, parse_filter_change_event
 from .url_validation import normalize_api_base
 
 CONF_API_KEY = "api_key"
@@ -124,128 +122,6 @@ def connection_data_from_user_input(
             api_base or current_data.get(CONF_API_BASE, API_BASE)
         ),
     }
-
-
-def entry_data_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
-    """Return config-entry data fields from YAML/import config."""
-
-    data: dict[str, Any] = {
-        CONF_API_KEY: _clean_string(conf[CONF_API_KEY]),
-        CONF_API_BASE: normalize_api_base(_clean_string(conf[CONF_API_BASE])),
-    }
-    if conf.get(CONF_THERMOSTATS):
-        data[CONF_THERMOSTATS] = _normalize_thermostat_overrides(conf[CONF_THERMOSTATS])
-    if conf.get(CONF_SENSORS):
-        data[CONF_SENSORS] = conf[CONF_SENSORS]
-    return data
-
-
-def entry_options_from_yaml(conf: Mapping[str, Any]) -> dict[str, Any]:
-    """Return config-entry option fields from YAML/import config."""
-
-    return {
-        CONF_POINT_LOOKBACK_DAYS: normalize_point_lookback_days(
-            conf[CONF_POINT_LOOKBACK_DAYS]
-        ),
-        CONF_SCAN_INTERVAL_SECONDS: normalize_scan_interval_seconds(
-            conf[CONF_SCAN_INTERVAL].total_seconds()
-        ),
-    }
-
-
-def merge_import_options(
-    existing_options: Mapping[str, Any],
-    import_data: Mapping[str, Any],
-    import_options: Mapping[str, Any],
-    *,
-    existing_data: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Merge YAML import options with UI-owned native mapping options."""
-
-    options = dict(existing_options)
-    options.update(import_options)
-    if CONF_THERMOSTATS in import_data:
-        yaml_thermostats = _yaml_thermostats_with_filter_boundaries(
-            (
-                existing_options
-                if CONF_THERMOSTATS in existing_options
-                else existing_data or {}
-            ).get(CONF_THERMOSTATS),
-            import_data[CONF_THERMOSTATS],
-        )
-        if yaml_thermostats is None:
-            options.pop(CONF_THERMOSTATS, None)
-        else:
-            options[CONF_THERMOSTATS] = yaml_thermostats
-    if CONF_SENSORS in import_data:
-        options.pop(CONF_SENSORS, None)
-    return options
-
-
-def _yaml_thermostats_with_filter_boundaries(
-    existing_value: Any,
-    import_value: Any,
-) -> list[dict[str, Any]] | None:
-    """Overlay saved click boundaries on YAML-owned thermostat rows."""
-
-    existing_by_id = {
-        item_id: item
-        for item in _override_items(existing_value)
-        if (item_id := override_id(item)) is not None
-    }
-    imported = [dict(item) for item in _override_items(import_value)]
-    preserved_boundary = False
-    for item in imported:
-        item_id = override_id(item)
-        if item_id is None:
-            continue
-        existing = existing_by_id.get(item_id)
-        if CONF_FILTER_CHANGED_DATE in item:
-            event = _imported_filter_change_event(item, existing or {})
-            if event is not None:
-                item[CONF_FILTER_CHANGE_EVENT] = event.as_dict()
-                preserved_boundary = True
-            continue
-        if existing is None or CONF_FILTER_CHANGED_DATE not in existing:
-            continue
-        item[CONF_FILTER_CHANGED_DATE] = existing[CONF_FILTER_CHANGED_DATE]
-        for field in (
-            CONF_FILTER_CHANGED_AT,
-            CONF_FILTER_CHANGE_EVENT,
-            CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS,
-            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT,
-            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END,
-        ):
-            if field in existing:
-                item[field] = existing[field]
-        preserved_boundary = True
-    return imported if preserved_boundary else None
-
-
-def _imported_filter_change_event(
-    imported: dict[str, Any], previous: dict[str, Any]
-) -> FilterChangeEvent | None:
-    """Give a changed explicit YAML boundary its own correction identity."""
-
-    event = parse_filter_change_event(previous.get(CONF_FILTER_CHANGE_EVENT))
-    changed_date = imported[CONF_FILTER_CHANGED_DATE]
-    changed_at = imported.get(CONF_FILTER_CHANGED_AT)
-    if (changed_at, changed_date) == (
-        previous.get(CONF_FILTER_CHANGED_AT),
-        previous.get(CONF_FILTER_CHANGED_DATE),
-    ):
-        return event
-    return FilterChangeEvent(
-        action="correction",
-        source="configuration",
-        request_id=uuid4().hex,
-        prior_request_id=event.request_id if event is not None else None,
-        prior_changed_at=previous.get(CONF_FILTER_CHANGED_AT),
-        prior_changed_date=previous.get(CONF_FILTER_CHANGED_DATE),
-        changed_at=changed_at,
-        changed_date=changed_date,
-        recorded_at=datetime.now(UTC).isoformat(),
-    )
 
 
 def migrate_entry_payload(
