@@ -853,7 +853,10 @@ class BeestatCloudDataStaleProblemBinarySensor(
         metadata = self._metadata
         if metadata is None or metadata.data_lag_minutes is None:
             return None
-        return metadata.data_lag_minutes > _cloud_stale_threshold(self.coordinator)
+        return (
+            metadata.data_lag_minutes
+            > self.coordinator.cloud_data_stale_threshold_minutes
+        )
 
     @property
     def extra_state_attributes(self) -> dict[str, object] | None:
@@ -864,7 +867,7 @@ class BeestatCloudDataStaleProblemBinarySensor(
             return None
         return {
             "lag_minutes": metadata.data_lag_minutes,
-            "threshold_minutes": _cloud_stale_threshold(self.coordinator),
+            "threshold_minutes": self.coordinator.cloud_data_stale_threshold_minutes,
         }
 
     @property
@@ -873,9 +876,3 @@ class BeestatCloudDataStaleProblemBinarySensor(
         if data is None:
             return None
         return data.thermostat_metadata.get(self._thermostat.thermostat_id)
-
-
-def _cloud_stale_threshold(coordinator: Any) -> int:
-    """Return the coordinator threshold with legacy test-double compatibility."""
-
-    return int(getattr(coordinator, "cloud_data_stale_threshold_minutes", 120))

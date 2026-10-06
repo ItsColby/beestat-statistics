@@ -85,7 +85,6 @@ class WriterPartition:
 
     legacy_statistic_ids: frozenset[str]
     hourly_statistic_ids: frozenset[str]
-    frozen_legacy_statistic_ids: frozenset[str]
     has_hourly: bool
     hourly_blocked_reason: str | None = None
 
@@ -717,7 +716,6 @@ class HourlyImportManager:
                 return WriterPartition(
                     frozenset(base.removesuffix(_SUCCESSOR) for base in resources),
                     frozenset(),
-                    frozenset(),
                     False,
                 )
             marker = self._entry.data.get(MARKER)
@@ -735,7 +733,6 @@ class HourlyImportManager:
                 )
             records = _validated_records(self._document)
             hourly_ids: set[str] = set()
-            frozen: set[str] = set()
             for base, record in records.items():
                 resource = _validate_resource(record["resource"])
                 thermostat_id, sensor_id, _quantity = resource
@@ -750,10 +747,8 @@ class HourlyImportManager:
                 if base in resources and _resource(resources[base]) != resource:
                     self._error = "source_resource_rebound"
                     raise HourlyImportError("An adopted legacy identity was rebound")
-                frozen.add(base.removesuffix(_SUCCESSOR))
                 if current_base is not None:
                     hourly_ids.add(current_base)
-                    frozen.add(current_base.removesuffix(_SUCCESSOR))
             return WriterPartition(
                 frozenset(
                     base.removesuffix(_SUCCESSOR)
@@ -761,7 +756,6 @@ class HourlyImportManager:
                     if base not in hourly_ids
                 ),
                 frozenset(hourly_ids),
-                frozenset(frozen),
                 True,
                 "selection_pending" if pending_selection is not None else None,
             )

@@ -98,7 +98,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         series = _series()
         series = replace(series, metadata={**series.metadata, "statistic_id": segment})
         result = _plan(series, snapshot=_snapshot(series))
-        self.assertEqual([1, 3], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([1, 3], [row.sum for row in result.calculated_rows])
 
     def test_malformed_successor_and_segment_ids_are_rejected(self):
         initial = _series().statistic_id
@@ -159,7 +159,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         result = _plan(
             series, snapshot=_snapshot(series, (seed,)), epoch=START - 5 * HOUR
         )
-        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([31, 33], [row.sum for row in result.calculated_rows])
 
     def test_saved_exact_predecessor_must_match_native_values(self):
         series = _series()
@@ -170,7 +170,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             epoch=START - 5 * HOUR,
             trusted_row=trusted,
         )
-        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([31, 33], [row.sum for row in result.calculated_rows])
         for actual in (
             replace(trusted, state=11),
             replace(trusted, sum=29),
@@ -184,7 +184,7 @@ class HourlyImportPlanTests(unittest.TestCase):
                     trusted_row=trusted,
                 )
                 self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_saved_predecessor_does_not_supply_missing_native_row(self):
         series = _series()
@@ -196,7 +196,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             trusted_row=trusted,
         )
         self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_saved_predecessor_can_precede_last_verified_hour_for_wider_replay(self):
         series = _series()
@@ -208,7 +208,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             verified=START + HOUR,
             trusted_row=trusted,
         )
-        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([31, 33], [row.sum for row in result.calculated_rows])
 
     def test_saved_predecessor_must_match_window_and_be_verified(self):
         series = _series()
@@ -228,26 +228,26 @@ class HourlyImportPlanTests(unittest.TestCase):
                     trusted_row=trusted,
                 )
                 self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_explicit_epoch_and_verified_empty_snapshot_start_new_counter(self):
         series = _series()
         result = _plan(series, snapshot=_snapshot(series))
         self.assertFalse(result.blocking_reasons)
-        self.assertEqual([1, 3], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([1, 3], [row.sum for row in result.calculated_rows])
         self.assertEqual(
-            [START, START + HOUR], [row.start for row in result.unblocked_rows]
+            [START, START + HOUR], [row.start for row in result.calculated_rows]
         )
 
     def test_zero_is_an_observed_increment(self):
         series = _series((0.0, 0.0))
         result = _plan(series, snapshot=_snapshot(series))
-        self.assertEqual([0, 0], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([0, 0], [row.sum for row in result.calculated_rows])
 
     def test_missing_snapshot_does_not_prove_new_id(self):
         result = _plan(_series())
         self.assertIn("incomplete_recorder_snapshot", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_incomplete_and_mismatched_metadata_hold_proposals(self):
         series = _series()
@@ -272,8 +272,8 @@ class HourlyImportPlanTests(unittest.TestCase):
         result = _plan(
             series, snapshot=_snapshot(series, (seed,)), epoch=START - 5 * HOUR
         )
-        self.assertEqual([13, 15], [row.state for row in result.unblocked_rows])
-        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([13, 15], [row.state for row in result.calculated_rows])
+        self.assertEqual([31, 33], [row.sum for row in result.calculated_rows])
 
     def test_older_seed_cannot_bridge_missing_hour(self):
         series = _series()
@@ -282,7 +282,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             series, snapshot=_snapshot(series, (old,)), epoch=START - 5 * HOUR
         )
         self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_existing_predecessor_prevents_silent_new_epoch_reset(self):
         series = _series()
@@ -303,7 +303,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         self.assertEqual(START + HOUR, result.continuity_break)
         self.assertEqual(tuple(row.start for row in old[1:]), result.stale_starts)
         self.assertIn("surviving_stale_rows", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
         self.assertEqual("missing_slots", result.coverage[1].reason)
 
     def test_correction_must_recalculate_later_retained_totals(self):
@@ -316,7 +316,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         )
         result = _plan(series, snapshot=_snapshot(series, old))
         self.assertEqual((START + HOUR, START + 2 * HOUR), result.stale_starts)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_trailing_provisional_hours_admit_prefix_without_numeric_tail(self):
         series = _provisional(_series((1.0, None, None)), 1, 2)
@@ -324,7 +324,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             with self.subTest(retained=retained):
                 result = _plan(series, snapshot=_snapshot(series, retained))
                 self.assertFalse(result.blocking_reasons)
-                self.assertEqual([1.0], [row.sum for row in result.unblocked_rows])
+                self.assertEqual([1.0], [row.sum for row in result.calculated_rows])
                 self.assertEqual(START + HOUR, result.continuity_break)
                 self.assertEqual(
                     ["ready", "provisional", "provisional"],
@@ -346,7 +346,7 @@ class HourlyImportPlanTests(unittest.TestCase):
                 self.assertEqual(
                     tuple(row.start for row in old[1:]), result.stale_starts
                 )
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_provisional_exemption_cannot_skip_an_internal_gap(self):
         for series in (
@@ -358,7 +358,7 @@ class HourlyImportPlanTests(unittest.TestCase):
                 result = _plan(series, snapshot=_snapshot(series))
                 self.assertIn("cumulative_source_gap", result.blocking_reasons)
                 self.assertEqual(START + HOUR, result.continuity_break)
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_all_provisional_hours_do_not_invent_rows_or_bypass_basis(self):
         series = _provisional(_series((None, None)), 0, 1)
@@ -368,7 +368,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         self.assertEqual(START, result.continuity_break)
         unproven = _plan(series, snapshot=_snapshot(series), epoch=START - HOUR)
         self.assertIn("unproven_cumulative_basis", unproven.blocking_reasons)
-        self.assertFalse(unproven.unblocked_rows)
+        self.assertTrue(unproven.blocking_reasons)
 
     def test_inserting_a_previously_missing_hour_also_requires_future_suffix(self):
         series = _series((1.0,))
@@ -385,7 +385,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             for index in range(3)
         )
         result = _plan(series, snapshot=_snapshot(series, old))
-        self.assertEqual([2, 3, 4], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([2, 3, 4], [row.sum for row in result.calculated_rows])
         self.assertFalse(result.stale_starts)
 
     def test_unchanged_replay_does_not_require_rewriting_unaffected_future(self):
@@ -398,7 +398,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         )
         result = _plan(series, snapshot=_snapshot(series, old))
         self.assertFalse(result.blocking_reasons)
-        self.assertEqual((old[0],), result.unblocked_rows)
+        self.assertEqual((old[0],), result.calculated_rows)
 
     def test_deleted_measurement_exposes_surviving_row_but_not_unrelated_future(self):
         series = _series((70.0, None), cumulative=False)
@@ -408,13 +408,13 @@ class HourlyImportPlanTests(unittest.TestCase):
         )
         result = _plan(series, snapshot=_snapshot(series, old))
         self.assertEqual((START + HOUR,), result.stale_starts)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_missing_measurement_remains_visible_without_filling_the_gap(self):
         series = _series((70.0, None, 72.0), cumulative=False)
         result = _plan(series, snapshot=_snapshot(series))
         self.assertEqual(
-            [START, START + 2 * HOUR], [row.start for row in result.unblocked_rows]
+            [START, START + 2 * HOUR], [row.start for row in result.calculated_rows]
         )
         self.assertEqual(3, len(result.coverage))
         self.assertEqual(1, result.coverage[1].missing_slots)
@@ -433,18 +433,18 @@ class HourlyImportPlanTests(unittest.TestCase):
                     series, snapshot=_snapshot(series, rows), epoch=START - HOUR
                 )
                 self.assertIn("invalid_recorder_snapshot", result.blocking_reasons)
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_cleared_measurement_can_stay_missing_or_be_replaced_by_actual_data(self):
         series = _series((70.0, None), cumulative=False)
         cleared = planner.HourlyStatisticRow(START + HOUR)
         result = _plan(series, snapshot=_snapshot(series, (cleared,)))
         self.assertFalse(result.blocking_reasons)
-        self.assertEqual([70], [row.mean for row in result.unblocked_rows])
+        self.assertEqual([70], [row.mean for row in result.calculated_rows])
         self.assertEqual("missing_slots", result.coverage[1].reason)
         restored = _series((70.0, 72.0), cumulative=False)
         result = _plan(restored, snapshot=_snapshot(restored, (cleared,)))
-        self.assertEqual([70, 72], [row.mean for row in result.unblocked_rows])
+        self.assertEqual([70, 72], [row.mean for row in result.calculated_rows])
 
     def test_cleared_cumulative_predecessor_is_valid_snapshot_but_never_a_seed(self):
         series = _series()
@@ -454,7 +454,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         )
         self.assertNotIn("invalid_recorder_snapshot", result.blocking_reasons)
         self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_cleared_suffix_has_no_stale_numbers_but_does_not_restore_continuity(self):
         series = _series((1.0, None, 2.0))
@@ -466,13 +466,13 @@ class HourlyImportPlanTests(unittest.TestCase):
         result = _plan(series, snapshot=_snapshot(series, old))
         self.assertFalse(result.stale_starts)
         self.assertEqual(("cumulative_source_gap",), result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_accumulation_overflow_cannot_publish_a_nonfinite_total(self):
         series = _series((1e308, 1e308))
         result = _plan(series, snapshot=_snapshot(series))
         self.assertIn("cumulative_overflow", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_unplaced_source_rows_and_voc_hold_cannot_be_hidden(self):
         series = replace(_series((70.0,), cumulative=False), rejected_timestamps=1)
@@ -496,7 +496,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         result = _plan(series, snapshot=snapshot)
         series.hours[0].values["mean"] = 99.0
         series.metadata["statistic_id"] = "beestat:unrelated"
-        self.assertEqual(70.0, result.unblocked_rows[0].mean)
+        self.assertEqual(70.0, result.calculated_rows[0].mean)
         self.assertEqual("beestat:room_temperature_hourly_v2", result.statistic_id)
 
     def test_ready_label_cannot_override_incomplete_slot_evidence(self):
@@ -504,7 +504,7 @@ class HourlyImportPlanTests(unittest.TestCase):
         series = replace(series, hours=(replace(series.hours[0], valid_slots=11),))
         result = _plan(series, snapshot=_snapshot(series))
         self.assertIn("invalid_source_coverage", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_native_predecessor_is_not_a_verified_continuity_checkpoint(self):
         series = _series()
@@ -518,7 +518,7 @@ class HourlyImportPlanTests(unittest.TestCase):
                     verified=verified,
                 )
                 self.assertIn("unproven_cumulative_basis", result.blocking_reasons)
-                self.assertFalse(result.unblocked_rows)
+                self.assertTrue(result.blocking_reasons)
 
     def test_expired_raw_prefix_does_not_change_epoch_or_block_a_trusted_seed(self):
         series = _series()
@@ -529,7 +529,7 @@ class HourlyImportPlanTests(unittest.TestCase):
             epoch=START - timedelta(days=1000),
             verified=START - HOUR,
         )
-        self.assertEqual([31, 33], [row.sum for row in result.unblocked_rows])
+        self.assertEqual([31, 33], [row.sum for row in result.calculated_rows])
 
     def test_actual_builder_output_reconciles_and_deleted_slot_preserves_stale_evidence(
         self,
@@ -564,16 +564,16 @@ class HourlyImportPlanTests(unittest.TestCase):
 
         initial = produce()
         accepted = _plan(initial, snapshot=_snapshot(initial))
-        self.assertEqual([0.5, 1.0], [row.sum for row in accepted.unblocked_rows])
+        self.assertEqual([0.5, 1.0], [row.sum for row in accepted.calculated_rows])
         points.append({**points[12], "deleted": True})
         corrected = produce()
         result = _plan(
-            corrected, snapshot=_snapshot(corrected, accepted.unblocked_rows)
+            corrected, snapshot=_snapshot(corrected, accepted.calculated_rows)
         )
         self.assertEqual((START + HOUR,), result.stale_starts)
         self.assertEqual(1, result.coverage[1].invalid_slots)
         self.assertEqual(1, result.coverage[1].duplicate_slots)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
     def test_invalid_late_concentration_correction_exposes_the_existing_hour(self):
         config = config_model.BeestatConfig(
@@ -618,17 +618,17 @@ class HourlyImportPlanTests(unittest.TestCase):
 
         initial = produce()
         accepted = _plan(initial, snapshot=_snapshot(initial))
-        self.assertEqual(600, accepted.unblocked_rows[0].mean)
+        self.assertEqual(600, accepted.calculated_rows[0].mean)
         points.append({**points[0], "co2_concentration": -1})
         corrected = produce()
         result = _plan(
-            corrected, snapshot=_snapshot(corrected, accepted.unblocked_rows)
+            corrected, snapshot=_snapshot(corrected, accepted.calculated_rows)
         )
         self.assertEqual(11, result.coverage[0].valid_slots)
         self.assertEqual(1, result.coverage[0].invalid_slots)
         self.assertEqual((START,), result.stale_starts)
         self.assertIn("surviving_stale_rows", result.blocking_reasons)
-        self.assertFalse(result.unblocked_rows)
+        self.assertTrue(result.blocking_reasons)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, time, timedelta
 from math import isfinite
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from homeassistant.core import HomeAssistant, callback
@@ -182,15 +182,6 @@ class TemporalContext:
     timezone_revision: int
 
 
-def _typed_config_entry(coordinator: Any) -> BeestatStatisticsConfigEntry:
-    """Return the coordinator entry for both runtime and lightweight test doubles."""
-
-    entry = getattr(coordinator, "_beestat_config_entry", None)
-    if entry is None:
-        entry = coordinator.config_entry
-    return cast("BeestatStatisticsConfigEntry", entry)
-
-
 class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     """Coordinate Beestat runtime sync/read calls for sensors and imports."""
 
@@ -289,11 +280,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     def cloud_data_stale_threshold_minutes(self) -> int:
         """Return the cadence-aware Beestat source-lag threshold."""
 
-        return getattr(
-            self,
-            "_cloud_data_stale_threshold_minutes",
-            CLOUD_DATA_STALE_MINIMUM_MINUTES,
-        )
+        return self._cloud_data_stale_threshold_minutes
 
     @callback
     def capture_temporal_context(self) -> TemporalContext:
@@ -365,8 +352,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         now = datetime.now(UTC)
         for thermostat in config.thermostats:
             current_override = effective_thermostat_override(
-                _typed_config_entry(self).data,
-                _typed_config_entry(self).options,
+                self._beestat_config_entry.data,
+                self._beestat_config_entry.options,
                 thermostat.thermostat_id,
             )
             changed_at = thermostat.filter_changed_at
@@ -581,7 +568,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 )
             self.async_set_update_error(safe_error)
             if isinstance(err, BeestatAuthError):
-                _typed_config_entry(self).async_start_reauth_if_available(self.hass)
+                self._beestat_config_entry.async_start_reauth_if_available(self.hass)
             if safe_error is err:
                 raise
             raise safe_error from None
@@ -758,7 +745,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 self.hass,
                 thermostat_rows_tuple,
                 sensor_rows_tuple,
-                entry_runtime_config_data(_typed_config_entry(self)),
+                entry_runtime_config_data(self._beestat_config_entry),
             )
             summary_rows_full = True
             summary_window_start = None
@@ -954,8 +941,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             return True
 
         current_override = effective_thermostat_override(
-            _typed_config_entry(self).data,
-            _typed_config_entry(self).options,
+            self._beestat_config_entry.data,
+            self._beestat_config_entry.options,
             thermostat.thermostat_id,
         )
         if current_override is None:
@@ -976,10 +963,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         changes = _filter_boundary_changes(boundary, current_override)
         if changes is not None:
             self.hass.config_entries.async_update_entry(
-                _typed_config_entry(self),
+                self._beestat_config_entry,
                 options=update_thermostat_override_options(
-                    _typed_config_entry(self).data,
-                    _typed_config_entry(self).options,
+                    self._beestat_config_entry.data,
+                    self._beestat_config_entry.options,
                     thermostat.thermostat_id,
                     changes,
                 ),
@@ -1029,7 +1016,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             self.hass,
             thermostat_rows_tuple,
             sensor_rows_tuple,
-            entry_runtime_config_data(_typed_config_entry(self)),
+            entry_runtime_config_data(self._beestat_config_entry),
         )
         summaries: dict[int, ThermostatRuntimeSummary] = {}
         sensor_metadata = _build_sensor_metadata(sensor_rows_tuple)

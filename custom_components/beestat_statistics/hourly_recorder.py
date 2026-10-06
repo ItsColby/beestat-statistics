@@ -75,19 +75,6 @@ class HourlyRecorder:
             partial(self._snapshot, statistic_id, start)
         )
 
-    async def async_known_ids(self) -> set[str]:
-        """Return the complete Beestat metadata inventory after preceding imports."""
-
-        await self.async_barrier()
-        native = await get_instance(self._hass).async_add_executor_job(
-            partial(get_metadata, self._hass, statistic_source="beestat")
-        )
-        if not isinstance(native, Mapping):
-            raise HourlyRecorderError("invalid_metadata_projection")
-        for statistic_id, value in native.items():
-            _metadata_value(statistic_id, value)
-        return set(native)
-
     async def async_snapshot_range(
         self, statistic_id: str, start: datetime, end: datetime
     ) -> RecorderSnapshot:
