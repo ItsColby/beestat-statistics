@@ -46,11 +46,9 @@ from .const import (
     MAX_SCAN_INTERVAL_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
 )
-from .entity_reference import migrate_option_entity_references
 from .url_validation import normalize_api_base
 
 CONF_API_KEY = "api_key"
-CONF_SCAN_INTERVAL = "scan_interval"
 
 
 def split_entry_payload(
@@ -122,47 +120,6 @@ def connection_data_from_user_input(
             api_base or current_data.get(CONF_API_BASE, API_BASE)
         ),
     }
-
-
-def migrate_entry_payload(
-    data: Mapping[str, Any],
-    options: Mapping[str, Any],
-    *,
-    entity_registry: Any | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return config-entry data/options normalized to the current storage shape."""
-
-    migrated_data = dict(data)
-    migrated_options = dict(options)
-    migrated_data.setdefault(CONF_API_BASE, API_BASE)
-    if entity_registry is not None:
-        migrated_options = migrate_option_entity_references(
-            entity_registry,
-            migrated_options,
-        )
-
-    legacy_lookback = migrated_data.pop(CONF_POINT_LOOKBACK_DAYS, None)
-    saved_lookback = migrated_options.get(CONF_POINT_LOOKBACK_DAYS, legacy_lookback)
-    if saved_lookback is not None:
-        migrated_options[CONF_POINT_LOOKBACK_DAYS] = normalize_point_lookback_days(
-            saved_lookback
-        )
-
-    legacy_scan_seconds = migrated_data.pop(CONF_SCAN_INTERVAL_SECONDS, None)
-    legacy_scan_interval = migrated_data.pop(CONF_SCAN_INTERVAL, None)
-    if legacy_scan_seconds is None:
-        legacy_scan_seconds = _scan_interval_seconds(legacy_scan_interval)
-
-    saved_scan_seconds = migrated_options.get(
-        CONF_SCAN_INTERVAL_SECONDS,
-        legacy_scan_seconds,
-    )
-    if saved_scan_seconds is not None:
-        migrated_options[CONF_SCAN_INTERVAL_SECONDS] = normalize_scan_interval_seconds(
-            saved_scan_seconds
-        )
-
-    return migrated_data, migrated_options
 
 
 def entry_runtime_config_data(entry: Any) -> dict[str, Any]:
@@ -402,17 +359,6 @@ def _normalize_thermostat_overrides(value: Any) -> list[dict[str, Any]]:
             ].isoformat()
         items.append(normalized)
     return items
-
-
-def _scan_interval_seconds(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        if hasattr(value, "total_seconds"):
-            return int(value.total_seconds())
-        return int(value)
-    except TypeError, ValueError, OverflowError:
-        return None
 
 
 def _bounded_int(

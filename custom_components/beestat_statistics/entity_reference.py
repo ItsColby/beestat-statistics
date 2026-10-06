@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.helpers import entity_registry as er
 
-from .config_rows import effective_override_items, override_id
+from .config_rows import effective_override_items
 from .const import (
     CONF_CLIMATE_ENTITY_ID,
     CONF_CLIMATE_ENTITY_REF,
@@ -161,41 +161,6 @@ def mapping_updates_with_entity_references(
             raise ValueError(f"Entity registry entry unavailable for {field}")
         result[reference_field] = reference
     return result
-
-
-def migrate_option_entity_references(
-    registry: Any,
-    options: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Backfill stable references for UI-owned mapping option rows."""
-
-    migrated = dict(options)
-    for key, fields in (
-        (CONF_THERMOSTATS, THERMOSTAT_STABLE_ENTITY_FIELDS),
-        (CONF_SENSORS, SENSOR_STABLE_ENTITY_FIELDS),
-    ):
-        value = options.get(key)
-        if not isinstance(value, list):
-            continue
-        rows: list[Any] = []
-        for value_item in value:
-            if not isinstance(value_item, dict) or override_id(value_item) is None:
-                rows.append(value_item)
-                continue
-            item = dict(value_item)
-            for field in fields:
-                reference_field = entity_reference_field(field)
-                if reference_field in item:
-                    continue
-                entity_id = _nonempty_string(item.get(field))
-                if entity_id is None:
-                    continue
-                reference = entity_reference_from_registry(registry, entity_id)
-                if reference is not None:
-                    item[reference_field] = reference
-            rows.append(item)
-        migrated[key] = rows
-    return migrated
 
 
 def configured_entity_references(

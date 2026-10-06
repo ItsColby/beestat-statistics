@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-from copy import deepcopy
 from dataclasses import dataclass
 
 from custom_components.beestat_statistics import entity_reference
@@ -191,39 +190,6 @@ class EntityReferenceTest(unittest.TestCase):
             "sensor.room_sensor_a_temperature_restored",
         )
 
-    def test_migration_backfills_only_options_owned_mappings(self) -> None:
-        registry = FakeEntityRegistry(
-            [
-                FakeEntityEntry(
-                    "registry-a",
-                    "climate.zone_a",
-                    "climate",
-                    "homekit_controller",
-                    "source-climate",
-                )
-            ]
-        )
-        options = {"thermostats": [{"id": 1001, "climate_entity_id": "climate.zone_a"}]}
-
-        migrated = entity_reference.migrate_option_entity_references(
-            registry,
-            options,
-        )
-
-        self.assertEqual(
-            migrated["thermostats"][0]["climate_entity_ref"],
-            {
-                "registry_entry_id": "registry-a",
-                "domain": "climate",
-                "platform": "homekit_controller",
-                "unique_id": "source-climate",
-            },
-        )
-        self.assertEqual(
-            migrated["thermostats"][0]["climate_entity_id"],
-            "climate.zone_a",
-        )
-
     def test_configured_references_use_effective_last_override_row(self) -> None:
         shadowed = {
             "registry_entry_id": "registry-a",
@@ -249,32 +215,6 @@ class EntityReferenceTest(unittest.TestCase):
             ),
             (effective,),
         )
-
-    def test_migration_preserves_unowned_malformed_rows(self) -> None:
-        registry = FakeEntityRegistry(
-            [
-                FakeEntityEntry(
-                    "registry-a",
-                    "climate.zone_a",
-                    "climate",
-                    "homekit_controller",
-                    "source-climate",
-                )
-            ]
-        )
-        options = {
-            "thermostats": [
-                {"id": True, "climate_entity_id": "climate.zone_a"},
-                {"id": 1.5, "climate_entity_id": "climate.zone_a"},
-                {"future": True, "climate_entity_id": "climate.zone_a"},
-                "future row",
-                None,
-            ]
-        }
-        expected = deepcopy(options)
-        migrated = entity_reference.migrate_option_entity_references(registry, options)
-        self.assertEqual(migrated, expected)
-        self.assertEqual(options, expected)
 
 
 if __name__ == "__main__":

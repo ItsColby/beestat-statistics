@@ -19,7 +19,7 @@ Runtime refreshes and imports have separate locks. Scheduled import requests coa
 
 ## Identity and configuration
 
-Connection data, mutable options, source identity, and presentation names have different lifetimes. [`config_payload.py`](../custom_components/beestat_statistics/config_payload.py) owns the stored representation and migration; [`config_model.py`](../custom_components/beestat_statistics/config_model.py) resolves it into effective thermostat and sensor models.
+Connection data, mutable options, source identity, and presentation names have different lifetimes. [`config_payload.py`](../custom_components/beestat_statistics/config_payload.py) owns the stored representation; [`config_model.py`](../custom_components/beestat_statistics/config_model.py) resolves it into effective thermostat and sensor models.
 
 Entry data stores connection/account continuity information and may contain imported mappings. Options own timing and UI-edited mapping collections. When an options collection exists, it replaces that collection from data; it is not a field-by-field overlay. Mutation helpers preserve unrelated and unrecognized fields. [`config_rows.py`](../custom_components/beestat_statistics/config_rows.py) gives every consumer the same last-valid-row-per-positive-ID interpretation of duplicate overrides. Malformed identity rows cannot silently claim a valid resource.
 
@@ -27,7 +27,7 @@ The config flow allows one entry. An authenticated thermostat read supplies hash
 
 Awaited validation and preview steps cannot assume their initial entry snapshot still owns the save. Connection flows check the saved data again; account replacement checks both data and options. Same-account connection edits preserve intervening options updates. Mapping/source-scope previews are checked against current discovery and configuration before committing. A changed owner aborts or regenerates the relevant preview rather than overwriting a winning update. These races are exercised in [`test_config_flow_ha.py`](../tests/test_config_flow_ha.py).
 
-Native entity unique IDs use numeric Beestat resource IDs plus a semantic suffix. Display names and suggested entity IDs can change without changing that identity. Config entry minor version 6 migrates earlier `beestat_`-prefixed unique IDs once, in `async_migrate_entry`. Legacy external Recorder statistic IDs use the effective slug under the `beestat:` source, so changing a slug changes their statistic identity. Explicit hourly adoption binds the initial statistic ID to the source resource and quantity; later display-name or slug changes retain that adopted ID. Neither path automatically migrates legacy history.
+Native entity unique IDs use numeric Beestat resource IDs plus a semantic suffix. Display names and suggested entity IDs can change without changing that identity. Config entries below version 1.6 are rejected rather than migrated; upgrade through v2026.10.7 first. Legacy external Recorder statistic IDs use the effective slug under the `beestat:` source, so changing a slug changes their statistic identity. Explicit hourly adoption binds the initial statistic ID to the source resource and quantity; later display-name or slug changes retain that adopted ID. Neither path automatically migrates legacy history.
 
 ### Mapping and physical proof
 

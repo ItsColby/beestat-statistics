@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import logging
-import re
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -16,49 +14,6 @@ from .entity import is_beestat_only_device
 from .runtime import BeestatStatisticsConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
-
-_THERMOSTAT_ENTITY_SUFFIXES: tuple[str, ...] = (
-    "runtime_summary_latest_date",
-    "runtime_summary_lag_days",
-    "current_comfort_profile",
-    "scheduled_comfort_profile",
-    "next_scheduled_comfort_profile_time",
-    "active_sensor_count",
-    "cloud_data_end",
-    "cloud_data_lag_minutes",
-    "active_alert_count",
-    "active_alert_category",
-    "filter_runtime_hours",
-    "filter_recent_runtime_hours_per_day",
-    "filter_remaining_runtime_hours",
-    "filter_runtime_due_date",
-    "filter_max_age_due_date",
-    "filter_due_date",
-    "filter_days_remaining",
-    "filter_changed_date",
-    "mark_filter_changed",
-    "equipment_alert",
-    "filter_due",
-    "filter_due_soon",
-    "runtime_summary_stale",
-    "cloud_data_stale",
-)
-_GLOBAL_UNIQUE_ID_MIGRATION = {
-    "beestat_statistics_status": "status",
-    "beestat_runtime_sync_last_success": "runtime_sync_last_success",
-    "beestat_metadata_sync_last_success": "metadata_sync_last_success",
-    "beestat_runtime_summary_row_count": "runtime_summary_row_count",
-    "beestat_statistics_last_import_success": "statistics_last_import_success",
-    "beestat_statistics_imported_series": "statistics_imported_series",
-    "beestat_statistics_imported_rows": "statistics_imported_rows",
-    "beestat_statistics_source_rows": "statistics_source_rows",
-    "beestat_refresh_runtime": "refresh_runtime",
-    "beestat_import_statistics": "import_statistics",
-}
-_LEGACY_RESOURCE_UNIQUE_ID = re.compile(
-    r"beestat_(?P<unique_id>(?P<kind>thermostat|sensor)_\d+_(?P<suffix>.+))"
-)
-UNIQUE_ID_MIGRATION_MINOR_VERSION = 6
 
 
 def _current_beestat_device_identifiers(
@@ -78,50 +33,6 @@ def _current_beestat_device_identifiers(
         if sensor.device_id is None
     )
     return identifiers
-
-
-def _migrate_legacy_unique_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Move `beestat_`-prefixed entity unique IDs to stable resource-ID keys."""
-
-    registry = er.async_get(hass)
-    skipped_conflicts = 0
-    for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
-        new_unique_id = _current_unique_id(entity_entry.unique_id)
-        if new_unique_id is None:
-            continue
-        existing_entity_id = registry.async_get_entity_id(
-            entity_entry.domain,
-            entity_entry.platform,
-            new_unique_id,
-        )
-        if existing_entity_id not in (None, entity_entry.entity_id):
-            skipped_conflicts += 1
-            continue
-        registry.async_update_entity(
-            entity_entry.entity_id,
-            new_unique_id=new_unique_id,
-        )
-    if skipped_conflicts:
-        _LOGGER.warning(
-            "Skipped %s Beestat unique ID migration conflict(s)",
-            skipped_conflicts,
-        )
-
-
-def _current_unique_id(unique_id: str) -> str | None:
-    """Return the stable unique ID for a legacy `beestat_`-prefixed one."""
-
-    if (global_unique_id := _GLOBAL_UNIQUE_ID_MIGRATION.get(unique_id)) is not None:
-        return global_unique_id
-    match = _LEGACY_RESOURCE_UNIQUE_ID.fullmatch(unique_id)
-    if match is None:
-        return None
-    suffixes = (
-        (*_THERMOSTAT_ENTITY_SUFFIXES, "active_alert")
-        if match["kind"] == "thermostat"
-        else ("sensor_in_use",)
-    )
-    return match["unique_id"] if match["suffix"] in suffixes else None
 
 
 @callback
