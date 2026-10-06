@@ -59,8 +59,6 @@ extend-select = [
   "TID",
 ]
 ignore = [
-  "ASYNC109",
-  "ASYNC110",
   "ASYNC240",
   "PLW0108",
 ]
