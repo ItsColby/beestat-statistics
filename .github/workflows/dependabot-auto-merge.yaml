@@ -1,0 +1,29 @@
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    # Python pins move only with their Core and harness contracts, so only
+    # Actions and pre-commit updates merge themselves.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && (startsWith(github.head_ref, 'dependabot/github_actions/')
+      || startsWith(github.head_ref, 'dependabot/pre_commit/'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --auto enables auto-merge on the PR
+      pull-requests: write # gh pr merge --auto enables auto-merge on the PR
+    steps:
+      - run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
