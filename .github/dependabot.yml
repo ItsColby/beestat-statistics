@@ -3,10 +3,14 @@ updates:
   # Python pins define dependency-closed Home Assistant support lanes and move
   # only with their product-owned Core and harness contracts. Pre-commit hook
   # revs are covered below.
+  # The two groups run 12 hours apart so the first merges before the second
+  # opens: main requires up-to-date branches and Dependabot rebases only on
+  # conflict.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+      time: "06:00"
     cooldown:
       default-days: 7
     groups:
@@ -17,6 +21,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+      time: "18:00"
     cooldown:
       default-days: 7
     groups:
