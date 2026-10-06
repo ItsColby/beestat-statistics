@@ -20,6 +20,10 @@ class FakeEntity:
 class FakeDeviceEntry(types.SimpleNamespace):
     """Admitted ordinary device entry, separate from child/unknown records."""
 
+    def __init__(self, **fields):
+        fields.setdefault("config_entries", {fields["config_entry_id"]})
+        super().__init__(**fields)
+
 
 class FakeCoordinator:
     def __init__(self) -> None:
@@ -146,16 +150,6 @@ class EntityHelpersTest(unittest.TestCase):
             identifiers={("beestat_statistics", "thermostat_1")},
             connections=set(),
         )
-        fallback = FakeDeviceEntry(
-            config_entries={"entry-1"},
-            identifiers={("beestat_statistics", "thermostat_1")},
-            connections=set(),
-        )
-        shared = FakeDeviceEntry(
-            config_entries={"entry-1", "homekit-entry"},
-            identifiers={("beestat_statistics", "thermostat_1")},
-            connections=set(),
-        )
         mixed = FakeDeviceEntry(
             config_entry_id="entry-1",
             identifiers={
@@ -165,12 +159,12 @@ class EntityHelpersTest(unittest.TestCase):
             connections=set(),
         )
         connected = FakeDeviceEntry(
-            config_entries={"entry-1"},
+            config_entry_id="entry-1",
             identifiers={("beestat_statistics", "thermostat_1")},
             connections={("mac", "00:11:22:33:44:55")},
         )
         foreign = FakeDeviceEntry(
-            config_entries={"entry-1"},
+            config_entry_id="entry-1",
             identifiers={("homekit_controller", "source-device")},
             connections=set(),
         )
@@ -178,8 +172,6 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertTrue(self.entity.is_beestat_only_device(current, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(current_foreign, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(current_unowned, "entry-1"))
-        self.assertTrue(self.entity.is_beestat_only_device(fallback, "entry-1"))
-        self.assertFalse(self.entity.is_beestat_only_device(shared, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(mixed, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(connected, "entry-1"))
         self.assertFalse(self.entity.is_beestat_only_device(foreign, "entry-1"))

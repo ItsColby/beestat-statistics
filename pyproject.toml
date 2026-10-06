@@ -82,11 +82,6 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = ["pre-commit==4.6.2"]
-ha-minimum = [
-  "homeassistant==2026.8.0",
-  "pytest-homeassistant-custom-component==0.13.354",
-  "mypy==2.3.0",
-]
 ha-current = [
   "homeassistant==2026.9.4",
   "pytest-homeassistant-custom-component==0.13.367",

@@ -123,11 +123,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("account_change_confirm", config_steps)
 
     def test_declared_minimum_matches_the_tested_support_floor(self) -> None:
-        minimum = _exact_core_pin("ha-minimum")
-        current = _exact_core_pin("ha-current")
-        self.assertEqual(minimum, _json_file("hacs.json")["homeassistant"])
-        self.assertNotEqual(
-            minimum, current, "Equal support lanes should be consolidated"
+        self.assertEqual(
+            _exact_core_pin("ha-current"), _json_file("hacs.json")["homeassistant"]
         )
 
     def test_user_visible_exceptions_and_repairs_are_translated(self) -> None:
