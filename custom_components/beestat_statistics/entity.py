@@ -76,19 +76,11 @@ def is_beestat_only_device(device_entry: object, entry_id: str) -> bool:
     if not isinstance(device_entry, dr.DeviceEntry):
         return False
 
-    missing = object()
-    config_entry_id = getattr(device_entry, "config_entry_id", missing)
-    if config_entry_id is not missing:
-        # For a synthesized pre-migration composite, config_entry_id is only
-        # its former primary owner; config_entries retains every split owner.
-        owned_by_entry = config_entry_id == entry_id and set(
-            getattr(device_entry, "config_entries", (config_entry_id,))
-        ) == {entry_id}
-    else:
-        owned_by_entry = set(getattr(device_entry, "config_entries", ())) == {entry_id}
-
+    # For a synthesized pre-migration composite, config_entry_id is only
+    # its former primary owner; config_entries retains every split owner.
     return (
-        owned_by_entry
+        device_entry.config_entry_id == entry_id
+        and set(device_entry.config_entries) == {entry_id}
         and bool(device_entry.identifiers)
         and all(identifier[0] == DOMAIN for identifier in device_entry.identifiers)
         and not device_entry.connections

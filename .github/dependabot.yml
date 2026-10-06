@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # Python pins define dependency-closed Home Assistant support lanes and move
-  # only with their product-owned Core and harness contracts. Pre-commit hook
+  # Python pins define the dependency-closed Home Assistant support lane and move
+  # only with its product-owned Core and harness contracts. Pre-commit hook
   # revs are covered below.
   # The two groups run 12 hours apart so the first merges before the second
   # opens: main requires up-to-date branches and Dependabot rebases only on
