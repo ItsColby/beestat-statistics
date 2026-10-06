@@ -58,17 +58,13 @@ extend-select = [
   "T20",
   "TID",
 ]
-ignore = [
-  "ASYNC109",
-  "ASYNC240",
-  "PLW0108",
-]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/**" = ["T20"]
+"tests/**" = ["ASYNC109", "ASYNC240", "PLW0108"]
 
 [tool.mypy]
 python_version = "3.14"
