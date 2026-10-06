@@ -134,15 +134,21 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
         )
-        init_text = (
-            ROOT / "custom_components/beestat_statistics/__init__.py"
-        ).read_text(encoding="utf-8")
-        button_text = (
-            ROOT / "custom_components/beestat_statistics/button.py"
-        ).read_text(encoding="utf-8")
-        coordinator_text = (
-            ROOT / "custom_components/beestat_statistics/coordinator.py"
-        ).read_text(encoding="utf-8")
+        sources = (
+            "__init__",
+            "button",
+            "coordinator",
+            "importer",
+            "migrations",
+            "services",
+            "tracking",
+        )
+        texts = tuple(
+            (ROOT / f"custom_components/beestat_statistics/{name}.py").read_text(
+                encoding="utf-8"
+            )
+            for name in sources
+        )
 
         translated_exception_names = {
             "ConfigEntryAuthFailed",
@@ -151,9 +157,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             "ServiceValidationError",
             "UpdateFailed",
         }
-        trees = tuple(
-            ast.parse(text) for text in (init_text, button_text, coordinator_text)
-        )
+        trees = tuple(ast.parse(text) for text in texts)
         exception_keys = {
             keyword.value.value
             for tree in trees
@@ -194,7 +198,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "missing_override_entities",
                 "invalid_override_entity_domains",
                 "mapping_device_conflicts",
-                "yaml_connection_change_requires_reconfigure",
             }
             <= set(strings["issues"])
         )

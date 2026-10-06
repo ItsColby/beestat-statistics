@@ -51,7 +51,7 @@ cannot make Beestat publish sooner; a larger lookback increases import work.
 Legacy point imports use local-day windows; hourly imports use bounded UTC-hour
 windows with at most 366 elapsed days.
 
-## Connection and YAML ownership
+## Connection and configuration
 
 Only one Beestat Statistics entry is supported. **Reconfigure** validates a
 replacement API key or endpoint; a blank key keeps the saved key.
@@ -69,50 +69,9 @@ continue an existing legacy statistics series. Adopted hourly statistics require
 their saved account/resource identity and block continuation after incompatible
 account changes.
 
-YAML is optional. Use actual Beestat numeric IDs and existing local entity IDs
-in this illustrative `configuration.yaml` block:
-
-```yaml
-beestat_statistics:
-  api_key: !secret beestat_api_key
-  point_lookback_days: 45
-  scan_interval:
-    hours: 6
-  thermostats:
-    - id: 12345
-      slug: main
-      climate_entity_id: climate.main
-      filter_lifetime_runtime_hours: 250
-      filter_max_age_days: 90
-      filter_notice_days: 7
-  sensors:
-    - id: 67890
-      thermostat_id: 12345
-      slug: study
-      temperature_entity_id: sensor.study_temperature
-      include_temperature: true
-      include_air_quality: false
-```
-
-Source rows support `name`, `slug`, and `enabled`; `enabled: false` excludes a
-source. Thermostats additionally accept `temperature_entity_id`,
-`occupancy_entity_id`, `motion_entity_id`, `filter_changed_date`, and an
-`input_datetime` `filter_changed_entity_id`. Room sensors accept occupancy and
-motion mappings plus `include_co2` and `include_voc`. The climate mapping requires
-`climate`, temperature requires `sensor`, and occupancy/motion require
-`binary_sensor` entities. `api_base` optionally replaces the default
-`https://api.beestat.io/`.
-
-YAML imports at startup; remove its block after bootstrap if the UI should own
-routine configuration. A supplied thermostat or sensor collection regains
-ownership on reimport and can replace its UI mappings and settings. Saved native
-filter boundaries survive for matching thermostat rows unless YAML explicitly
-supplies `filter_changed_date`: that date takes precedence and clears the exact
-timestamp.
-Update YAML entity IDs manually after renames. Use `get_configuration` to distinguish
-saved overrides from effective configuration. A YAML connection change that
-cannot match the saved account is blocked: use Reconfigure, then align YAML
-with the accepted connection or remove the YAML block.
+Configuration is managed in the UI; YAML configuration is not supported, so
+remove any `beestat_statistics` entry from `configuration.yaml`. Use `get_configuration` to distinguish saved
+overrides from effective configuration.
 
 ## Read the data at the right level
 

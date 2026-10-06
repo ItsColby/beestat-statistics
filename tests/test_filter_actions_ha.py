@@ -28,7 +28,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
 
-from custom_components.beestat_statistics import BeestatStatisticsImporter, async_setup
+from custom_components.beestat_statistics import async_setup
 from custom_components.beestat_statistics.const import (
     DOMAIN,
     SERVICE_RECORD_FILTER_CHANGE,
@@ -36,6 +36,7 @@ from custom_components.beestat_statistics.const import (
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entry_options import async_mark_filter_changed
+from custom_components.beestat_statistics.importer import BeestatStatisticsImporter
 from custom_components.beestat_statistics.statistics_builder import (
     detailed_runtime_statistic_ids,
 )

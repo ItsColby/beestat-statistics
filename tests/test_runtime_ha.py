@@ -22,23 +22,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
-from custom_components.beestat_statistics import (
-    BeestatStatisticsImporter,
-    PreparedImport,
-    SummaryImportPlan,
-    _async_migrate_homekit_device_assignments,
-    _async_track_runtime_entity_states,
-    _async_track_source_device_relinks,
-    _async_track_time_zone_updates,
-    _dedupe_rows,
-    _filter_changed_entity_ids,
-    _parse_beestat_time,
-    _row_float,
-    _row_start_datetime,
-    _sensor_thermostat_map,
-    _thermostat_data_end_map,
-    async_migrate_entry,
-)
+from custom_components.beestat_statistics import async_migrate_entry
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatClient,
@@ -64,11 +48,31 @@ from custom_components.beestat_statistics.diagnostics import (
 )
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
+from custom_components.beestat_statistics.import_support import (
+    PreparedImport,
+    SummaryImportPlan,
+    _dedupe_rows,
+    _parse_beestat_time,
+    _row_float,
+    _row_start_datetime,
+    _sensor_thermostat_map,
+    _thermostat_data_end_map,
+)
+from custom_components.beestat_statistics.importer import BeestatStatisticsImporter
+from custom_components.beestat_statistics.migrations import (
+    _async_migrate_homekit_device_assignments,
+)
 from custom_components.beestat_statistics.sensor import (
     GLOBAL_SENSOR_DESCRIPTIONS,
     BeestatSensor,
 )
 from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
+from custom_components.beestat_statistics.tracking import (
+    _async_track_runtime_entity_states,
+    _async_track_source_device_relinks,
+    _async_track_time_zone_updates,
+    _filter_changed_entity_ids,
+)
 from tests.test_api_response import _FakeResponse, _FakeSession
 
 pytestmark = pytest.mark.asyncio
@@ -522,7 +526,7 @@ async def test_unload_cancels_active_and_queued_service_imports_before_recorder_
         patch.object(coordinator, "async_refresh_runtime", new=refresh),
         patch.object(importer, "_async_prepare_import", new=prepare),
         patch(
-            "custom_components.beestat_statistics.async_add_external_statistics"
+            "custom_components.beestat_statistics.importer.async_add_external_statistics"
         ) as write,
     ):
         active = asyncio.create_task(importer.async_import_statistics(skip_sync=True))
@@ -1373,11 +1377,11 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
         patch.object(importer, "_async_fetch_thermostat_rows", new=thermostat_rows),
         patch.object(importer, "_async_fetch_sensor_rows", new=sensor_rows),
         patch(
-            "custom_components.beestat_statistics.build_statistics",
+            "custom_components.beestat_statistics.importer.build_statistics",
             side_effect=build_series,
         ),
         patch(
-            "custom_components.beestat_statistics.async_add_external_statistics",
+            "custom_components.beestat_statistics.importer.async_add_external_statistics",
             side_effect=add_statistics,
         ),
     ):
@@ -1445,7 +1449,7 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
         patch.object(coordinator, "async_refresh_runtime", new=refresh_runtime),
         patch.object(importer, "_async_prepare_import", new=prepare_import),
         patch(
-            "custom_components.beestat_statistics.async_add_external_statistics",
+            "custom_components.beestat_statistics.importer.async_add_external_statistics",
             side_effect=lambda *_args: writes.append(object()),
         ),
         pytest.raises(

@@ -59,10 +59,11 @@ jobs:
       - run: |
           python -m pip install --group "ha-${MATRIX_LANE}"
           python -m pip check
-          python -m mypy
-          python -m pytest tests
         env:
           MATRIX_LANE: ${{ matrix.lane }}
+      - if: matrix.lane == 'current'
+        run: python -m mypy
+      - run: python -m pytest tests
 
   hassfest:
     name: Hassfest

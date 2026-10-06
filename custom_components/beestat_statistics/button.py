@@ -30,7 +30,7 @@ from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceInfo
 
-    from . import BeestatStatisticsImporter
+    from .importer import BeestatStatisticsImporter
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ from .hourly_sources import _row_stamp, async_stage_source
 from .raw_points import async_read_raw_points, parse_raw_point_request
 
 if TYPE_CHECKING:
-    from . import BeestatStatisticsImporter
+    from .importer import BeestatStatisticsImporter
 
 
 def _serialize_capture(response: dict[str, Any]) -> tuple[bytes, str]:

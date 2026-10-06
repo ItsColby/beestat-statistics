@@ -46,7 +46,6 @@ from .config_model import (
 from .config_payload import (
     connection_data_from_user_input,
     entry_runtime_config_data,
-    merge_import_options,
     options_from_user_input,
     split_entry_payload,
     update_sensor_override_options,
@@ -99,10 +98,6 @@ from .entity_reference import (
     entity_reference_field,
     mapping_form_defaults,
     mapping_updates_with_entity_references,
-)
-from .issues import (
-    YAML_CONNECTION_CHANGE_ISSUE_ID,
-    async_set_yaml_connection_change_issue,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -380,116 +375,6 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="account_change_confirm",
             data_schema=vol.Schema({}),
-        )
-
-    async def async_step_import(
-        self,
-        import_config: dict[str, Any],
-    ) -> ConfigFlowResult:
-        """Import YAML configuration."""
-
-        await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
-        try:
-            data, options = split_entry_payload(import_config)
-        except ValueError:
-            async_set_yaml_connection_change_issue(self.hass, active=True)
-            return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
-        entry = self.hass.config_entries.async_entry_for_domain_unique_id(
-            DOMAIN,
-            CONFIG_ENTRY_UNIQUE_ID,
-        )
-        if entry is None:
-            entries = self.hass.config_entries.async_entries(DOMAIN)
-            entry = entries[0] if entries else None
-        entry_data_snapshot = deepcopy(dict(entry.data)) if entry is not None else None
-        if entry is None:
-            async_set_yaml_connection_change_issue(self.hass, active=False)
-            account_fingerprint, abort_reason = await _async_validate_initial_import(
-                self.hass,
-                data,
-            )
-            if abort_reason is not None:
-                return self.async_abort(reason=abort_reason)
-            assert account_fingerprint is not None
-            data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-        if entry is not None:
-            assert entry_data_snapshot is not None
-            if _same_connection_data(entry_data_snapshot, data):
-                (
-                    account_fingerprint,
-                    abort_reason,
-                ) = await _async_existing_import_fingerprint(
-                    self.hass,
-                    entry_data_snapshot,
-                    data,
-                )
-                if abort_reason is not None:
-                    async_set_yaml_connection_change_issue(self.hass, active=True)
-                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
-                assert account_fingerprint is not None
-                data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-            else:
-                try:
-                    account_fingerprint = await _async_validate_input(self.hass, data)
-                except BeestatApiError:
-                    async_set_yaml_connection_change_issue(self.hass, active=True)
-                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
-                except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
-                    _LOGGER.error(
-                        "Unexpected exception validating Beestat YAML import (%s)",
-                        exception_fingerprint(err),
-                    )
-                    async_set_yaml_connection_change_issue(self.hass, active=True)
-                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
-                if not _validated_connection_change_is_safe(
-                    entry_data_snapshot,
-                    account_fingerprint,
-                ):
-                    async_set_yaml_connection_change_issue(self.hass, active=True)
-                    return self.async_abort(reason=YAML_CONNECTION_CHANGE_ISSUE_ID)
-                data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-            return self._finish_existing_import(
-                entry,
-                data=data,
-                options=options,
-                entry_data_snapshot=entry_data_snapshot,
-            )
-        async_set_yaml_connection_change_issue(self.hass, active=False)
-        return self.async_create_entry(
-            title=CONFIG_TITLE,
-            data=data,
-            options=options,
-        )
-
-    @callback
-    def _finish_existing_import(
-        self,
-        entry: config_entries.ConfigEntry,
-        *,
-        data: dict[str, Any],
-        options: dict[str, Any],
-        entry_data_snapshot: Mapping[str, Any],
-    ) -> ConfigFlowResult:
-        """Reconcile an existing import immediately before its entry write."""
-
-        if _entry_owner_changed(entry, data_snapshot=entry_data_snapshot):
-            return self.async_abort(reason="configuration_changed")
-        async_set_yaml_connection_change_issue(self.hass, active=False)
-        options = merge_import_options(
-            entry.options, data, options, existing_data=entry_data_snapshot
-        )
-        preserved_data = {
-            key: value
-            for key, value in entry_data_snapshot.items()
-            if key not in (CONF_THERMOSTATS, CONF_SENSORS)
-        }
-        preserved_data.update(data)
-        return self.async_update_reload_and_abort(
-            entry,
-            data=preserved_data,
-            options=options,
-            reason="already_configured",
-            reload_even_if_entry_is_unchanged=False,
         )
 
     async def _async_update_entry_data_flow(
@@ -1083,40 +968,6 @@ async def _async_validate_input(
     )
     thermostat_rows = await client.async_read_id("thermostat")
     return _account_fingerprint(thermostat_rows)
-
-
-async def _async_validate_initial_import(
-    hass: HomeAssistant,
-    data: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Validate a first YAML connection and return an abort reason when unsafe."""
-
-    try:
-        account_fingerprint = await _async_validate_input(hass, data)
-    except BeestatApiError:
-        return None, "yaml_connection_unavailable"
-    except Exception as err:  # noqa: BLE001 - sanitize at flow boundary
-        _LOGGER.error(
-            "Unexpected exception validating initial Beestat YAML import (%s)",
-            exception_fingerprint(err),
-        )
-        return None, "yaml_connection_unavailable"
-    if account_fingerprint is None:
-        return None, "account_identity_unavailable"
-    return account_fingerprint, None
-
-
-async def _async_existing_import_fingerprint(
-    hass: HomeAssistant,
-    current_data: Mapping[str, Any],
-    new_data: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Reuse or safely backfill account identity for an existing YAML entry."""
-
-    account_fingerprint = current_data.get(CONF_ACCOUNT_FINGERPRINT)
-    if account_fingerprint is not None:
-        return account_fingerprint, None
-    return await _async_validate_initial_import(hass, new_data)
 
 
 def _account_fingerprint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

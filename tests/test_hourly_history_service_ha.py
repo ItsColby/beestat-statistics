@@ -23,6 +23,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from custom_components import beestat_statistics as integration
+from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.hourly_history_contract import (
     DAILY_POLICY,
@@ -44,7 +45,7 @@ async def _runtime(hass, freezer, monkeypatch, tmp_path):
     """Use real service, entry, importer, journal and planning implementations."""
     freezer.move_to(NOW)
     entry, coordinator, client = _coordinator_data(hass, evaluated_at=NOW, data_end=END)
-    importer = integration.BeestatStatisticsImporter(
+    importer = importer_module.BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
     entry.runtime_data = SimpleNamespace(
@@ -102,7 +103,7 @@ async def test_query_projection_off_loop_keeps_snapshot_and_rechecks_context(
     hass, freezer, monkeypatch, tmp_path, change_context
 ):
     runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
-    material = {"synthetic": True, "root_digest": integration.history_digest(None)}
+    material = {"synthetic": True, "root_digest": importer_module.history_digest(None)}
     monkeypatch.setattr(
         runtime.importer.hourly,
         "async_history_material",
@@ -121,7 +122,7 @@ async def test_query_projection_off_loop_keeps_snapshot_and_rechecks_context(
         projected_requests.append(deepcopy(request))
         return {"status": "projected"}
 
-    monkeypatch.setattr(integration, "history_response", project)
+    monkeypatch.setattr(importer_module, "history_response", project)
     request = {"quantity_ids": [QUANTITY]}
     task = asyncio.create_task(runtime.importer.async_get_hourly_history(request))
     try:
@@ -323,7 +324,7 @@ def _upload(runtime, monkeypatch, tmp_path, content, *, verify_retained):
             upload_path.unlink()
             events.append("cleaned")
 
-    monkeypatch.setattr(integration, "process_uploaded_file", process_upload)
+    monkeypatch.setattr(importer_module, "process_uploaded_file", process_upload)
     return upload_path, events
 
 
@@ -363,7 +364,7 @@ async def test_effect_and_plan_services_require_active_admin_before_io(
         monkeypatch.setattr(hass_admin_user, "is_active", False)
     upload = Mock(side_effect=AssertionError("Unauthorized upload access"))
     load = AsyncMock(side_effect=AssertionError("Unauthorized journal access"))
-    monkeypatch.setattr(integration, "process_uploaded_file", upload)
+    monkeypatch.setattr(importer_module, "process_uploaded_file", upload)
     monkeypatch.setattr(runtime.store, "async_load", load)
     with pytest.raises(HomeAssistantError):
         await _call(runtime, service, _request(runtime, service), contexts[caller])

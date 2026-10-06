@@ -16,6 +16,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from custom_components import beestat_statistics as integration
+from custom_components.beestat_statistics import import_support as support
+from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.config_model import (
     BeestatConfig,
     ConfiguredSensor,
@@ -124,8 +126,8 @@ def _runtime(hass, freezer, monkeypatch, *, mode="hourly"):
         status=Mock(return_value={"mode": mode, "revision": 0, "series": {}}),
         coverage=Mock(return_value={"series": {}, "revision": 0}),
     )
-    monkeypatch.setattr(integration, "HourlyImportManager", lambda *_args: manager)
-    importer = integration.BeestatStatisticsImporter(
+    monkeypatch.setattr(importer_module, "HourlyImportManager", lambda *_args: manager)
+    importer = importer_module.BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
     coordinator.async_refresh_runtime = AsyncMock(return_value=coordinator.data)
@@ -272,7 +274,7 @@ async def test_known_hourly_failure_continues_only_unselected_legacy_quantities(
         AsyncMock(return_value=frozenset()),
     )
     write = Mock()
-    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
     result = await importer.async_import_statistics(
         skip_sync=True, force_full_summary=True
     )
@@ -300,7 +302,7 @@ async def test_unverifiable_repartition_after_hourly_failure_blocks_all_legacy_w
         hass, freezer, monkeypatch
     )
     partition = _partition(
-        integration._writer_identity(entry, coordinator.data), selected=(FAN_ID,)
+        support._writer_identity(entry, coordinator.data), selected=(FAN_ID,)
     )
     manager.async_writer_partition.side_effect = [
         partition,
@@ -313,7 +315,7 @@ async def test_unverifiable_repartition_after_hourly_failure_blocks_all_legacy_w
     )
     monkeypatch.setattr(importer, "_async_prepare_import", prepare)
     write = Mock()
-    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
     with pytest.raises(HourlyImportError, match="Journal corrupt after failure"):
         await importer.async_import_statistics(skip_sync=True)
     prepare.assert_not_awaited()
@@ -394,7 +396,7 @@ async def test_hourly_settings_change_reprepares_and_passes_final_eligible_scope
         AsyncMock(return_value=frozenset()),
     )
     write = Mock()
-    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
     result = await importer.async_import_statistics(
         skip_sync=True, force_full_summary=True
     )
@@ -459,7 +461,7 @@ async def test_legacy_reprepares_changed_runtime_or_timezone_before_any_write(
         assert len(prepared_snapshots) == 2
         writes.append((metadata["statistic_id"], list(rows)))
 
-    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
     await importer.async_import_statistics(skip_sync=True, force_full_summary=True)
     assert len(prepared_snapshots) == 2
     assert {key for key, _rows_written in writes} == {
@@ -495,7 +497,7 @@ async def test_legacy_planner_excludes_frozen_inventory_latest_seeds_and_new_sta
     cool_stage_1 = "beestat:zone_a_cool_stage_1_runtime_hours"
     allowed = frozenset({LEGACY_COOL_ID, cool_stage_1})
     with patch.object(
-        integration, "get_metadata", wraps=integration.get_metadata
+        importer_module, "get_metadata", wraps=importer_module.get_metadata
     ) as metadata:
         existing = await importer._async_existing_detailed_statistic_ids(
             coordinator.data, allowed_legacy_ids=allowed
@@ -556,8 +558,8 @@ async def test_legacy_mode_keeps_existing_preparation_and_daily_writer(
         [{"start": START, "state": 2, "sum": 2}],
         1,
     )
-    prepared = integration.PreparedImport(
-        integration.SummaryImportPlan.full([], fallback_reason="fixture"),
+    prepared = support.PreparedImport(
+        support.SummaryImportPlan.full([], fallback_reason="fixture"),
         [],
         SkippedWindowEvidence(),
         {},
@@ -567,7 +569,7 @@ async def test_legacy_mode_keeps_existing_preparation_and_daily_writer(
     prepare = AsyncMock(return_value=prepared)
     monkeypatch.setattr(importer, "_async_prepare_import", prepare)
     write = Mock()
-    monkeypatch.setattr(integration, "async_add_external_statistics", write)
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
     result = await importer.async_import_statistics(
         skip_sync=True, force_full_summary=True
     )
@@ -680,7 +682,7 @@ async def test_hourly_acquisition_keeps_tombstones_and_uses_observed_capped_hori
     assert fan.hours[0].invalid_slots == 1
     assert fan.hours[0].duplicate_slots == 1
     # Misrouted, malformed and off-grid rows cannot move the observed source horizon.
-    horizon = integration._observed_hourly_horizons(
+    horizon = support._observed_hourly_horizons(
         {
             1: [
                 *source,
@@ -695,7 +697,7 @@ async def test_hourly_acquisition_keeps_tombstones_and_uses_observed_capped_hori
         {1: START + timedelta(minutes=40)},
     )
     assert horizon == {1: START + timedelta(minutes=40)}
-    assert integration._observed_hourly_horizons({1: []}, {1: END}) == {}
+    assert support._observed_hourly_horizons({1: []}, {1: END}) == {}
     await entry._async_process_on_unload(hass)
 
 
@@ -733,7 +735,7 @@ async def test_hourly_window_bounds_preserve_local_dates_and_elapsed_limit():
     context = TemporalContext(
         datetime(2026, 11, 2, 10, 30, tzinfo=UTC), ZoneInfo("America/New_York"), 0
     )
-    start, end, measurement_end = integration._hourly_window(
+    start, end, measurement_end = support._hourly_window(
         context,
         lookback_days=366,
         rebuild_start=None,
@@ -742,7 +744,7 @@ async def test_hourly_window_bounds_preserve_local_dates_and_elapsed_limit():
     )
     assert end - start == timedelta(days=366)
     assert end.minute == 0
-    start, end, measurement_end = integration._hourly_window(
+    start, end, measurement_end = support._hourly_window(
         context,
         lookback_days=1,
         rebuild_start=date(2026, 11, 1),
@@ -753,7 +755,7 @@ async def test_hourly_window_bounds_preserve_local_dates_and_elapsed_limit():
     assert measurement_end - start == timedelta(hours=25)
     assert end > measurement_end
     with pytest.raises(ValueError, match="whole UTC hours"):
-        integration._hourly_window(
+        support._hourly_window(
             replace(context, local_tz=ZoneInfo("Asia/Kolkata")),
             lookback_days=1,
             rebuild_start=date(2026, 11, 1),
@@ -772,19 +774,17 @@ async def test_bootstrap_window_preserves_explicit_bounds_and_366_day_limit():
         "epoch_start": None,
         "bootstrap_start": older,
     }
-    assert integration._hourly_window(context, **options) == (older, END, None)
+    assert support._hourly_window(context, **options) == (older, END, None)
     explicit_epoch = END - timedelta(hours=6)
     assert (
-        integration._hourly_window(
-            context, **{**options, "epoch_start": explicit_epoch}
-        )[0]
+        support._hourly_window(context, **{**options, "epoch_start": explicit_epoch})[0]
         == explicit_epoch
     )
-    assert integration._hourly_window(
+    assert support._hourly_window(
         context, **{**options, "rebuild_start": date(2026, 9, 10)}
     )[0] == datetime(2026, 9, 10, tzinfo=UTC)
     with pytest.raises(ValueError, match="at most 366"):
-        integration._hourly_window(
+        support._hourly_window(
             context, **{**options, "bootstrap_start": END - timedelta(days=367)}
         )
 
@@ -826,18 +826,18 @@ async def test_identity_requires_current_account_anchor_and_survives_label_chang
         coordinator.data, lookback_days=1, epoch_start=START
     )
     with pytest.raises(ValueError, match="account identity"):
-        integration._hourly_identity(
+        support._hourly_identity(
             entry, replace(coordinator.data, thermostat_rows=()), prepared.series
         )
     renamed = replace(
         coordinator.data.config.thermostats[0], slug="new_label", name="New label"
     )
-    identities = integration._hourly_resource_identities(BeestatConfig((renamed,), ()))
+    identities = support._hourly_resource_identities(BeestatConfig((renamed,), ()))
     assert (
         identities["beestat:new_label_fan_runtime_hours_hourly_v2"]
         == prepared.identity["resources"][FAN_ID]
     )
-    retained = integration._hourly_retained_ids(
+    retained = support._hourly_retained_ids(
         BeestatConfig((renamed,), ()),
         ("beestat:old_label_cool_stage_1_runtime_hours_hourly_v2",),
     )

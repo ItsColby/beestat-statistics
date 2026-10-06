@@ -14,11 +14,13 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.beestat_statistics import _async_track_room_temperature_sources
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
+)
+from custom_components.beestat_statistics.tracking import (
+    _async_track_room_temperature_sources,
 )
 
 pytestmark = pytest.mark.asyncio

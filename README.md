@@ -28,7 +28,7 @@ HomeKit/Ecobee devices are useful but are not required for history imports.
 
 One entry manages the account. You can change credentials later through
 **Reconfigure**. See the [user guide](docs/usage.md) for account changes,
-YAML configuration, mapping conflicts and removal.
+mapping conflicts and removal.
 
 ## Check the result
 

@@ -30,11 +30,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
-from custom_components.beestat_statistics import (
-    _async_track_room_temperature_sources,
-    _is_current_resource_fallback,
-    async_remove_config_entry_device,
-)
+from custom_components.beestat_statistics import async_remove_config_entry_device
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
@@ -55,10 +51,16 @@ from custom_components.beestat_statistics.entity import (
     async_register_service_device,
     is_beestat_only_device,
 )
+from custom_components.beestat_statistics.migrations import (
+    _is_current_resource_fallback,
+)
 from custom_components.beestat_statistics.runtime import BeestatStatisticsRuntime
 from custom_components.beestat_statistics.sensor import (
     BeestatSensor,
     _thermostat_sensor_descriptions,
+)
+from custom_components.beestat_statistics.tracking import (
+    _async_track_room_temperature_sources,
 )
 
 pytestmark = pytest.mark.asyncio
