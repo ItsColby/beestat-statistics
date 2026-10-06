@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import types
 import unittest
-from datetime import date, timedelta
+from datetime import date
 
 from custom_components.beestat_statistics import config_payload, config_rows
 
@@ -281,76 +281,13 @@ class ConfigPayloadTest(unittest.TestCase):
             },
         )
 
-    def test_migrate_entry_payload_moves_legacy_options_from_data(self) -> None:
-        data, options = config_payload.migrate_entry_payload(
-            {
-                "api_key": "key",
-                "point_lookback_days": "60",
-                "scan_interval_seconds": 120,
-                "thermostats": [{"id": 1, "enabled": False}],
-            },
-            {},
-        )
-
-        self.assertEqual(
-            data,
-            {
-                "api_key": "key",
-                "api_base": "https://api.beestat.io/",
-                "thermostats": [{"id": 1, "enabled": False}],
-            },
-        )
-        self.assertEqual(
-            options,
-            {
-                "point_lookback_days": 60,
-                "scan_interval_seconds": 300,
-            },
-        )
-
-    def test_migrate_entry_payload_preserves_existing_options(self) -> None:
-        data, options = config_payload.migrate_entry_payload(
-            {
-                "api_key": "key",
-                "api_base": "https://example.test/",
-                "point_lookback_days": 60,
-                "scan_interval_seconds": 120,
-                "scan_interval": timedelta(seconds=180),
-            },
-            {
-                "point_lookback_days": 30,
-                "scan_interval_seconds": 600,
-            },
-        )
-
-        self.assertEqual(
-            data,
-            {
-                "api_key": "key",
-                "api_base": "https://example.test/",
-            },
-        )
-        self.assertEqual(
-            options,
-            {
-                "point_lookback_days": 30,
-                "scan_interval_seconds": 600,
-            },
-        )
-
-    def test_migrate_entry_payload_bounds_malformed_timing_options(self) -> None:
+    def test_normalizers_bound_malformed_timing_options(self) -> None:
         """Persisted timing corruption degrades to supported bounded values."""
 
-        _data, options = config_payload.migrate_entry_payload(
-            {"api_key": "key"},
-            {
-                "point_lookback_days": 1000000,
-                "scan_interval_seconds": "invalid",
-            },
+        self.assertEqual(config_payload.normalize_point_lookback_days(1000000), 366)
+        self.assertEqual(
+            config_payload.normalize_scan_interval_seconds("invalid"), 21600
         )
-
-        self.assertEqual(options["point_lookback_days"], 366)
-        self.assertEqual(options["scan_interval_seconds"], 21600)
         self.assertEqual(config_payload.normalize_point_lookback_days("invalid"), 45)
         self.assertEqual(config_payload.normalize_scan_interval_seconds(120), 300)
         self.assertEqual(

@@ -22,7 +22,6 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
-from custom_components.beestat_statistics import async_migrate_entry
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatClient,
@@ -36,8 +35,6 @@ from custom_components.beestat_statistics.config_model import (
 from custom_components.beestat_statistics.const import (
     API_BASE,
     CONF_API_BASE,
-    CONFIG_ENTRY_MINOR_VERSION,
-    CONFIG_ENTRY_VERSION,
     DOMAIN,
 )
 from custom_components.beestat_statistics.coordinator import (
@@ -661,66 +658,6 @@ async def test_device_reconciliation_includes_all_owned_resource_entity_suffixes
     assert entity_registry.async_get(unrelated.entity_id).device_id is None
     assert entity_registry.async_get(other_resource.entity_id).device_id is None
     await entry._async_process_on_unload(hass)
-
-
-async def test_legacy_unique_ids_migrate_once_with_the_config_entry(
-    hass: HomeAssistant,
-) -> None:
-    """An old entry's `beestat_` unique IDs move; a migrated entry is untouched."""
-
-    registry = er.async_get(hass)
-
-    def create(entry: MockConfigEntry, domain: str, unique_id: str) -> er.RegistryEntry:
-        return registry.async_get_or_create(
-            domain, DOMAIN, unique_id, config_entry=entry
-        )
-
-    old_entry = MockConfigEntry(
-        domain=DOMAIN,
-        version=CONFIG_ENTRY_VERSION,
-        minor_version=5,
-        data={CONF_API_KEY: "test-key", CONF_API_BASE: API_BASE},
-        options={},
-    )
-    old_entry.add_to_hass(hass)
-    expected = {
-        create(
-            old_entry, "sensor", "beestat_thermostat_1_current_comfort_profile"
-        ).entity_id: "thermostat_1_current_comfort_profile",
-        create(old_entry, "sensor", "beestat_thermostat_1_active_alert").entity_id: (
-            "thermostat_1_active_alert"
-        ),
-        create(
-            old_entry, "binary_sensor", "beestat_sensor_10_sensor_in_use"
-        ).entity_id: "sensor_10_sensor_in_use",
-        create(old_entry, "sensor", "beestat_statistics_status").entity_id: "status",
-    }
-    occupied = create(old_entry, "sensor", "thermostat_1_cloud_data_lag_minutes")
-    conflicting = create(
-        old_entry, "sensor", "beestat_thermostat_1_cloud_data_lag_minutes"
-    )
-    unrelated = (
-        create(old_entry, "sensor", "thermostat_11_other"),
-        create(old_entry, "sensor", "beestat_thermostat_1_other"),
-    )
-    migrated_entry = MockConfigEntry(
-        domain=DOMAIN,
-        version=CONFIG_ENTRY_VERSION,
-        minor_version=CONFIG_ENTRY_MINOR_VERSION,
-        data={CONF_API_KEY: "test-key", CONF_API_BASE: API_BASE},
-        options={},
-    )
-    migrated_entry.add_to_hass(hass)
-    leftover = create(migrated_entry, "button", "beestat_refresh_runtime")
-
-    assert await async_migrate_entry(hass, old_entry)
-    assert await async_migrate_entry(hass, migrated_entry)
-
-    assert old_entry.minor_version == CONFIG_ENTRY_MINOR_VERSION
-    for entity_id, unique_id in expected.items():
-        assert registry.async_get(entity_id).unique_id == unique_id
-    for untouched in (occupied, conflicting, *unrelated, leftover):
-        assert registry.async_get(untouched.entity_id).unique_id == untouched.unique_id
 
 
 async def test_repeated_unmapped_updates_preserve_only_the_own_resource_fallback(

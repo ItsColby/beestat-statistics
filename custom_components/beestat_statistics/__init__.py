@@ -14,13 +14,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .api import BeestatAuthError, BeestatClient, exception_fingerprint
-from .config_payload import migrate_entry_payload
 from .const import (
     CONF_API_BASE,
     CONFIG_ENTRY_MINOR_VERSION,
@@ -40,10 +38,8 @@ from .issues import (
     async_set_insecure_api_base_issue,
 )
 from .migrations import (
-    UNIQUE_ID_MIGRATION_MINOR_VERSION,
     _async_migrate_homekit_device_assignments,
     _current_beestat_device_identifiers,
-    _migrate_legacy_unique_ids,
 )
 from .runtime import (
     BeestatStatisticsConfigEntry,
@@ -235,43 +231,19 @@ def _validated_entry_api_base(
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate Beestat Statistics config entries."""
+    """Reject config entries older than the supported storage version."""
 
-    if entry.version > CONFIG_ENTRY_VERSION:
+    if (
+        entry.version != CONFIG_ENTRY_VERSION
+        or entry.minor_version < CONFIG_ENTRY_MINOR_VERSION
+    ):
         _LOGGER.error(
-            "Cannot migrate Beestat Statistics config entry from version %s.%s",
+            "Cannot migrate Beestat Statistics config entry from version %s.%s; "
+            "install an earlier release to migrate it first",
             entry.version,
             entry.minor_version,
         )
         return False
-
-    if entry.minor_version < UNIQUE_ID_MIGRATION_MINOR_VERSION:
-        _migrate_legacy_unique_ids(hass, entry)
-
-    migrated_data, migrated_options = migrate_entry_payload(
-        entry.data,
-        entry.options,
-        entity_registry=er.async_get(hass),
-    )
-    if (
-        entry.version != CONFIG_ENTRY_VERSION
-        or entry.minor_version != CONFIG_ENTRY_MINOR_VERSION
-        or migrated_data != dict(entry.data)
-        or migrated_options != dict(entry.options)
-    ):
-        hass.config_entries.async_update_entry(
-            entry,
-            data=migrated_data,
-            options=migrated_options,
-            version=CONFIG_ENTRY_VERSION,
-            minor_version=CONFIG_ENTRY_MINOR_VERSION,
-        )
-
-    _LOGGER.debug(
-        "Migrated Beestat Statistics config entry to version %s.%s",
-        CONFIG_ENTRY_VERSION,
-        CONFIG_ENTRY_MINOR_VERSION,
-    )
     return True
 
 

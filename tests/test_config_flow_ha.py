@@ -611,87 +611,26 @@ async def test_user_flow_creates_config_entry(hass: HomeAssistant) -> None:
     }
 
 
-async def test_migrate_entry_preserves_legacy_scope_and_moves_timing(
+async def test_migrate_entry_rejects_entries_below_the_supported_floor(
     hass: HomeAssistant,
 ) -> None:
-    """Test legacy entries retain source scope through versioned migration."""
+    """Entries older than the supported storage version are not loaded."""
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=CONFIG_TITLE,
-        unique_id=CONFIG_ENTRY_UNIQUE_ID,
-        version=1,
-        minor_version=1,
-        data={
-            CONF_API_KEY: "synthetic-key",
-            CONF_API_BASE: API_BASE,
-            CONF_POINT_LOOKBACK_DAYS: 45,
-            CONF_SCAN_INTERVAL_SECONDS: 600,
-            CONF_THERMOSTATS: [
-                {CONF_ID: 1001, "enabled": False, "slug": "zone_a"},
-            ],
-        },
-        options={},
+    def entry_at(version: int, minor_version: int) -> MockConfigEntry:
+        return MockConfigEntry(
+            domain=DOMAIN,
+            version=version,
+            minor_version=minor_version,
+            data={CONF_API_KEY: "synthetic-key", CONF_API_BASE: API_BASE},
+        )
+
+    assert await async_migrate_entry(
+        hass, entry_at(CONFIG_ENTRY_VERSION, CONFIG_ENTRY_MINOR_VERSION)
     )
-    entry.add_to_hass(hass)
-
-    assert await async_migrate_entry(hass, entry)
-    assert entry.version == CONFIG_ENTRY_VERSION
-    assert entry.minor_version == CONFIG_ENTRY_MINOR_VERSION
-    assert entry.data[CONF_THERMOSTATS] == [
-        {CONF_ID: 1001, "enabled": False, "slug": "zone_a"},
-    ]
-    assert CONF_POINT_LOOKBACK_DAYS not in entry.data
-    assert CONF_SCAN_INTERVAL_SECONDS not in entry.data
-    assert entry.options[CONF_POINT_LOOKBACK_DAYS] == 45
-    assert entry.options[CONF_SCAN_INTERVAL_SECONDS] == 600
-
-
-async def test_migrate_entry_backfills_stable_refs_for_options_only(
-    hass: HomeAssistant,
-) -> None:
-    """Test UI mappings gain stable refs without rewriting YAML-owned data."""
-
-    source_entry = MockConfigEntry(domain="homekit_controller")
-    source_entry.add_to_hass(hass)
-    registry = er.async_get(hass)
-    source = registry.async_get_or_create(
-        "climate",
-        "homekit_controller",
-        "source-climate",
-        config_entry=source_entry,
-        suggested_object_id="zone_a",
+    assert not await async_migrate_entry(
+        hass, entry_at(CONFIG_ENTRY_VERSION, CONFIG_ENTRY_MINOR_VERSION - 1)
     )
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=CONFIG_TITLE,
-        unique_id=CONFIG_ENTRY_UNIQUE_ID,
-        version=CONFIG_ENTRY_VERSION,
-        minor_version=4,
-        data={
-            CONF_API_KEY: "synthetic-key",
-            CONF_API_BASE: API_BASE,
-            CONF_THERMOSTATS: [
-                {CONF_ID: 1002, CONF_CLIMATE_ENTITY_ID: "climate.yaml_zone"}
-            ],
-        },
-        options={
-            CONF_THERMOSTATS: [
-                {CONF_ID: 1001, CONF_CLIMATE_ENTITY_ID: source.entity_id}
-            ]
-        },
-    )
-    entry.add_to_hass(hass)
-
-    assert await async_migrate_entry(hass, entry)
-
-    assert CONF_CLIMATE_ENTITY_REF not in entry.data[CONF_THERMOSTATS][0]
-    assert entry.options[CONF_THERMOSTATS][0][CONF_CLIMATE_ENTITY_REF] == {
-        "registry_entry_id": source.id,
-        "domain": "climate",
-        "platform": "homekit_controller",
-        "unique_id": "source-climate",
-    }
+    assert not await async_migrate_entry(hass, entry_at(CONFIG_ENTRY_VERSION + 1, 1))
 
 
 @pytest.mark.parametrize(
