@@ -6,7 +6,7 @@ This reference explains contracts that a maintainer must preserve. See [Usage](u
 
 ## Runtime ownership and data flow
 
-One config entry contains a typed [`BeestatStatisticsRuntime`](../custom_components/beestat_statistics/runtime.py): an API client, coordinator, importer, and configured import interval. [`__init__.py`](../custom_components/beestat_statistics/__init__.py) owns setup, service dispatch, Recorder writes, registry listeners, and unload. The manifest declares a cloud-polling hub with Recorder as a dependency; HomeKit is an optional ordering dependency.
+One config entry contains a typed [`BeestatStatisticsRuntime`](../custom_components/beestat_statistics/runtime.py): an API client, coordinator, importer, and configured import interval. [`__init__.py`](../custom_components/beestat_statistics/__init__.py) owns setup and unload; [`services.py`](../custom_components/beestat_statistics/services.py) owns service dispatch, [`importer.py`](../custom_components/beestat_statistics/importer.py) Recorder writes, and [`tracking.py`](../custom_components/beestat_statistics/tracking.py) registry and state listeners. The manifest declares a cloud-polling hub with Recorder as a dependency; HomeKit is an optional ordering dependency.
 
 The normal flow is:
 
