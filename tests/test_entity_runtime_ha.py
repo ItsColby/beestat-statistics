@@ -135,10 +135,6 @@ async def test_service_device_is_registered_once_in_the_real_registry(
     ] == [({(DOMAIN, "service")}, "Beestat Statistics", dr.DeviceEntryType.SERVICE)]
 
 
-@pytest.mark.skipif(
-    not hasattr(dr.DeviceRegistry, "async_get_or_create_child"),
-    reason="This Core lane has no native child-device registry contract",
-)
 async def test_native_child_device_is_not_an_ordinary_beestat_fallback(
     hass: HomeAssistant, caplog: pytest.LogCaptureFixture
 ) -> None:

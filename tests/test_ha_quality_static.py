@@ -131,20 +131,11 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
         )
-        sources = (
-            "__init__",
-            "button",
-            "coordinator",
-            "importer",
-            "migrations",
-            "services",
-            "tracking",
-        )
         texts = tuple(
-            (ROOT / f"custom_components/beestat_statistics/{name}.py").read_text(
-                encoding="utf-8"
+            path.read_text(encoding="utf-8")
+            for path in sorted(
+                (ROOT / "custom_components/beestat_statistics").glob("*.py")
             )
-            for name in sources
         )
 
         translated_exception_names = {
