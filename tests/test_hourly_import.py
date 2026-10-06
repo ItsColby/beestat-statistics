@@ -336,17 +336,13 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
             disabled["resources"].pop(ID)
             partition = await writer.async_writer_partition(disabled)
             self.assertFalse(partition.hourly_statistic_ids)
-            self.assertEqual(
-                {ID.removesuffix("_hourly_v2")}, partition.frozen_legacy_statistic_ids
+            self.assertNotIn(
+                ID.removesuffix("_hourly_v2"), partition.legacy_statistic_ids
             )
             renamed = "beestat:renamed_fan_runtime_hours_hourly_v2"
             bound["resources"][renamed] = bound["resources"].pop(ID)
             partition = await writer.async_writer_partition(bound)
             self.assertEqual({renamed}, partition.hourly_statistic_ids)
-            self.assertEqual(
-                {ID.removesuffix("_hourly_v2"), renamed.removesuffix("_hourly_v2")},
-                partition.frozen_legacy_statistic_ids,
-            )
             self.assertEqual(
                 {voc_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
             )
@@ -416,9 +412,6 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(partition.has_hourly)
         self.assertFalse(
             partition.legacy_statistic_ids or partition.hourly_statistic_ids
-        )
-        self.assertEqual(
-            {ID.removesuffix("_hourly_v2")}, partition.frozen_legacy_statistic_ids
         )
         with self.assertRaisesRegex(manager.HourlyImportError, "account"):
             await self.fresh().async_writer_partition(empty)
@@ -505,10 +498,6 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {voc_id.removesuffix("_hourly_v2")}, partition.legacy_statistic_ids
         )
-        self.assertEqual(
-            {ID.removesuffix("_hourly_v2"), temperature_id.removesuffix("_hourly_v2")},
-            partition.frozen_legacy_statistic_ids,
-        )
         await replacement.async_select(
             items, bound, **args, preview_digest=preview["preview_digest"]
         )
@@ -550,9 +539,8 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(retained, self.recorder.rows[temperature_id])
         disabled = await writer.async_writer_partition(identity())
-        self.assertIn(
-            temperature_id.removesuffix("_hourly_v2"),
-            disabled.frozen_legacy_statistic_ids,
+        self.assertNotIn(
+            temperature_id.removesuffix("_hourly_v2"), disabled.legacy_statistic_ids
         )
         with self.assertRaisesRegex(manager.HourlyImportError, "resource is missing"):
             await writer.async_import(
@@ -1337,9 +1325,7 @@ class TestHourlyImport(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.writer.bootstrap_start(eligible_resources={}))
         partition = await self.writer.async_writer_partition(bound)
         self.assertEqual({active_id}, partition.hourly_statistic_ids)
-        self.assertIn(
-            ID.removesuffix("_hourly_v2"), partition.frozen_legacy_statistic_ids
-        )
+        self.assertNotIn(ID.removesuffix("_hourly_v2"), partition.legacy_statistic_ids)
         self.assertIsNone(self.store.value["series"][ID]["checkpoint"])
 
     async def test_exact_selection_retry_restores_missing_marker_idempotently(self):

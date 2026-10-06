@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit:
-    name: Unit tests
+  static:
+    name: Static checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -28,6 +28,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install --group dev
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -37,10 +39,14 @@ jobs:
             pre-commit-${{ runner.os }}-${{ steps.python.outputs.python-version }}-
       - run: pre-commit run --all-files --show-diff-on-failure
 
-  home_assistant_minimum:
-    name: Home Assistant minimum integration tests
+  home_assistant:
+    name: Home Assistant ${{ matrix.lane }} integration tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [minimum, current]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,32 +54,15 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: |
-          python -m pip install "uv==0.12.23"
-          uv pip install --system "pytest-homeassistant-custom-component==0.13.354" "mypy==2.3.0"
-          uv pip install --system --upgrade -r requirements-ha-test.txt
+          python -m pip install --group "ha-${MATRIX_LANE}"
           python -m pip check
-          python -m mypy custom_components/beestat_statistics
+          python -m mypy
           python -m pytest tests
-
-  home_assistant_current:
-    name: Home Assistant current integration tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-      - run: |
-          python -m pip install "uv==0.12.23"
-          uv pip install --system "pytest-homeassistant-custom-component==0.13.367" "mypy==2.3.0"
-          uv pip install --system --upgrade -r requirements-ha-current.txt
-          python -m pip check
-          python -m mypy custom_components/beestat_statistics
-          python -m pytest tests
+        env:
+          MATRIX_LANE: ${{ matrix.lane }}
 
   hassfest:
     name: Hassfest
@@ -101,23 +90,17 @@ jobs:
   release_gate:
     name: Release gate
     if: ${{ always() }}
-    needs: [unit, home_assistant_minimum, home_assistant_current, hassfest, hacs]
+    needs: [static, home_assistant, hassfest, hacs]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every validation job
         env:
-          UNIT: ${{ needs.unit.result }}
-          HOME_ASSISTANT_MINIMUM: ${{ needs.home_assistant_minimum.result }}
-          HOME_ASSISTANT_CURRENT: ${{ needs.home_assistant_current.result }}
-          HASSFEST: ${{ needs.hassfest.result }}
-          HACS: ${{ needs.hacs.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           status=0
-          for job in UNIT HOME_ASSISTANT_MINIMUM HOME_ASSISTANT_CURRENT HASSFEST HACS; do
-            if [[ "${!job}" != success ]]; then
-              echo "$job: expected success, got ${!job}"
-              status=1
-            fi
+          for result in $RESULTS; do
+            [[ "$result" == success ]] || status=1
           done
+          echo "Job results: $RESULTS"
           exit "$status"

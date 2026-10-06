@@ -1052,9 +1052,6 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             "quantity": "cool_runtime_hours",
         }
         partition = await self.writer.async_writer_partition(current)
-        self.assertIn(
-            "beestat:zone_fan_runtime_hours", partition.frozen_legacy_statistic_ids
-        )
         self.assertEqual(
             partition.legacy_statistic_ids, {"beestat:zone_cool_runtime_hours"}
         )

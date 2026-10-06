@@ -5,17 +5,19 @@ from __future__ import annotations
 import ast
 import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _exact_core_pin(path: Path) -> str:
-    """Read one unconditional exact Core pin, allowing other requirements."""
+def _exact_core_pin(group: str) -> str:
+    """Read one unconditional exact Core pin from a dependency group."""
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        requirements = tomllib.load(handle)["dependency-groups"][group]
     pins = []
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
-        content = line.split("#", 1)[0].strip()
+    for content in requirements:
         if not re.match(r"homeassistant(?=[^A-Za-z0-9_.-]|$)", content, re.IGNORECASE):
             continue
         match = re.fullmatch(
@@ -25,11 +27,11 @@ def _exact_core_pin(path: Path) -> str:
         )
         if match is None:
             raise AssertionError(
-                f"{path.name} must use an unconditional stable exact Home Assistant pin"
+                f"{group} must use an unconditional stable exact Home Assistant pin"
             )
         pins.append(match.group(1))
     if len(pins) != 1:
-        raise AssertionError(f"{path.name} must contain exactly one Home Assistant pin")
+        raise AssertionError(f"{group} must contain exactly one Home Assistant pin")
     return pins[0]
 
 
@@ -121,8 +123,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         self.assertIn("account_change_confirm", config_steps)
 
     def test_declared_minimum_matches_the_tested_support_floor(self) -> None:
-        minimum = _exact_core_pin(ROOT / "requirements-ha-test.txt")
-        current = _exact_core_pin(ROOT / "requirements-ha-current.txt")
+        minimum = _exact_core_pin("ha-minimum")
+        current = _exact_core_pin("ha-current")
         self.assertEqual(minimum, _json_file("hacs.json")["homeassistant"])
         self.assertNotEqual(
             minimum, current, "Equal support lanes should be consolidated"

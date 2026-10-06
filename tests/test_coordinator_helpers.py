@@ -605,7 +605,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         coordinator._local_tz = ZoneInfo("America/New_York")
         coordinator._timezone_revision = 0
         coordinator._beestat_config_entry = types.SimpleNamespace(data={}, options={})
-        coordinator.config_entry = coordinator._beestat_config_entry
         coordinator.hass = types.SimpleNamespace()
 
         async def read_id(_resource):
@@ -787,7 +786,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
         coordinator.hass = types.SimpleNamespace()
         coordinator._cancel_filter_boundary_retry = None
-        coordinator.config_entry = types.SimpleNamespace(
+        coordinator._beestat_config_entry = types.SimpleNamespace(
             data={},
             options={
                 "thermostats": [
@@ -829,9 +828,9 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ),
             sensors=(),
         )
-        coordinator.config_entry.options["thermostats"][0]["filter_changed_at"] = (
-            datetime.now(UTC) - timedelta(hours=1)
-        ).isoformat()
+        coordinator._beestat_config_entry.options["thermostats"][0][
+            "filter_changed_at"
+        ] = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         coordinator.async_schedule_filter_boundary_reconcile(recent_config)
 
         self.assertIsNotNone(coordinator._cancel_filter_boundary_retry)
@@ -1497,8 +1496,8 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         )
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
         coordinator.hass = hass
-        coordinator.config_entry = entry
         coordinator._beestat_config_entry = entry
+        coordinator._cloud_data_stale_threshold_minutes = 120
         coordinator._local_tz = ZoneInfo("America/New_York")
         coordinator._timezone_revision = 0
         coordinator._cancel_projection_boundary = None
@@ -1915,7 +1914,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             ),
             _local_tz=ZoneInfo("America/New_York"),
             _timezone_revision=0,
-            config_entry=entry,
+            _beestat_config_entry=entry,
             hass=types.SimpleNamespace(
                 config_entries=types.SimpleNamespace(async_update_entry=update_entry)
             ),
@@ -2026,7 +2025,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             _client=types.SimpleNamespace(async_read_runtime_thermostat=read_runtime),
             _local_tz=ZoneInfo("UTC"),
             _timezone_revision=0,
-            config_entry=entry,
+            _beestat_config_entry=entry,
             hass=types.SimpleNamespace(
                 config_entries=types.SimpleNamespace(
                     async_update_entry=lambda *args, **kwargs: updates.append(kwargs)
@@ -2088,7 +2087,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 _local_tz=ZoneInfo("America/New_York"),
                 _timezone_revision=0,
-                config_entry=entry,
+                _beestat_config_entry=entry,
                 hass=types.SimpleNamespace(
                     config_entries=types.SimpleNamespace(
                         async_update_entry=lambda _entry, *, options: updates.append(
@@ -2203,7 +2202,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 _local_tz=ZoneInfo("America/New_York"),
                 _timezone_revision=0,
-                config_entry=entry,
+                _beestat_config_entry=entry,
                 hass=types.SimpleNamespace(
                     config_entries=types.SimpleNamespace(
                         async_update_entry=update_entry

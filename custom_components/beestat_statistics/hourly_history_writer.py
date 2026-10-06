@@ -255,11 +255,6 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
     ):
         raise HourlyImportError("history_marker_mismatch")
     records = list(state["history"]["selections"].values())
-    frozen = {
-        alias
-        for item in records
-        for alias in item["descriptor"]["legacy_statistic_ids"]
-    }
     physical = {quantity_id(item["descriptor"]) for item in records}
     alias_owners = {
         alias: quantity_id(item["descriptor"])
@@ -272,7 +267,6 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         for base, record in _validated_records(old).items():
             physical.add(quantity_id(record["resource"]))
             v2_physical.add(quantity_id(record["resource"]))
-            frozen.add(base.removesuffix("_hourly_v2"))
             alias_owners[base.removesuffix("_hourly_v2")] = quantity_id(
                 record["resource"]
             )
@@ -281,8 +275,6 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         alias_owner = alias_owners.get(base.removesuffix("_hourly_v2"))
         if alias_owner is not None and alias_owner != quantity_id(resource):
             raise HourlyImportError("history_legacy_alias_rebound")
-        if quantity_id(resource) in physical:
-            frozen.add(base.removesuffix("_hourly_v2"))
         if quantity_id(resource) in v2_physical:
             selected.add(base)
     _current, parents = _partition_resources(identity)
@@ -298,7 +290,6 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
             if quantity_id(identity["resources"][base]) not in physical
         ),
         frozenset(selected),
-        frozenset(frozen),
         True,
         "history_operation_pending"
         if state.get("pending")

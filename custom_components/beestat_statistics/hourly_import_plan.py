@@ -117,12 +117,6 @@ class SeriesImportPlan:
     source_rows: int
     rejected_timestamps: int
 
-    @property
-    def unblocked_rows(self) -> tuple[HourlyStatisticRow, ...]:
-        """Return locally reconciled rows, not authorized or native-verified writes."""
-
-        return () if self.blocking_reasons else self.calculated_rows
-
 
 def hourly_base_id(statistic_id: str) -> str:
     """Validate an explicit hourly ID and return its initial successor ID."""

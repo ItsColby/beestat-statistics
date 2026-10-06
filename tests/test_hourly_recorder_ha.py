@@ -44,6 +44,7 @@ from custom_components.beestat_statistics.hourly_statistics import (
     HourlySeries,
     build_hourly_statistics,
 )
+from tests.hourly_support import hourly_metadata
 
 pytestmark = pytest.mark.asyncio
 
@@ -72,18 +73,6 @@ async def _started_recorder(recorder_mock: Any, freezer: Any) -> AsyncIterator[N
     finally:
         await hass.config.async_set_time_zone(previous_zone)
         dt_util.set_default_time_zone(previous_default)
-
-
-def _metadata(statistic_id=RUNTIME_ID, *, measurement=False):
-    return {
-        "statistic_id": statistic_id,
-        "source": "beestat",
-        "name": "Recorder contract fixture",
-        "unit_of_measurement": "°F" if measurement else "h",
-        "unit_class": "temperature" if measurement else "duration",
-        "mean_type": 1 if measurement else 0,
-        "has_sum": not measurement,
-    }
 
 
 def _counter_rows(start, totals):
@@ -196,13 +185,13 @@ def _plan(series, snapshot, *, verified=None):
 
 def _submit_plan(hass, series, plan):
     assert not plan.blocking_reasons
-    assert plan.unblocked_rows
+    assert plan.calculated_rows and not plan.blocking_reasons
     async_add_external_statistics(
         hass,
         dict(series.metadata),
         [
             {"start": row.start, "state": row.state, "sum": row.sum}
-            for row in plan.unblocked_rows
+            for row in plan.calculated_rows
         ],
     )
 
@@ -231,7 +220,7 @@ async def test_first_partial_day_keeps_first_increment_without_zero_predecessor(
 
 async def test_start_only_measurement_upsert_clears_values_and_daily_omits_them(hass):
     statistic_id = "beestat:contract_temperature_hourly_v2"
-    metadata = _metadata(statistic_id, measurement=True)
+    metadata = hourly_metadata(statistic_id, measurement=True)
     async_add_external_statistics(
         hass,
         metadata,
@@ -271,7 +260,7 @@ async def test_start_only_measurement_upsert_clears_values_and_daily_omits_them(
 async def test_cleared_cumulative_suffix_blocks_daily_change_and_restart_is_range_dependent(
     hass,
 ):
-    metadata = _metadata()
+    metadata = hourly_metadata(RUNTIME_ID)
     async_add_external_statistics(
         hass, metadata, _counter_rows(START, (0.75, 1.25, 1.5))
     )
@@ -293,7 +282,7 @@ async def test_cleared_cumulative_suffix_blocks_daily_change_and_restart_is_rang
     assert "invalid_recorder_snapshot" not in plan.blocking_reasons
     assert "cumulative_source_gap" in plan.blocking_reasons
     assert not plan.stale_starts
-    assert not plan.unblocked_rows
+    assert plan.blocking_reasons
 
     # Probe a hypothetical same-ID continuation, not a safe production proposal.
     resumed = START + 3 * HOUR
@@ -317,7 +306,7 @@ async def test_cleared_cumulative_suffix_blocks_daily_change_and_restart_is_rang
 
 async def test_same_id_reset_cannot_repair_both_ranges_but_distinct_segment_can(hass):
     resumed = START + 3 * HOUR
-    metadata = _metadata()
+    metadata = hourly_metadata(RUNTIME_ID)
     async_add_external_statistics(
         hass,
         metadata,
@@ -337,7 +326,7 @@ async def test_same_id_reset_cannot_repair_both_ranges_but_distinct_segment_can(
 
     segment_id = f"{RUNTIME_ID}_e{resumed:%Y%m%dt%H%M%Sz}"
     async_add_external_statistics(
-        hass, _metadata(segment_id), _counter_rows(resumed, (0.25,))
+        hass, hourly_metadata(segment_id), _counter_rows(resumed, (0.25,))
     )
     for start in (START, resumed):
         segment = (await _read(hass, {segment_id}, start=start))[segment_id]
@@ -345,7 +334,7 @@ async def test_same_id_reset_cannot_repair_both_ranges_but_distinct_segment_can(
         assert segment[0]["change"] == 0.25
     segment_metadata = await _metadata_readback(hass, segment_id)
     async_add_external_statistics(
-        hass, _metadata(segment_id), _counter_rows(resumed, (0.25,))
+        hass, hourly_metadata(segment_id), _counter_rows(resumed, (0.25,))
     )
     assert (await _read(hass, {segment_id}))[segment_id] == segment
     assert await _metadata_readback(hass, segment_id) == segment_metadata
@@ -356,7 +345,7 @@ async def test_same_id_reset_cannot_repair_both_ranges_but_distinct_segment_can(
 async def test_native_readback_distinguishes_partial_intent_and_third_state(hass):
     """Prove native readback distinguishability, not future Store recovery logic."""
 
-    metadata = _metadata()
+    metadata = hourly_metadata(RUNTIME_ID)
     async_add_external_statistics(hass, metadata, _counter_rows(START, (0.25, 0.75)))
     prior = (await _read(hass, {RUNTIME_ID}, types={"state", "sum"}))[RUNTIME_ID]
     intended = [
@@ -388,7 +377,7 @@ async def test_cancelled_wait_requires_native_reconciliation_before_stable_repla
     submitted = asyncio.Event()
     release = threading.Event()
     writer = None
-    metadata = _metadata()
+    metadata = hourly_metadata(RUNTIME_ID)
 
     class GateRecorderTask(RecorderTask):
         def run(self, instance):
@@ -448,7 +437,7 @@ async def test_expired_raw_prefix_requires_exact_verified_native_seed(
     if not has_exact_seed:
         assert not snapshot.rows
         assert "unproven_cumulative_basis" in plan.blocking_reasons
-        assert not plan.unblocked_rows
+        assert plan.blocking_reasons
         assert (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID] == verified_rows
         return
     assert snapshot.rows[0].start == START + HOUR
@@ -466,7 +455,7 @@ async def test_early_correction_requires_rewriting_native_cumulative_suffix(hass
     plan = _plan(corrected_first, await _snapshot(hass, corrected_first))
     assert "surviving_stale_rows" in plan.blocking_reasons
     assert plan.stale_starts == (START + HOUR, START + 2 * HOUR)
-    assert not plan.unblocked_rows
+    assert plan.blocking_reasons
 
     # Demonstrate why updating only the early row is insufficient in native HA.
     async_add_external_statistics(
@@ -628,7 +617,7 @@ async def test_bounded_snapshot_rejects_explicit_reset_but_v2_read_stays_compati
     adapter = HourlyRecorder(hass)
     async_add_external_statistics(
         hass,
-        _metadata(),
+        hourly_metadata(RUNTIME_ID),
         [{"start": START, "sum": 2, "state": 2, "last_reset": START}],
     )
     with pytest.raises(HourlyRecorderError, match="unexpected_statistic_reset"):

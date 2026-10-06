@@ -70,7 +70,6 @@ def _partition(identity, *, selected=(), blocked=None):
     return WriterPartition(
         frozenset(key.removesuffix("_hourly_v2") for key in resources - hourly),
         hourly,
-        frozenset(key.removesuffix("_hourly_v2") for key in hourly),
         bool(hourly),
         blocked,
     )
@@ -349,7 +348,6 @@ async def test_hourly_settings_change_reprepares_and_passes_final_eligible_scope
         return WriterPartition(
             frozenset(key.removesuffix("_hourly_v2") for key in current - selected),
             selected,
-            frozenset({legacy_temperature_id}),
             True,
         )
 

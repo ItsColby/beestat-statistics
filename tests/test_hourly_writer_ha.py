@@ -46,6 +46,7 @@ from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
+from tests.hourly_support import hourly_metadata, known_beestat_ids
 from tests.test_runtime_ha import _coordinator_data
 
 pytestmark = pytest.mark.asyncio
@@ -78,25 +79,15 @@ async def _started_recorder(recorder_mock: Any, freezer: Any) -> AsyncIterator[N
         dt_util.set_default_time_zone(previous_default)
 
 
-def _metadata(statistic_id=RUNTIME_ID, *, measurement=False):
-    return {
-        "statistic_id": statistic_id,
-        "source": "beestat",
-        "name": "Hourly writer fixture",
-        "unit_of_measurement": "°F" if measurement else "h",
-        "unit_class": "temperature" if measurement else "duration",
-        "mean_type": 1 if measurement else 0,
-        "has_sum": not measurement,
-    }
-
-
 @pytest.mark.usefixtures("_started_recorder")
 async def test_snapshot_distinguishes_absence_empty_range_and_cleared_row(hass):
     adapter = HourlyRecorder(hass)
     missing = await adapter.async_snapshot(RUNTIME_ID, START)
     assert missing.complete and missing.metadata is None and not missing.rows
 
-    adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
+    adapter.submit(
+        hourly_metadata(RUNTIME_ID), (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+    )
     imported = await adapter.async_snapshot(RUNTIME_ID, START)
     assert imported.complete and imported.metadata is not None
     assert imported.rows == (HourlyStatisticRow(START, state=0.25, sum=0.25),)
@@ -104,7 +95,7 @@ async def test_snapshot_distinguishes_absence_empty_range_and_cleared_row(hass):
     assert empty.complete and empty.metadata == imported.metadata and not empty.rows
 
     for _replay in range(2):
-        adapter.submit(_metadata(), (HourlyStatisticRow(START),))
+        adapter.submit(hourly_metadata(RUNTIME_ID), (HourlyStatisticRow(START),))
         cleared = await adapter.async_snapshot(RUNTIME_ID, START)
         assert cleared.complete and cleared.metadata == imported.metadata
         assert cleared.rows == (HourlyStatisticRow(START),)
@@ -118,7 +109,7 @@ async def test_snapshot_includes_retained_tail_and_only_supported_fields(hass):
         HourlyStatisticRow(START, mean=72, min=71, max=73),
         HourlyStatisticRow(START + 5 * HOUR, mean=75, min=74, max=76),
     )
-    metadata = _metadata(TEMPERATURE_ID, measurement=True)
+    metadata = hourly_metadata(TEMPERATURE_ID, measurement=True)
     adapter.submit(metadata, rows)
     snapshot = await adapter.async_snapshot(TEMPERATURE_ID, START)
     assert snapshot.complete
@@ -130,16 +121,20 @@ async def test_snapshot_includes_retained_tail_and_only_supported_fields(hass):
     assert snapshot.metadata == native_metadata[TEMPERATURE_ID][1]
     assert all(row.sum is None and row.state is None for row in snapshot.rows)
 
-    other = {**_metadata(), "statistic_id": "other:writer", "source": "other"}
+    other = {
+        **hourly_metadata(RUNTIME_ID),
+        "statistic_id": "other:writer",
+        "source": "other",
+    }
     async_add_external_statistics(hass, other, [{"start": START, "sum": 1}])
-    assert await adapter.async_known_ids() == {TEMPERATURE_ID}
+    assert await known_beestat_ids(hass, adapter) == {TEMPERATURE_ID}
 
 
 @pytest.mark.usefixtures("_started_recorder")
 async def test_projection_explicitly_requests_native_units_and_no_change(hass):
     adapter = HourlyRecorder(hass)
     adapter.submit(
-        _metadata(TEMPERATURE_ID, measurement=True),
+        hourly_metadata(TEMPERATURE_ID, measurement=True),
         (HourlyStatisticRow(START, mean=72, min=71, max=73),),
     )
     original = hourly_recorder.statistics_during_period
@@ -174,7 +169,10 @@ async def test_cancelled_snapshot_does_not_cancel_queued_effect_or_replacement_f
     get_instance(hass).queue_task(GateRecorderTask())
     try:
         await asyncio.wait_for(paused.wait(), timeout=5)
-        adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
+        adapter.submit(
+            hourly_metadata(RUNTIME_ID),
+            (HourlyStatisticRow(START, state=0.25, sum=0.25),),
+        )
         reader = asyncio.create_task(adapter.async_snapshot(RUNTIME_ID, START))
         await asyncio.sleep(0)
         assert not reader.done()
@@ -210,7 +208,9 @@ async def test_incomplete_or_malformed_native_projection_never_becomes_complete(
     hass, corruption, error
 ):
     adapter = HourlyRecorder(hass)
-    adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
+    adapter.submit(
+        hourly_metadata(RUNTIME_ID), (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+    )
     await adapter.async_barrier()
     original = hourly_recorder.statistics_during_period
 
@@ -248,7 +248,9 @@ async def test_incomplete_or_malformed_native_projection_never_becomes_complete(
 @pytest.mark.parametrize("extra_rows", [0, 1])
 async def test_snapshot_bound_rejects_overflow_without_truncation(hass, extra_rows):
     adapter = HourlyRecorder(hass)
-    adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
+    adapter.submit(
+        hourly_metadata(RUNTIME_ID), (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+    )
     await adapter.async_barrier()
     native = {
         RUNTIME_ID: [
@@ -270,7 +272,9 @@ async def test_snapshot_bound_rejects_overflow_without_truncation(hass, extra_ro
 @pytest.mark.usefixtures("_started_recorder")
 async def test_metadata_change_during_projection_blocks_complete_snapshot(hass):
     adapter = HourlyRecorder(hass)
-    adapter.submit(_metadata(), (HourlyStatisticRow(START, state=0.25, sum=0.25),))
+    adapter.submit(
+        hourly_metadata(RUNTIME_ID), (HourlyStatisticRow(START, state=0.25, sum=0.25),)
+    )
     await adapter.async_barrier()
     original = hourly_recorder.get_metadata
     reads = 0
@@ -303,8 +307,8 @@ async def test_metadata_change_during_projection_blocks_complete_snapshot(hass):
 async def test_invalid_submission_has_no_native_effect(hass, row):
     adapter = HourlyRecorder(hass)
     with pytest.raises(HourlyRecorderError):
-        adapter.submit(_metadata(), (row,))
-    assert await adapter.async_known_ids() == set()
+        adapter.submit(hourly_metadata(RUNTIME_ID), (row,))
+    assert await known_beestat_ids(hass, adapter) == set()
 
 
 @pytest.mark.usefixtures("_started_recorder")
@@ -544,14 +548,11 @@ async def test_native_partition_reserves_interrupted_selection_and_survives_relo
         assert partition.hourly_blocked_reason == "selection_pending"
         assert partition.hourly_statistic_ids == {RUNTIME_ID}
         assert partition.legacy_statistic_ids == {voc_id.removesuffix("_hourly_v2")}
-        assert partition.frozen_legacy_statistic_ids == {
-            RUNTIME_ID.removesuffix("_hourly_v2")
-        }
         snapshot.assert_not_awaited()
         save.assert_not_awaited()
         update.assert_not_called()
     assert await disk_store.async_load() == saved
-    assert not await recorder.async_known_ids()
+    assert not await known_beestat_ids(hass, recorder)
     await replacement.async_select(
         source, identity, **args, preview_digest=preview["preview_digest"]
     )
@@ -561,7 +562,7 @@ async def test_native_partition_reserves_interrupted_selection_and_survives_relo
         and ready.legacy_statistic_ids == partition.legacy_statistic_ids
     )
     await replacement.async_import(source, identity)
-    assert await recorder.async_known_ids() == {RUNTIME_ID}
+    assert await known_beestat_ids(hass, recorder) == {RUNTIME_ID}
     assert [
         row.sum for row in (await recorder.async_snapshot(RUNTIME_ID, START)).rows
     ] == [
@@ -634,10 +635,6 @@ async def test_native_selected_quantity_disable_reload_and_reenable(hass, disk_s
     await writer.async_import(fan, disabled, eligible_resources=disabled["resources"])
     partition = await writer.async_writer_partition(disabled)
     assert not partition.legacy_statistic_ids
-    assert (
-        TEMPERATURE_ID.removesuffix("_hourly_v2")
-        in partition.frozen_legacy_statistic_ids
-    )
     assert await recorder.async_snapshot(TEMPERATURE_ID, START) == retained
     with pytest.raises(HourlyImportError, match="resource is missing"):
         await writer.async_import(
@@ -651,7 +648,7 @@ async def test_native_selected_quantity_disable_reload_and_reenable(hass, disk_s
         RUNTIME_ID,
         TEMPERATURE_ID,
     }
-    assert await recorder.async_known_ids() == {RUNTIME_ID, TEMPERATURE_ID}
+    assert await known_beestat_ids(hass, recorder) == {RUNTIME_ID, TEMPERATURE_ID}
 
 
 @pytest.mark.usefixtures("_started_recorder")
@@ -766,7 +763,7 @@ async def test_real_manager_advances_complete_prefix_across_lagging_refreshes(
     assert saved["statistic_id"] == RUNTIME_ID
     assert saved["epoch_start"] == START.isoformat()
     assert saved["blocked_from"] is None and saved["closed"] == []
-    assert await recorder.async_known_ids() == {RUNTIME_ID}
+    assert await known_beestat_ids(hass, recorder) == {RUNTIME_ID}
     coverage = writer.coverage(start=START, end=START + 3 * HOUR)["series"][RUNTIME_ID]
     assert [hour["coverage"] for hour in coverage["hours"]] == [
         "verified",
@@ -830,7 +827,7 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
         )
         assert selected["status"] == "selected"
         assert (await store.async_load())["series"][statistic_id]["checkpoint"] is None
-        assert await recorder.async_known_ids() == set()
+        assert await known_beestat_ids(hass, recorder) == set()
 
         client.async_read_runtime_thermostat.reset_mock()
         result = await importer.async_import_statistics(skip_sync=True)
@@ -895,7 +892,7 @@ async def test_real_importer_bootstraps_saved_epoch_before_routine_lookback(
         assert saved["statistic_id"] == statistic_id
         assert saved["epoch_start"] == START.isoformat()
         assert saved["blocked_from"] is None and saved["closed"] == []
-        assert await recorder.async_known_ids() == {statistic_id}
+        assert await known_beestat_ids(hass, recorder) == {statistic_id}
         coverage = await importer.async_get_hourly_coverage(
             start=START, end=available_end
         )
