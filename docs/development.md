@@ -20,9 +20,11 @@ pre-commit run --all-files
 ```
 
 The Home Assistant suite needs Linux and Python 3.14. Use a separate virtual
-environment for each Core lane, install it the way its workflow job does, and
-run `python -m pytest tests` for the complete suite or name individual test
-modules while iterating. Hassfest and HACS run only in CI.
+environment for each Core lane, install it the way its workflow job does, run
+`python -m mypy`, and run `python -m pytest tests` for the complete suite or name
+individual test modules while iterating. Hassfest and HACS run only in CI.
+[Dependabot](../.github/dependabot.yml) does not update the coupled Python
+support lanes.
 
 Local checks do not replace the hosted jobs, authorize publication or establish
 live behavior.
