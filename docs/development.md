@@ -30,9 +30,6 @@ while iterating. Hassfest and HACS run only in CI.
 [Dependabot](../.github/dependabot.yml) does not update the coupled Python
 pins.
 
-Local checks do not replace the hosted jobs, authorize publication or establish
-live behavior.
-
 ## Keep source contracts verifiable
 
 Gitleaks uses its default credential rules plus the repository's
