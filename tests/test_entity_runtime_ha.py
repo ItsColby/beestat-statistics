@@ -118,6 +118,28 @@ async def test_fallback_ownership_uses_native_device_metadata(
     assert devices.async_get(device.id) is device
 
 
+async def test_device_ownership_check_does_not_read_deprecated_config_entries(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Ownership comes from config_entry_id, not DeviceEntry.config_entries."""
+
+    entry = MockConfigEntry(domain=DOMAIN)
+    foreign_entry = MockConfigEntry(domain="homekit_controller")
+    entry.add_to_hass(hass)
+    foreign_entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    owned = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "thermostat_1")}
+    )
+    foreign = devices.async_get_or_create(
+        config_entry_id=foreign_entry.entry_id, identifiers={(DOMAIN, "thermostat_2")}
+    )
+
+    assert is_beestat_only_device(owned, entry.entry_id)
+    assert not is_beestat_only_device(foreign, entry.entry_id)
+    assert "config_entries" not in caplog.text
+
+
 async def test_service_device_is_registered_once_in_the_real_registry(
     hass: HomeAssistant,
 ) -> None:
@@ -194,7 +216,7 @@ async def test_native_shared_composite_is_not_owned_fallback_or_removable(
     composite = devices.async_get(composite_id)
     assert isinstance(composite, dr.DeviceEntry)
     assert composite.config_entry_id == entry.entry_id
-    assert composite.config_entries == {entry.entry_id, foreign_entry.entry_id}
+    assert composite.composite_device_id == composite.id == composite_id
     assert composite.identifiers == identifiers
     assert composite.connections == set()
     owned_after = devices.async_get(owned.id)
