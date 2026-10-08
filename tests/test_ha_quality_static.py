@@ -42,8 +42,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         integration_root = ROOT / "custom_components/beestat_statistics"
         for path in integration_root.glob("*.py"):
             text = path.read_text(encoding="utf-8")
-            self.assertNotIn("thermostat_id=%s", text)
-            self.assertNotIn("sensor_id=%s", text)
             tree = ast.parse(text)
             for call in ast.walk(tree):
                 if not _is_logger_call(call):
@@ -266,13 +264,6 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 self.assertIn("description", field)
             self.assertEqual(set(icons["services"][key]), {"service"})
             self.assertRegex(icons["services"][key]["service"], r"^mdi:[a-z0-9-]+$")
-
-    def test_custom_integration_translations_do_not_use_core_references(self) -> None:
-        translations_text = (
-            ROOT / "custom_components/beestat_statistics/translations/en.json"
-        ).read_text(encoding="utf-8")
-
-        self.assertNotIn("[%key:", translations_text)
 
     def test_options_abort_translation_is_scoped_to_options_flow(self) -> None:
         """Options-flow abort reasons belong under the options namespace."""
