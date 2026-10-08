@@ -76,11 +76,13 @@ def is_beestat_only_device(device_entry: object, entry_id: str) -> bool:
     if not isinstance(device_entry, dr.DeviceEntry):
         return False
 
-    # For a synthesized pre-migration composite, config_entry_id is only
-    # its former primary owner; config_entries retains every split owner.
+    # A stored device has exactly one owner, config_entry_id. A synthesized
+    # pre-migration composite reuses its former primary owner's config_entry_id
+    # while merging every split owner, so it carries its own id as
+    # composite_device_id and never proves exclusive ownership.
     return (
         device_entry.config_entry_id == entry_id
-        and set(device_entry.config_entries) == {entry_id}
+        and device_entry.composite_device_id != device_entry.id
         and bool(device_entry.identifiers)
         and all(identifier[0] == DOMAIN for identifier in device_entry.identifiers)
         and not device_entry.connections
