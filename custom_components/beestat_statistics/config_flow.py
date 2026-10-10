@@ -9,7 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-import voluptuous as vol
+import probatio
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_API_KEY
@@ -166,13 +166,13 @@ FILTER_NOTICE_SELECTOR = NumberSelector(
 )
 BOOLEAN_SELECTOR = BooleanSelector()
 
-OPTIONS_SCHEMA = vol.Schema(
+OPTIONS_SCHEMA = probatio.Schema(
     {
-        vol.Optional(
+        probatio.Optional(
             CONF_POINT_LOOKBACK_DAYS,
             default=DEFAULT_POINT_LOOKBACK_DAYS,
         ): POINT_LOOKBACK_SELECTOR,
-        vol.Optional(
+        probatio.Optional(
             CONF_SCAN_INTERVAL_SECONDS,
             default=DEFAULT_SCAN_INTERVAL_SECONDS,
         ): SCAN_INTERVAL_SELECTOR,
@@ -374,7 +374,7 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="account_change_confirm",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
         )
 
     async def _async_update_entry_data_flow(
@@ -616,13 +616,13 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
         return self.async_show_form(
             step_id="source_scope",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(
+                    probatio.Required(
                         _CONF_INCLUDED_THERMOSTAT_IDS,
                         default=[str(item) for item in sorted(enabled_thermostats)],
                     ): _select_selector(thermostat_options, multiple=True),
-                    vol.Required(
+                    probatio.Required(
                         _CONF_INCLUDED_SENSOR_IDS,
                         default=[str(item) for item in sorted(enabled_sensors)],
                     ): _select_selector(sensor_options, multiple=True),
@@ -672,7 +672,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
 
         return self.async_show_form(
             step_id="source_scope_confirm",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
             description_placeholders={
                 "thermostat_count": str(self._pending_scope_removed_thermostats),
                 "sensor_count": str(self._pending_scope_removed_sensors),
@@ -707,9 +707,9 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         options = _thermostat_options(self.config_entry)
         return self.async_show_form(
             step_id="thermostat_mapping",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(CONF_ID): _select_selector(options),
+                    probatio.Required(CONF_ID): _select_selector(options),
                 }
             ),
             errors=_selection_errors(options),
@@ -739,7 +739,7 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         self._pending_automatic_mapping_signature = candidate.signature
         return self.async_show_form(
             step_id="confirm_automatic_mappings",
-            data_schema=vol.Schema({}),
+            data_schema=probatio.Schema({}),
             description_placeholders={
                 "thermostat_count": str(candidate.thermostat_count),
                 "sensor_count": str(candidate.sensor_count),
@@ -820,26 +820,32 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 self._thermostat_id,
             ),
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(
+                probatio.Schema(
                     {
-                        vol.Optional(
+                        probatio.Optional(
                             CONF_CLIMATE_ENTITY_ID
                         ): THERMOSTAT_ENTITY_SELECTOR,
-                        vol.Optional(
+                        probatio.Optional(
                             CONF_TEMPERATURE_ENTITY_ID
                         ): TEMPERATURE_ENTITY_SELECTOR,
-                        vol.Optional(
+                        probatio.Optional(
                             CONF_OCCUPANCY_ENTITY_ID
                         ): OCCUPANCY_ENTITY_SELECTOR,
-                        vol.Optional(CONF_MOTION_ENTITY_ID): MOTION_ENTITY_SELECTOR,
-                        vol.Optional(CONF_FILTER_CHANGED_ENTITY_ID): (
+                        probatio.Optional(
+                            CONF_MOTION_ENTITY_ID
+                        ): MOTION_ENTITY_SELECTOR,
+                        probatio.Optional(CONF_FILTER_CHANGED_ENTITY_ID): (
                             FILTER_CHANGED_ENTITY_SELECTOR
                         ),
-                        vol.Optional(CONF_FILTER_LIFETIME_RUNTIME_HOURS): (
+                        probatio.Optional(CONF_FILTER_LIFETIME_RUNTIME_HOURS): (
                             FILTER_LIFETIME_SELECTOR
                         ),
-                        vol.Optional(CONF_FILTER_MAX_AGE_DAYS): FILTER_MAX_AGE_SELECTOR,
-                        vol.Optional(CONF_FILTER_NOTICE_DAYS): FILTER_NOTICE_SELECTOR,
+                        probatio.Optional(
+                            CONF_FILTER_MAX_AGE_DAYS
+                        ): FILTER_MAX_AGE_SELECTOR,
+                        probatio.Optional(
+                            CONF_FILTER_NOTICE_DAYS
+                        ): FILTER_NOTICE_SELECTOR,
                     }
                 ),
                 user_input if user_input is not None else defaults,
@@ -860,9 +866,9 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
         options = _sensor_options(self.config_entry)
         return self.async_show_form(
             step_id="sensor_mapping",
-            data_schema=vol.Schema(
+            data_schema=probatio.Schema(
                 {
-                    vol.Required(CONF_ID): _select_selector(options),
+                    probatio.Required(CONF_ID): _select_selector(options),
                 }
             ),
             errors=_selection_errors(options),
@@ -928,23 +934,25 @@ class BeestatStatisticsOptionsFlow(config_entries.OptionsFlowWithReload):
                 self._sensor_id,
             ),
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(
+                probatio.Schema(
                     {
-                        vol.Optional(CONF_THERMOSTAT_ID): _select_selector(
+                        probatio.Optional(CONF_THERMOSTAT_ID): _select_selector(
                             _thermostat_options(self.config_entry),
                             custom_value=True,
                         ),
-                        vol.Optional(
+                        probatio.Optional(
                             CONF_TEMPERATURE_ENTITY_ID
                         ): TEMPERATURE_ENTITY_SELECTOR,
-                        vol.Optional(
+                        probatio.Optional(
                             CONF_OCCUPANCY_ENTITY_ID
                         ): OCCUPANCY_ENTITY_SELECTOR,
-                        vol.Optional(CONF_MOTION_ENTITY_ID): MOTION_ENTITY_SELECTOR,
-                        vol.Optional(CONF_INCLUDE_TEMPERATURE): BOOLEAN_SELECTOR,
-                        vol.Optional(CONF_INCLUDE_AIR_QUALITY): BOOLEAN_SELECTOR,
-                        vol.Optional(CONF_INCLUDE_CO2): BOOLEAN_SELECTOR,
-                        vol.Optional(CONF_INCLUDE_VOC): BOOLEAN_SELECTOR,
+                        probatio.Optional(
+                            CONF_MOTION_ENTITY_ID
+                        ): MOTION_ENTITY_SELECTOR,
+                        probatio.Optional(CONF_INCLUDE_TEMPERATURE): BOOLEAN_SELECTOR,
+                        probatio.Optional(CONF_INCLUDE_AIR_QUALITY): BOOLEAN_SELECTOR,
+                        probatio.Optional(CONF_INCLUDE_CO2): BOOLEAN_SELECTOR,
+                        probatio.Optional(CONF_INCLUDE_VOC): BOOLEAN_SELECTOR,
                     }
                 ),
                 user_input if user_input is not None else defaults,
@@ -1084,18 +1092,18 @@ def _connection_data_schema(
     current_data: Mapping[str, Any],
     *,
     allow_blank_api_key: bool,
-) -> vol.Schema:
+) -> probatio.Schema:
     """Return connection fields without prefilling an API key."""
 
     api_key_field = (
-        vol.Required(CONF_API_KEY, default="")
+        probatio.Required(CONF_API_KEY, default="")
         if allow_blank_api_key
-        else vol.Required(CONF_API_KEY)
+        else probatio.Required(CONF_API_KEY)
     )
-    return vol.Schema(
+    return probatio.Schema(
         {
             api_key_field: API_KEY_SELECTOR,
-            vol.Optional(
+            probatio.Optional(
                 CONF_API_BASE,
                 default=current_data.get(CONF_API_BASE, API_BASE),
             ): API_BASE_SELECTOR,

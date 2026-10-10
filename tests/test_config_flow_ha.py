@@ -14,8 +14,8 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
+import probatio
 import pytest
-import voluptuous as vol
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
@@ -160,10 +160,7 @@ async def test_mapped_entities_link_without_shared_device_ownership(
     assert entity.device_entry is not None
     assert entity.device_entry.id == source_device.id
     assert current_device is not None
-    if hasattr(current_device, "config_entry_id"):
-        assert current_device.config_entry_id == source_entry.entry_id
-    else:
-        assert set(current_device.config_entries) == {source_entry.entry_id}
+    assert current_device.config_entry_id == source_entry.entry_id
     assert current_entity is not None
     assert current_entity.device_id == source_device.id
 
@@ -718,7 +715,7 @@ async def test_connection_retry_preserves_endpoint_without_prefilling_key(
     assert (
         fields[CONF_API_KEY].default() == ""
         if source == SOURCE_RECONFIGURE
-        else fields[CONF_API_KEY].default is vol.UNDEFINED
+        else fields[CONF_API_KEY].default is probatio.UNDEFINED
     )
     if entry is not None:
         assert entry.data == original_data
