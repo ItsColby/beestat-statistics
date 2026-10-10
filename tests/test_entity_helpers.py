@@ -21,8 +21,7 @@ class FakeDeviceEntry(types.SimpleNamespace):
     """Admitted ordinary device entry, separate from child/unknown records."""
 
     def __init__(self, **fields):
-        fields.setdefault("id", "device-1")
-        fields.setdefault("composite_device_id", None)
+        fields.setdefault("is_composite_device", False)
         super().__init__(**fields)
 
 
@@ -205,23 +204,6 @@ class EntityHelpersTest(unittest.TestCase):
         ):
             with self.subTest(device_type=type(device).__name__):
                 self.assertFalse(self.entity.is_beestat_only_device(device, "entry-1"))
-
-    def test_composite_primary_owner_does_not_prove_exclusive_ownership(self) -> None:
-        for composite_device_id, expected in (
-            (None, True),
-            ("device-1-split-from", True),
-            ("device-1", False),
-        ):
-            with self.subTest(composite_device_id=composite_device_id):
-                device = FakeDeviceEntry(
-                    config_entry_id="entry-1",
-                    composite_device_id=composite_device_id,
-                    identifiers={("beestat_statistics", "thermostat_99")},
-                    connections=set(),
-                )
-                self.assertIs(
-                    self.entity.is_beestat_only_device(device, "entry-1"), expected
-                )
 
     def test_device_ownership_cleanup_removes_helper_devices_once_per_source(
         self,

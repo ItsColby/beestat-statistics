@@ -216,7 +216,8 @@ async def test_native_shared_composite_is_not_owned_fallback_or_removable(
     composite = devices.async_get(composite_id)
     assert isinstance(composite, dr.DeviceEntry)
     assert composite.config_entry_id == entry.entry_id
-    assert composite.composite_device_id == composite.id == composite_id
+    assert composite.is_composite_device
+    assert composite.id == composite_id
     assert composite.identifiers == identifiers
     assert composite.connections == set()
     owned_after = devices.async_get(owned.id)

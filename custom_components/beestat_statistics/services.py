@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any, cast
 
-import voluptuous as vol
+import probatio
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
@@ -80,96 +80,104 @@ from .runtime import (
 
 _LOGGER = logging.getLogger(__name__)
 
-IMPORT_SERVICE_SCHEMA = vol.Schema(
+IMPORT_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Optional(CONF_POINT_LOOKBACK_DAYS): vol.All(
-            vol.Coerce(int),
-            vol.Range(min=1, max=MAX_POINT_LOOKBACK_DAYS),
+        probatio.Optional(CONF_POINT_LOOKBACK_DAYS): probatio.All(
+            probatio.Coerce(int),
+            probatio.Range(min=1, max=MAX_POINT_LOOKBACK_DAYS),
         ),
-        vol.Optional(ATTR_SKIP_SYNC, default=False): cv.boolean,
+        probatio.Optional(ATTR_SKIP_SYNC, default=False): cv.boolean,
     }
 )
 
-REBUILD_SERVICE_SCHEMA = vol.Schema(
+REBUILD_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Optional(CONF_THERMOSTAT_ID): vol.Coerce(int),
-        vol.Optional(ATTR_START_DATE): cv.date,
-        vol.Optional(ATTR_END_DATE): cv.date,
-        vol.Optional(ATTR_SKIP_SYNC, default=False): cv.boolean,
+        probatio.Optional(CONF_THERMOSTAT_ID): probatio.Coerce(int),
+        probatio.Optional(ATTR_START_DATE): cv.date,
+        probatio.Optional(ATTR_END_DATE): cv.date,
+        probatio.Optional(ATTR_SKIP_SYNC, default=False): cv.boolean,
     }
 )
 
-GET_CONFIGURATION_SERVICE_SCHEMA = vol.Schema(
+GET_CONFIGURATION_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
     }
 )
 
 
 def _hourly_revision(value: Any) -> int:
     if type(value) is not int or value < 0:
-        raise vol.Invalid("The expected revision must be a non-negative integer")
+        raise probatio.Invalid("The expected revision must be a non-negative integer")
     return value
 
 
-SELECT_HOURLY_SERVICE_SCHEMA = vol.Schema(
+SELECT_HOURLY_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        vol.Required(ATTR_EPOCH_START): cv.datetime,
-        vol.Required(ATTR_STATISTIC_IDS): vol.All([cv.string], vol.Length(min=1)),
-        vol.Required(ATTR_EXPECTED_REVISION): _hourly_revision,
-        vol.Optional(ATTR_PREVIEW_DIGEST): cv.string,
+        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        probatio.Required(ATTR_EPOCH_START): cv.datetime,
+        probatio.Required(ATTR_STATISTIC_IDS): probatio.All(
+            [cv.string], probatio.Length(min=1)
+        ),
+        probatio.Required(ATTR_EXPECTED_REVISION): _hourly_revision,
+        probatio.Optional(ATTR_PREVIEW_DIGEST): cv.string,
     }
 )
 
-GET_HOURLY_COVERAGE_SERVICE_SCHEMA = vol.Any(
+GET_HOURLY_COVERAGE_SERVICE_SCHEMA = probatio.Any(
     COVERAGE_HISTORY_SCHEMA,
-    vol.Schema(
+    probatio.Schema(
         {
-            vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-            vol.Required(ATTR_START): cv.datetime,
-            vol.Required(ATTR_END): cv.datetime,
-            vol.Optional(ATTR_STATISTIC_IDS): vol.All([cv.string], vol.Length(min=1)),
+            probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+            probatio.Required(ATTR_START): cv.datetime,
+            probatio.Required(ATTR_END): cv.datetime,
+            probatio.Optional(ATTR_STATISTIC_IDS): probatio.All(
+                [cv.string], probatio.Length(min=1)
+            ),
         }
     ),
 )
 
-GET_RAW_POINTS_SERVICE_SCHEMA = vol.Schema(
+GET_RAW_POINTS_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        vol.Required("resource"): vol.In(("runtime_thermostat", "runtime_sensor")),
-        vol.Required("resource_id"): int,
-        vol.Required(ATTR_START): cv.datetime,
-        vol.Required(ATTR_END): cv.datetime,
+        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        probatio.Required("resource"): probatio.In(
+            ("runtime_thermostat", "runtime_sensor")
+        ),
+        probatio.Required("resource_id"): int,
+        probatio.Required(ATTR_START): cv.datetime,
+        probatio.Required(ATTR_END): cv.datetime,
     }
 )
 
-REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = vol.Schema(
+REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        vol.Required(CONF_THERMOSTAT_ID): vol.Coerce(int),
-        vol.Required(ATTR_CHANGED_AT): cv.datetime,
+        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        probatio.Required(CONF_THERMOSTAT_ID): probatio.Coerce(int),
+        probatio.Required(ATTR_CHANGED_AT): cv.datetime,
     }
 )
 
 
 def _positive_thermostat_id(value: Any) -> int:
     if (thermostat_id := positive_resource_id(value)) is None:
-        raise vol.Invalid("thermostat_id must be an exact positive integer")
+        raise probatio.Invalid("thermostat_id must be an exact positive integer")
     return thermostat_id
 
 
-RECORD_FILTER_CHANGE_SERVICE_SCHEMA = vol.Schema(
+RECORD_FILTER_CHANGE_SERVICE_SCHEMA = probatio.Schema(
     {
-        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        vol.Required(CONF_THERMOSTAT_ID): _positive_thermostat_id,
-        vol.Required(ATTR_CHANGED_AT): cv.datetime,
-        vol.Required(ATTR_EXPECTED_CHANGED_AT): vol.Any(None, cv.datetime),
-        vol.Required(ATTR_EXPECTED_CHANGED_DATE): vol.Any(None, cv.date),
-        vol.Required(ATTR_EXPECTED_REQUEST_ID): vol.Any(
-            None, vol.All(cv.string, vol.Length(min=1, max=128))
+        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        probatio.Required(CONF_THERMOSTAT_ID): _positive_thermostat_id,
+        probatio.Required(ATTR_CHANGED_AT): cv.datetime,
+        probatio.Required(ATTR_EXPECTED_CHANGED_AT): probatio.Any(None, cv.datetime),
+        probatio.Required(ATTR_EXPECTED_CHANGED_DATE): probatio.Any(None, cv.date),
+        probatio.Required(ATTR_EXPECTED_REQUEST_ID): probatio.Any(
+            None, probatio.All(cv.string, probatio.Length(min=1, max=128))
         ),
-        vol.Required(ATTR_REQUEST_ID): vol.All(cv.string, vol.Length(min=1, max=128)),
+        probatio.Required(ATTR_REQUEST_ID): probatio.All(
+            cv.string, probatio.Length(min=1, max=128)
+        ),
     }
 )
 
