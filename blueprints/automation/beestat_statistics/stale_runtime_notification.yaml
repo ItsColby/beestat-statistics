@@ -8,7 +8,7 @@ blueprint:
   domain: automation
   author: ItsColby
   homeassistant:
-    min_version: 2026.9.4
+    min_version: 2026.10.0
   input:
     lag_sensor:
       name: Runtime summary lag sensor

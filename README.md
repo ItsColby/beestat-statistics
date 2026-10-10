@@ -11,7 +11,7 @@ filter condition or choose a maintenance policy for your equipment.
 
 ## Get connected
 
-You need Home Assistant **2026.9.4 or later**, Recorder, and a Beestat API key
+You need Home Assistant **2026.10.0 or later**, Recorder, and a Beestat API key
 for an account that exposes at least one identifiable thermostat. Matching local
 HomeKit/Ecobee devices are useful but are not required for history imports.
 

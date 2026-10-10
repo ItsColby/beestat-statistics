@@ -65,7 +65,7 @@ rows. Daily cumulative differences can still be meaningful, but hourly queries
 cannot recover the day's missing intervals. The explicit hourly mode described
 below supplies actual hourly rows without rewriting those legacy IDs. Installing
 this source does not select an epoch or migrate an existing entry.
-[Core import contract](https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/recorder/statistics.py)
+[Core import contract](https://github.com/home-assistant/core/blob/2026.10.0/homeassistant/components/recorder/statistics.py)
 (`async_add_external_statistics`).
 
 Known-unit absolute temperatures share the lower-bound check in [`temperature.py`](../custom_components/beestat_statistics/temperature.py). Historical outdoor, setpoint and room-sensor values are checked after source scaling and before aggregation; summary means and each supplied extremum are checked independently. Their qualified upstream tenths-Fahrenheit representation permits a `0.05 °F` half-step allowance in addition to floating-point roundoff, preserving the rounded absolute-zero value `−459.7 °F` while rejecting `−460 °F`. This source allowance does not apply to precise local HA readings. The pinned Beestat [runtime scaling](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_sensor.php#L113) and [summary rounding](https://github.com/beestat/app/blob/42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1/api/runtime_thermostat_summary.php#L345) show this representation; the [API inventory](beestat-api-surface.json) records their source identities. Invalid means omit that day's measurement, while an invalid extremum omits only that extremum. Valid negative Celsius/Fahrenheit readings and finite high temperatures remain supported.
