@@ -200,6 +200,29 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         for action in services["services"]:
             self.assertIn(action, usage, f"Undocumented action: {action}")
 
+        pin = _exact_core_pin("ha-current")
+        for doc in (ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))):
+            for version in re.findall(
+                r"github\.com/home-assistant/core/(?:blob|tree)/([^/\s)]+)",
+                doc.read_text(encoding="utf-8"),
+            ):
+                self.assertEqual(pin, version, f"{doc.name} Core link is not the pin")
+
+    def test_translations_do_not_use_core_references(self) -> None:
+        # Hassfest checks only strings.json, so en.json needs its own check.
+        def walk(value: object) -> list[str]:
+            if isinstance(value, dict):
+                return [text for item in value.values() for text in walk(item)]
+            if isinstance(value, list):
+                return [text for item in value for text in walk(item)]
+            return [value] if isinstance(value, str) else []
+
+        translations = _json_file(
+            "custom_components/beestat_statistics/translations/en.json"
+        )
+        for text in walk(translations):
+            self.assertNotIn("[%key:", text)
+
     def test_entity_translation_keys_have_names_and_icons(self) -> None:
         strings = _json_file(
             "custom_components/beestat_statistics/translations/en.json"
