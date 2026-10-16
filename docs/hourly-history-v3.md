@@ -338,7 +338,8 @@ with `contract_version`, `operation_id`, `plan_digest`, `status`
 Repeating the same ID/digest observes/resumes the original intent; a conflicting
 reuse fails. Query/configuration expose progress without effectful polling.
 
-The existing entry worker executes one quantity/month batch at a time, at most
+The existing entry worker (or, for a routine correction, the import pass that
+accepted it) executes one quantity/month batch at a time, at most
 744 hour slots. It saves exact before/intended rows before submission, fences
 and compares native readback, persists the proof shard, then advances the root
 revision and clears pending. Cancellation cannot turn uncertain effects into
@@ -358,8 +359,10 @@ code alone is not a rollback.
 
 The existing entry import cadence also refreshes enabled adopted quantities
 within the accepted 45-day policy. A pending operation resumes its sealed
-intent before a different acquisition can be accepted. Historical rebuilds
-outside this routine path require a new explicit plan.
+intent before a different acquisition can be accepted. The import pass advances
+the routine operation it accepts to completion or a hold under its own lock
+before recording its result, so Import partial reports only held or unverified
+work. Historical rebuilds outside this routine path require a new explicit plan.
 
 One acquisition resolves all ordered resource chunks, including invalid rows
 and tombstones, before comparison with a named committed source revision and

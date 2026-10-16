@@ -15,7 +15,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from homeassistant.core import Context
 
-from custom_components.beestat_statistics import hourly_history_runtime
+from custom_components.beestat_statistics import (
+    hourly_history_runtime,
+    hourly_history_writer,
+)
 from custom_components.beestat_statistics.api import (
     BeestatRawReadError,
     BeestatRawResponse,
@@ -540,6 +543,52 @@ async def test_importer_wrapper_resumes_pending_intent_but_rebuild_requires_plan
     assert await runtime.store.async_load() == completed
     runtime.write.assert_called_once()
     read.assert_not_called()
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_importer_wrapper_finishes_the_routine_correction_it_accepts(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    rows = json.loads(_content())
+    rows[0]["fan"] = 150
+    _provider(runtime, monkeypatch, rows=rows)
+    async with runtime.importer._lock:
+        reason = await runtime.importer._async_refresh_hourly_history(
+            lookback_days=1, rebuilding=False
+        )
+    assert reason is None
+    assert runtime.importer._history_worker is None
+    assert runtime.importer.hourly.history_status()["status"] == "completed"
+    assert not runtime.importer.hourly.has_pending_history
+    assert (await _logical_hour(runtime))["value"] == pytest.approx(
+        (150 + 11 * 75) / 3600
+    )
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_failed_routine_advance_holds_the_operation_without_aborting_import(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    rows = json.loads(_content())
+    rows[0]["fan"] = 150
+    read = _provider(runtime, monkeypatch, rows=rows)
+    monkeypatch.setattr(
+        hourly_history_writer.HistoryWriter,
+        "_advance",
+        AsyncMock(side_effect=OSError("fixture write failure")),
+    )
+    for _attempt in range(2):
+        async with runtime.importer._lock:
+            reason = await runtime.importer._async_refresh_hourly_history(
+                lookback_days=1, rebuilding=False
+            )
+        assert reason == "history_operation_blocked"
+        assert runtime.importer.hourly.history_status()["status"] == "blocked"
+        assert not runtime.importer.hourly.has_pending_history
+    # The held operation is reported, not reacquired or retried.
+    read.assert_awaited_once()
     await runtime.entry._async_process_on_unload(hass)
 
 
