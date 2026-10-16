@@ -209,7 +209,8 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 self.assertEqual(pin, version, f"{doc.name} Core link is not the pin")
 
     def test_translations_do_not_use_core_references(self) -> None:
-        # Hassfest checks only strings.json, so en.json needs its own check.
+        # Hassfest does not resolve key references in a custom integration's
+        # translations/en.json, so this needs its own check.
         def walk(value: object) -> list[str]:
             if isinstance(value, dict):
                 return [text for item in value.values() for text in walk(item)]
