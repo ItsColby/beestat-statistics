@@ -628,9 +628,6 @@ class HistoryWriter:
                 hold = await self.hold(history, key, month, context)
                 for interval in hold["intervals"]:
                     source_ids.update(interval["source_ids"])
-        # Compatibility for an interrupted candidate predating the month index.
-        if not history.get("source_catalog"):
-            source_ids.update(history.get("source_ids", ()))
         declarations, sources = await self.load_sources(
             sorted(source_ids), first, end, context
         )
