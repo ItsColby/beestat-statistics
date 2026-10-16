@@ -71,7 +71,7 @@ python_version = "3.14"
 strict = true
 warn_unused_configs = true
 show_error_codes = true
-files = ["custom_components"]
+files = ["custom_components", "scripts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
