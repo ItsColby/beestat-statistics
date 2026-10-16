@@ -374,6 +374,8 @@ class BeestatStatisticsImporter:
         if rebuilding:
             # An explicit historical repair needs its own sealed plan and bounds.
             return "history_rebuild_requires_plan"
+        if status["status"] == "blocked":
+            return "history_operation_blocked"
         if status["status"] != "completed":
             self._ensure_history_worker()
             return "history_operation_pending"
@@ -381,6 +383,18 @@ class BeestatStatisticsImporter:
             result = await async_refresh_history(
                 self, self._history_context(), lookback_days=lookback_days
             )
+            # This pass owns the routine operation it accepted. Finish it under
+            # the same lock so the import records its effect, not its intent.
+            while result.get("status") in {"accepted", "in_progress"}:
+                try:
+                    result = await self.hourly.async_advance_history(
+                        context=self._history_context()
+                    )
+                except Exception as err:  # noqa: BLE001 - advance journals the hold before re-raising
+                    _LOGGER.warning(
+                        "History operation paused (%s)", exception_fingerprint(err)
+                    )
+                    return "history_operation_blocked"
         except (ValueError, BeestatApiError) as err:
             _LOGGER.warning("History refresh paused (%s)", exception_fingerprint(err))
             return "history_refresh_unverified"
@@ -388,9 +402,7 @@ class BeestatStatisticsImporter:
             self._ensure_history_worker()
             self._notify_history_changed()
         return (
-            "history_operation_pending"
-            if result.get("status") in {"accepted", "in_progress", "blocked"}
-            else None
+            "history_operation_blocked" if result.get("status") == "blocked" else None
         )
 
     async def async_get_raw_points(self, request: RawPointRequest) -> dict[str, Any]:
