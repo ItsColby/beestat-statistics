@@ -42,8 +42,6 @@ from custom_components.beestat_statistics.statistics_builder import (
 )
 from tests.test_runtime_ha import _coordinator_data
 
-pytestmark = pytest.mark.asyncio
-
 
 async def test_timestamped_action_persists_completion_time_and_safe_replay(
     hass: HomeAssistant, freezer: Any

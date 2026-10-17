@@ -16,7 +16,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from copy import deepcopy
 from hashlib import sha256
@@ -30,8 +30,11 @@ from homeassistant.util.json import load_json
 _VERSION = 1
 _MINOR_VERSION = 1
 _OBJECT_KINDS = frozenset({"source", "manifest", "proof", "operation"})
-# Source originals and sealed manifests are admitted evidence and never collected.
+# Proof and operation objects are swept against the root's keep set. Sources and
+# manifests are deleted only by name, as integration deltas the root no longer
+# reaches or can admit; staged originals are never swept.
 _COLLECTED_KINDS = frozenset({"proof", "operation"})
+_RETIRED_KINDS = ("manifest", "source")
 _MAX_OBJECT_BYTES = 8 * 1024 * 1024
 _FREE_RESERVE = 256 * 1024 * 1024
 _STALE_PENDING_SECONDS = 3600
@@ -120,7 +123,7 @@ class HourlyStore:
         if not isinstance(content, bytes) or len(content) > _MAX_OBJECT_BYTES:
             raise HourlyStorageError("hourly_object_size_invalid")
         sweep = _collection(self._hass).running.get(self.path)
-        if kind in _COLLECTED_KINDS and sweep is not None:
+        if sweep is not None:
             # A sweep from a replaced writer must not delete what this one writes.
             await asyncio.wait([sweep])
         return await self._hass.async_add_executor_job(self.write_object, kind, content)
@@ -129,21 +132,33 @@ class HourlyStore:
         """Read one bounded, hash-verified object from this entry's namespace."""
         return await self._hass.async_add_executor_job(self._read_object, kind, digest)
 
+    async def async_object_ids(self, kind: str) -> set[str]:
+        """List one kind's retained object digests, ignoring temporaries."""
+        return await self._hass.async_add_executor_job(self._object_ids, kind)
+
     async def async_collect_objects(
         self,
         keep: Mapping[str, AbstractSet[str]],
         *,
         retained_prefix: bytes,
         closed: Callable[[], bool],
+        retired: Sequence[tuple[str, str]] = (),
     ) -> int:
-        """Delete unreferenced proof/operation objects; return how many were removed.
+        """Delete unreferenced proof/operation objects and the named retired ones.
 
-        The caller derives ``keep`` from the durably verified root while holding
-        the entry's writer lock; ``closed`` reports that writer's unload. Operation
-        objects starting with ``retained_prefix`` (invalidation records) are
-        never deleted.
+        The caller derives ``keep`` and ``retired`` from the durably verified
+        root while holding the entry's writer lock; ``closed`` reports that
+        writer's unload. Operation objects starting with ``retained_prefix``
+        (invalidation records) are never deleted. ``retired`` names source and
+        manifest objects in deletion order, each original before its manifest
+        and they stop at the first failure, so an interrupted pass leaves the
+        manifest that names any remaining original for the next; the count of
+        removed objects includes them.
         """
-        if set(keep) != _COLLECTED_KINDS:
+        if set(keep) != _COLLECTED_KINDS or any(
+            kind not in _RETIRED_KINDS or _DIGEST.fullmatch(name) is None
+            for kind, name in retired
+        ):
             raise HourlyStorageError("hourly_collection_scope_invalid")
         control = _collection(self._hass)
         if (
@@ -158,7 +173,7 @@ class HourlyStore:
             return control.paused.is_set() or closed()
 
         future = self._hass.async_add_executor_job(
-            self._collect_objects, keep, retained_prefix, stop
+            self._collect_objects, keep, retained_prefix, stop, tuple(retired)
         )
         # An executor job outlives a cancelled caller; backups and writes wait for it.
         control.running[self.path] = future
@@ -228,15 +243,49 @@ class HourlyStore:
             temporary_path.unlink(missing_ok=True)
         return digest
 
+    def _object_ids(self, kind: str) -> set[str]:
+        root = Path(f"{self.path}.objects")
+        directory = root / kind
+        if kind not in _OBJECT_KINDS:
+            raise HourlyStorageError("hourly_object_identity_invalid")
+        # Never follow an injected link/junction outside this owned namespace.
+        for part in (root, directory):
+            if part.is_symlink() or part.is_junction():
+                raise HourlyStorageError("hourly_object_path_invalid")
+        if not directory.is_dir():
+            return set()
+        return {
+            path.name
+            for path in directory.iterdir()
+            if _DIGEST.fullmatch(path.name) is not None
+        }
+
     def _collect_objects(
         self,
         keep: Mapping[str, AbstractSet[str]],
         retained_prefix: bytes,
         stop: Callable[[], bool],
+        retired: tuple[tuple[str, str], ...] = (),
     ) -> int:
         root = Path(f"{self.path}.objects")
         removed = 0
         failure: OSError | None = None
+        changed: set[Path] = set()
+        for kind, name in retired:
+            if stop():
+                break
+            path = self._object_path(kind, name)
+            try:
+                if path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                    changed.add(path.parent)
+            except OSError as err:
+                # Keep the manifests that name what remains for the next pass.
+                failure = failure or err
+                break
+        for directory in sorted(changed):
+            self._sync_directory(directory)
         for kind in sorted(_COLLECTED_KINDS):
             directory = root / kind
             # Never follow an injected link/junction outside this owned namespace.

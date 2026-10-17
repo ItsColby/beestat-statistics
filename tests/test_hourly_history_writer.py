@@ -1116,3 +1116,27 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             partition.legacy_statistic_ids, {"beestat:zone_cool_runtime_hours"}
         )
+
+
+class SupersessionContractionTest(unittest.TestCase):
+    def test_retired_acquisitions_leave_the_closure_among_the_rest(self):
+        resource = "runtime_thermostat:1"
+        relation = {
+            resource: {"b": ["a"], "c": ["b"], "d": ["c"], "e": ["b"]},
+            "runtime_sensor:2": {"y": ["x"]},
+        }
+        retired = {resource: ["b", "c"], "runtime_sensor:2": ["x"]}
+        result = writer._contract(relation, retired)
+        self.assertEqual(result, {resource: {"d": ["a"], "e": ["a"]}})
+        self.assertEqual(relation[resource]["c"], ["b"])
+        roots = {resource: {"a", "d", "e"}}
+        kept = {
+            name: older - {"b", "c"}
+            for name, older in sources._provider_precedence(
+                {}, relation, {resource: {"a", "b", "c", "d", "e"}}
+            )[resource].items()
+            if name in roots[resource]
+        }
+        self.assertEqual(
+            sources._provider_precedence({}, result, roots)[resource], kept
+        )

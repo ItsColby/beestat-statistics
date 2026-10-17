@@ -885,6 +885,99 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(first["source_revision"], second["source_revision"])
         self.assertEqual(first["resources"], second["resources"])
 
+    async def routine(self, name, rows, *, source_end="2026-09-01T12:00:00+00:00"):
+        value = self.delta()
+        value["acquisition"]["acquisition_id"] = name
+        value["acquisition"]["original_chunks"][0]["manifest"]["acquisition_id"] = name
+        value["rows"] = rows
+        return await self.stage(
+            value, manifest(acquisition_id=name, source_end=source_end)
+        )
+
+    async def redundancy(self, receipts, *, supersedes, window=None, **changes):
+        loaded = await sources.async_load_source_bundle(
+            self.store, [item["source_id"] for item in receipts], identity()
+        )
+        start = datetime(2026, 9, 1, tzinfo=UTC)
+        options = {
+            "provider_order": None,
+            "provider_supersedes": {"runtime_sensor:10": supersedes},
+            "window": window or (start, start + timedelta(days=1)),
+            "protected": set(),
+            **changes,
+        }
+        return loaded, sources.source_redundancy(loaded, **options)
+
+    async def test_redundancy_retires_deltas_no_slot_needs_and_counts_day_winners(
+        self,
+    ):
+        early = await self.routine("early", [row(0, temperature=70), row(5)])
+        middle = await self.routine("middle", [row(0, temperature=71)])
+        latest = await self.routine(
+            "latest", [row(5, temperature=73)], source_end=manifest()["end"]
+        )
+        supersedes = {"middle": ["early"], "latest": ["middle"]}
+        loaded, result = await self.redundancy(
+            [early, middle, latest], supersedes=supersedes
+        )
+        self.assertEqual(result["source_ids"], [early["source_id"]])
+        self.assertEqual(result["acquisitions"], {"runtime_sensor:10": ["early"]})
+        self.assertEqual(
+            result["days"], {"runtime_sensor:10": {"2026-09-01T00:00:00+00:00": 2}}
+        )
+        kept = [item for item in loaded if item["source_id"] != early["source_id"]]
+        before = sources.merge_source_bundle(
+            loaded, provider_supersedes={"runtime_sensor:10": supersedes}
+        )
+        after = sources.merge_source_bundle(
+            kept, provider_supersedes={"runtime_sensor:10": {"latest": ["middle"]}}
+        )
+        self.assertEqual(
+            sources.source_resolution(before, loaded),
+            sources.source_resolution(after, kept),
+        )
+        slot = after["resources"]["runtime_sensor:10"]["slots"][row()["timestamp"]]
+        self.assertEqual(slot["source_ids"], [middle["source_id"]])
+
+    async def test_redundancy_keeps_every_acquisition_the_merge_still_depends_on(
+        self,
+    ):
+        start = datetime(2026, 9, 1, tzinfo=UTC)
+        early = await self.routine("early", [row(0, temperature=70)])
+        latest = await self.routine(
+            "latest",
+            [row(0, temperature=73), row(5, temperature=73)],
+            source_end=manifest()["end"],
+        )
+        staged = await self.stage(
+            [row(0, temperature=70)], manifest(acquisition_id="s")
+        )
+        rival = await self.routine("rival", [row(0, temperature=69)])
+        later = {"latest": ["early"]}
+        cases = {
+            "protected": ([early], later, {"protected": {early["source_id"]}}),
+            "reviewed order": (
+                [early],
+                later,
+                {"provider_order": {"runtime_sensor:10": ["early", "latest"]}},
+            ),
+            "outside window": (
+                [early],
+                later,
+                {"window": (start + timedelta(minutes=5), start + timedelta(days=1))},
+            ),
+            "staged original": ([staged], {"latest": ["s"]}, {}),
+            "conflict": ([early, rival], later, {}),
+        }
+        _loaded, control = await self.redundancy([early, latest], supersedes=later)
+        self.assertEqual(control["source_ids"], [early["source_id"]])
+        for name, (receipts, supersedes, changes) in cases.items():
+            with self.subTest(name=name):
+                _loaded, result = await self.redundancy(
+                    [*receipts, latest], supersedes=supersedes, **changes
+                )
+                self.assertEqual(result["source_ids"], [])
+
     async def test_delta_rejects_unbound_baseline_and_false_retention_claim(self):
         for key, change in (
             ("baseline_digest", "not-a-digest"),

@@ -72,8 +72,6 @@ from custom_components.beestat_statistics.tracking import (
 )
 from tests.test_api_response import _FakeResponse, _FakeSession
 
-pytestmark = pytest.mark.asyncio
-
 
 async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
     """Malformed Recorder seeds must not poison cumulative imports."""

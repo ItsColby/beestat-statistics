@@ -103,9 +103,6 @@ from custom_components.beestat_statistics.tracking import (
     _async_track_source_device_relinks,
 )
 
-pytestmark = pytest.mark.asyncio
-
-
 USER_INPUT = {
     CONF_API_KEY: "test-api-key",
     CONF_API_BASE: API_BASE,

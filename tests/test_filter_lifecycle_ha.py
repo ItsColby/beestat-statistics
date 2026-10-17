@@ -18,8 +18,6 @@ from custom_components.beestat_statistics.const import thermostat_entity_unique_
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from tests.test_runtime_ha import _coordinator_data
 
-pytestmark = pytest.mark.asyncio
-
 
 @pytest.mark.usefixtures("recorder_mock")
 async def test_queued_filter_button_cannot_save_after_platform_unload(

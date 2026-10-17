@@ -49,9 +49,6 @@ from custom_components.beestat_statistics.hourly_storage import (
 from tests.hourly_support import hourly_metadata, known_beestat_ids
 from tests.test_runtime_ha import _coordinator_data
 
-pytestmark = pytest.mark.asyncio
-
-
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 16, tzinfo=UTC)
 NOW = datetime(2026, 9, 13, tzinfo=UTC)

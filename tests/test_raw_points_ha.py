@@ -24,7 +24,6 @@ from custom_components.beestat_statistics.const import DOMAIN
 from tests.test_api_response import _FakeContent, _FakeResponse, _FakeSession
 from tests.test_runtime_ha import _coordinator_data
 
-pytestmark = pytest.mark.asyncio
 NOW = datetime(2026, 9, 10, 18, tzinfo=UTC)
 
 

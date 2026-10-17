@@ -1,8 +1,10 @@
 """Prepare immutable routine source deltas against an explicitly bound baseline.
 
 The original input is the integration's JSON export, not provider wire bytes.
-The delta retains exact input-byte commitments and changed original row objects;
-it deliberately does not claim to reconstruct or retain unchanged input bytes.
+The delta retains exact input-byte commitments and changed original row objects,
+plus every row of each closed day the baseline names for compaction, so one
+acquisition can hold that day. It deliberately does not claim to reconstruct or
+retain unchanged input bytes.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from .hourly_sources import (
 
 DELTA_FORMAT = "integration_delta_v1"
 EVALUATION_VERSION = "beestat_points_delta_v1"
+_DAY = timedelta(days=1)
 
 
 def prepare_history_delta(
@@ -49,7 +52,7 @@ def prepare_history_delta(
     evaluated_at: str | datetime,
     acquisition_id: str,
 ) -> dict[str, Any] | None:
-    """Resolve complete ordered input, then retain only changed observations.
+    """Resolve complete ordered input, then retain changed and compacted rows.
 
     Each incoming item is ``{manifest: SourceManifest, original_bytes: bytes}``.
     Chunk indices define order within each physical resource and all chunks
@@ -76,10 +79,12 @@ def prepare_history_delta(
     chunks: list[dict[str, Any]] = []
     changed_resources: list[str] = []
     changed_rows = 0
+    compaction = baseline.get("compaction", {})
     for key, items in sorted(grouped.items()):
         ordered = sorted(items, key=lambda item: item["manifest"]["chunk_index"])
         resource = baseline["resources"].get(key)
-        rows = _changed_rows(ordered, resource, first, stop)
+        days = {utc(day) for day in compaction.get(key, ())}
+        rows = _changed_rows(ordered, resource, first, stop, days)
         if not rows:
             continue
         prepared = _chunks(rows, ordered, baseline, evaluation)
@@ -154,6 +159,19 @@ def _baseline(
     resources = baseline.get("resources")
     if not isinstance(resources, dict) or len(resources) > MAX_SOURCE_RESOURCES:
         raise ValueError("history_delta_baseline_resources")
+    compaction = baseline.get("compaction", {})
+    if not isinstance(compaction, dict) or any(
+        key not in resources
+        or not isinstance(days, list)
+        or any(
+            not isinstance(day, str)
+            or _day(utc(day)) != utc(day)
+            or not start <= utc(day) < utc(day) + _DAY <= end
+            for day in days
+        )
+        for key, days in compaction.items()
+    ):
+        raise ValueError("history_delta_baseline_compaction")
     for key, resource in resources.items():
         if key != _resource_key(resource):
             raise ValueError("history_delta_baseline_resource_identity")
@@ -253,6 +271,7 @@ def _changed_rows(
     resource: Mapping[str, Any] | None,
     start: datetime,
     end: datetime,
+    days: set[datetime],
 ) -> list[dict[str, Any]]:
     before = _baseline_rows(resource)
     resolved: dict[datetime, dict[str, Any]] = {}
@@ -266,12 +285,25 @@ def _changed_rows(
                 # Last row wins even when the later observation is invalid or a
                 # tombstone. No per-chunk filtering can erase that final state.
                 resolved[stamp] = row
+    # A compaction day is carried whole, but only when this capture still has
+    # every baseline point of it; otherwise its existing sources stay needed.
+    carried = {
+        day
+        for day in days
+        if all(stamp in resolved for stamp in before if day <= stamp < day + _DAY)
+    }
     changed = [
         row
         for stamp, row in sorted(resolved.items())
-        if stamp not in before or _observation(before[stamp]) != _observation(row)
+        if stamp not in before
+        or _observation(before[stamp]) != _observation(row)
+        or _day(stamp) in carried
     ]
     return [*changed, *unplaced]
+
+
+def _day(stamp: datetime) -> datetime:
+    return stamp.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _chunks(

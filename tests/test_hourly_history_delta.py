@@ -14,6 +14,7 @@ from custom_components.beestat_statistics import hourly_sources as sources
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
 HOUR = timedelta(hours=1)
+DAY = timedelta(days=1)
 
 
 class HistoryDeltaTest(unittest.TestCase):
@@ -200,6 +201,50 @@ class HistoryDeltaTest(unittest.TestCase):
             "id": 333,
         }
         self.assertIsNone(self.prepare([self.incoming([row], indent=2)]))
+
+    def compacting(self, *days):
+        self.end = START + 2 * DAY
+        self.evaluated_at = self.end + HOUR
+        self.baseline["start"], self.baseline["end"] = (
+            START.isoformat(),
+            self.end.isoformat(),
+        )
+        self.baseline["compaction"] = {
+            "runtime_thermostat:1": [day.isoformat() for day in days]
+        }
+        self.seal()
+
+    def test_compaction_carries_a_covered_day_whole_and_skips_an_uncovered_one(
+        self,
+    ):
+        self.old_rows(
+            [self.row(), self.row(200, start=START + HOUR), self.row(start=START + DAY)]
+        )
+        self.compacting(START, START + DAY)
+        added = self.row(300, start=START + DAY + HOUR)
+        captured = [self.row(), self.row(200, start=START + HOUR), added]
+        # Day two misses a baseline point, so only its new row is retained.
+        self.assertEqual(self.rows(self.prepare([self.incoming(captured)])), captured)
+        self.baseline["compaction"] = {}
+        self.seal()
+        self.assertEqual(self.rows(self.prepare([self.incoming(captured)])), [added])
+
+    def test_compaction_names_only_whole_baseline_days_of_known_resources(self):
+        self.old_rows([self.row()])
+        for days in (
+            {"runtime_thermostat:1": [(START + HOUR).isoformat()]},
+            {"runtime_thermostat:1": [(START + 2 * DAY).isoformat()]},
+            {"runtime_sensor:2": [START.isoformat()]},
+            {"runtime_thermostat:1": START.isoformat()},
+        ):
+            self.compacting()
+            self.baseline["compaction"] = days
+            self.seal()
+            with (
+                self.subTest(days=days),
+                self.assertRaisesRegex(ValueError, "baseline_compaction"),
+            ):
+                self.prepare([self.incoming([self.row()])])
 
     def test_boolean_and_integer_are_distinct_observations(self):
         self.old_rows([self.row(1)])

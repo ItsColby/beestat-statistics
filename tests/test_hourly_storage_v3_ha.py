@@ -16,8 +16,6 @@ from custom_components.beestat_statistics.hourly_storage import (
     HourlyStore,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 @pytest.fixture
 def object_store(hass: HomeAssistant, tmp_path):

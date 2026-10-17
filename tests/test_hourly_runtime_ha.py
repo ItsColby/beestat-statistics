@@ -43,9 +43,6 @@ from custom_components.beestat_statistics.statistics_builder import (
 )
 from tests.test_runtime_ha import _coordinator_data
 
-pytestmark = pytest.mark.asyncio
-
-
 NOW = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
 START = datetime(2026, 9, 10, 17, tzinfo=UTC)
 END = START + timedelta(hours=1)
