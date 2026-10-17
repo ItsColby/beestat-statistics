@@ -50,6 +50,18 @@ _FIELDS = (
     "has_sum",
 )
 _SAVES = "beestat_hourly_storage_tasks"
+
+
+def _history_fence(token: str) -> dict[str, str]:
+    return {"kind": "history_invalidated_root", "token": token}
+
+
+# Every invalidation fence's canonical bytes begin with this; collection keeps them.
+HISTORY_FENCE_PREFIX = (
+    json.dumps(_history_fence(""), sort_keys=True, separators=(",", ":"))
+    .encode()
+    .removesuffix(b'""}')
+)
 _SUCCESSOR = "_hourly_v2"
 _THERMOSTAT_QUANTITIES = frozenset(
     (
@@ -338,6 +350,10 @@ class HourlyImportManager:
         """Accept ordinary provider corrections under the adopted bounded policy."""
         return await self._history_writer().refresh(request, context)
 
+    async def async_collect_history_objects(self, *, context: dict[str, Any]) -> int:
+        """Delete proof/operation generations the committed root no longer needs."""
+        return await self._history_writer().collect(context)
+
     async def async_history_source_points(
         self, request: dict[str, Any], *, context: dict[str, Any]
     ) -> dict[str, Any]:
@@ -386,7 +402,7 @@ class HourlyImportManager:
             self._invalidated_history_token = state["token"]
             if previous.cancelled() or previous.exception() is not None:
                 raise HourlyImportError("history_invalidation_fence_unverified")
-        fence = {"kind": "history_invalidated_root", "token": state["token"]}
+        fence = _history_fence(state["token"])
         try:
             raw = await self._store.async_read_object("operation", _digest(fence))
         except FileNotFoundError:
@@ -415,7 +431,7 @@ class HourlyImportManager:
         self._admit()
         if self.has_pending_store_save():
             raise HourlyImportError("history_store_write_pending")
-        fence = {"kind": "history_invalidated_root", "token": token}
+        fence = _history_fence(token)
         raw = json.dumps(
             fence, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode()

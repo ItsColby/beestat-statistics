@@ -8,12 +8,16 @@ serialization and drains surviving save tasks before replacing the writer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import shutil
 import tempfile
-from collections.abc import Callable
+import threading
+import time
+from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
@@ -26,13 +30,43 @@ from homeassistant.util.json import load_json
 _VERSION = 1
 _MINOR_VERSION = 1
 _OBJECT_KINDS = frozenset({"source", "manifest", "proof", "operation"})
+# Source originals and sealed manifests are admitted evidence and never collected.
+_COLLECTED_KINDS = frozenset({"proof", "operation"})
 _MAX_OBJECT_BYTES = 8 * 1024 * 1024
 _FREE_RESERVE = 256 * 1024 * 1024
+_STALE_PENDING_SECONDS = 3600
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_COLLECTION = "beestat_statistics_hourly_collection"
 
 
 class HourlyStorageError(ValueError):
     """The owned journal cannot prove the requested durable state."""
+
+
+class _Collection:
+    """Process-wide pause and running sweeps, keyed by journal path."""
+
+    def __init__(self) -> None:
+        self.paused = threading.Event()
+        self.running: dict[str, asyncio.Future[int]] = {}
+
+
+def _collection(hass: HomeAssistant) -> _Collection:
+    control: _Collection = hass.data.setdefault(_COLLECTION, _Collection())
+    return control
+
+
+async def async_pause_object_collection(hass: HomeAssistant) -> None:
+    """Stop deletions and wait for running sweeps so a backup sees one generation."""
+    control = _collection(hass)
+    control.paused.set()
+    if control.running:
+        await asyncio.wait(list(control.running.values()))
+
+
+def resume_object_collection(hass: HomeAssistant) -> None:
+    """Allow collection again once the backup has finished reading files."""
+    _collection(hass).paused.clear()
 
 
 class HourlyStore:
@@ -85,11 +119,51 @@ class HourlyStore:
             raise HourlyStorageError("hourly_store_stopping")
         if not isinstance(content, bytes) or len(content) > _MAX_OBJECT_BYTES:
             raise HourlyStorageError("hourly_object_size_invalid")
+        sweep = _collection(self._hass).running.get(self.path)
+        if kind in _COLLECTED_KINDS and sweep is not None:
+            # A sweep from a replaced writer must not delete what this one writes.
+            await asyncio.wait([sweep])
         return await self._hass.async_add_executor_job(self.write_object, kind, content)
 
     async def async_read_object(self, kind: str, digest: str) -> bytes:
         """Read one bounded, hash-verified object from this entry's namespace."""
         return await self._hass.async_add_executor_job(self._read_object, kind, digest)
+
+    async def async_collect_objects(
+        self,
+        keep: Mapping[str, AbstractSet[str]],
+        *,
+        retained_prefix: bytes,
+        closed: Callable[[], bool],
+    ) -> int:
+        """Delete unreferenced proof/operation objects; return how many were removed.
+
+        The caller derives ``keep`` from the durably verified root while holding
+        the entry's writer lock; ``closed`` reports that writer's unload. Operation
+        objects starting with ``retained_prefix`` (invalidation records) are
+        never deleted.
+        """
+        if set(keep) != _COLLECTED_KINDS:
+            raise HourlyStorageError("hourly_collection_scope_invalid")
+        control = _collection(self._hass)
+        if (
+            closed()
+            or control.paused.is_set()
+            or self.path in control.running
+            or self._hass.state in (CoreState.stopping, CoreState.stopped)
+        ):
+            return 0
+
+        def stop() -> bool:
+            return control.paused.is_set() or closed()
+
+        future = self._hass.async_add_executor_job(
+            self._collect_objects, keep, retained_prefix, stop
+        )
+        # An executor job outlives a cancelled caller; backups and writes wait for it.
+        control.running[self.path] = future
+        future.add_done_callback(lambda _: control.running.pop(self.path, None))
+        return await future
 
     async def async_process_source_job[T](
         self, function: Callable[..., T], *args: Any
@@ -153,6 +227,77 @@ class HourlyStore:
         finally:
             temporary_path.unlink(missing_ok=True)
         return digest
+
+    def _collect_objects(
+        self,
+        keep: Mapping[str, AbstractSet[str]],
+        retained_prefix: bytes,
+        stop: Callable[[], bool],
+    ) -> int:
+        root = Path(f"{self.path}.objects")
+        removed = 0
+        failure: OSError | None = None
+        for kind in sorted(_COLLECTED_KINDS):
+            directory = root / kind
+            # Never follow an injected link/junction outside this owned namespace.
+            for part in (root, directory):
+                if part.is_symlink() or part.is_junction():
+                    raise HourlyStorageError("hourly_object_path_invalid")
+            if directory.is_dir():
+                prefix = retained_prefix if kind == "operation" else b""
+                sweep = self._sweep(directory, keep[kind], prefix, stop)
+                removed += sweep[0]
+                failure = failure or sweep[1]
+        if failure is not None:
+            raise failure
+        return removed
+
+    def _sweep(
+        self,
+        directory: Path,
+        keep: AbstractSet[str],
+        retained_prefix: bytes,
+        stop: Callable[[], bool],
+    ) -> tuple[int, OSError | None]:
+        """Return objects removed and the first file error, which skips one file."""
+        removed, changed = 0, False
+        failure: OSError | None = None
+        stale = time.time() - _STALE_PENDING_SECONDS
+        for path in directory.iterdir():
+            if stop():
+                break
+            try:
+                outcome = self._reclaim(path, keep, retained_prefix, stale)
+            except OSError as err:
+                # One locked or unreadable file must not stop the rest of the sweep.
+                failure = failure or err
+                continue
+            removed += outcome is True
+            changed = changed or outcome is not None
+        if changed:
+            self._sync_directory(directory)
+        return removed, failure
+
+    @staticmethod
+    def _reclaim(
+        path: Path, keep: AbstractSet[str], retained_prefix: bytes, stale: float
+    ) -> bool | None:
+        """Delete one unneeded file: True for an object, False for a temporary."""
+        name = path.name
+        if path.is_symlink() or not path.is_file() or name in keep:
+            return None
+        if _DIGEST.fullmatch(name) is None:
+            # An interrupted write leaves its temporary file behind.
+            if not name.startswith(".pending-") or path.stat().st_mtime >= stale:
+                return None
+            path.unlink(missing_ok=True)
+            return False
+        if retained_prefix:
+            with path.open("rb") as source:
+                if source.read(len(retained_prefix)) == retained_prefix:
+                    return None
+        path.unlink(missing_ok=True)
+        return True
 
     @staticmethod
     def _sync_directory(path: Path) -> None:
