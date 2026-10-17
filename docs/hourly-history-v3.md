@@ -167,7 +167,9 @@ means a saved owner exists, not that every requested bucket is verified.
 `source_horizon_unsettled`, `source_conflict`, `invalid_slots`, `missing_slots`,
 or `source_evidence_invalid`. An unrecognized internal source failure is exposed
 as `source_evidence_invalid`, never an arbitrary provider message.
-Point `source_ids` are sealed source-manifest SHA-256 digests. Legacy daily
+Point `source_ids` are sealed source-manifest SHA-256 digests, recorded when
+the hour was proved; a later pass may retire and collect an integration delta
+they name. Legacy daily
 `source_ids` are the explicit native statistic aliases read for that day; they
 are locators, not source-byte hashes.
 `source_basis` is `points`, `legacy_daily`, or `unavailable`;
@@ -355,7 +357,7 @@ v2 users are not automatically converted. Recovery includes the entry/marker,
 root, its source/proof/operation objects, Recorder rows and metadata, consumer
 configuration/assets, timezone/method and exact component versions. Replacing
 code alone is not a rollback. Restore the root and its object namespace from the
-same backup: superseded proof and operation generations are not retained, so an
+same backup: superseded proofs, operations and retired deltas are not retained, so an
 older root needs the objects saved with it.
 
 ## Routine corrections after adoption
@@ -403,11 +405,27 @@ The manager rechecks the baseline before acceptance; stale input requires a new
 comparison, never substitution under an existing operation identity. Each
 accepted acquisition supersedes the provider acquisitions in its baseline. The
 root records only its nearest predecessors, since precedence uses the
-transitive closure, so the relation grows linearly with acquisitions; lists
-saved in full by earlier releases are reduced on the next accepted delta.
+transitive closure; lists saved in full by earlier releases are reduced on the
+next accepted delta.
 
-Admitted initial originals, accepted deltas and their source manifests remain
-retained. Proof and operation objects remain only while the committed root
+Selection stays bounded by the routine window: about one delta per resource and
+window day plus the current day's passes, however long history runs. A
+delta also re-carries every row of a closed UTC day in its window whose slots
+two or more acquisitions win, when its capture covers every baseline stamp of
+that day, so each closed day converges to one winning delta. A routine pass
+then retires integration deltas in its window that win no slot, removing them
+from the selection, monthly index and supersession relation while keeping the
+precedence closure among the rest; it retires nothing when the remaining
+acquisitions would not resolve to the same rows, and logs a warning. Retired
+sources' hours are
+re-proved in the same operation.
+
+Admitted initial originals and externally staged sources remain retained.
+Collection deletes an integration delta's manifest, and its original unless
+another retained manifest names it, once the committed root no longer reaches it
+and its baseline revision is not the root's, since no later pass can admit it.
+Roughly one delta per resource and day remains. Proof and operation objects
+remain only while the committed root
 needs them: the current operation, its batches and monthly source index, each
 quantity/month's current proof, current source holds and every invalidation
 record. After an operation completes and its root is durably verified, the

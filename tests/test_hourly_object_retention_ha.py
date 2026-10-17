@@ -1,4 +1,4 @@
-"""Bounded retention of superseded v3 proof and operation objects."""
+"""Bounded retention of superseded v3 proofs, operations and integration deltas."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.beestat_statistics import backup
+from custom_components.beestat_statistics import hourly_history_writer as writer_module
 from custom_components.beestat_statistics.hourly_history_contract import (
     canonical_json,
     digest,
@@ -41,8 +42,6 @@ from tests.test_hourly_history_runtime_ha import (
     _provider,
 )
 from tests.test_hourly_history_service_ha import END, QUANTITY, START, _content
-
-pytestmark = pytest.mark.asyncio
 
 _FENCE = canonical_json({"kind": "history_invalidated_root", "token": "0" * 64})
 
@@ -128,10 +127,10 @@ async def test_backup_pause_waits_for_a_running_sweep_and_blocks_new_ones(
     started, release = threading.Event(), threading.Event()
     original = object_store._collect_objects
 
-    def slow(keep, prefix, stop):
+    def slow(*args):
         started.set()
         release.wait(5)
-        return original(keep, prefix, stop)
+        return original(*args)
 
     keep = {"proof": set(), "operation": set()}
     with patch.object(object_store, "_collect_objects", slow):
@@ -157,10 +156,10 @@ async def test_replaced_writer_waits_for_and_closes_a_running_sweep(hass, object
     original = object_store._collect_objects
     closed = False
 
-    def slow(keep, prefix, stop):
+    def slow(*args):
         started.set()
         release.wait(5)
-        return original(keep, prefix, stop)
+        return original(*args)
 
     keep = {"proof": set(), "operation": set()}
     with (
@@ -235,6 +234,55 @@ async def test_one_failing_file_does_not_stop_the_sweep(object_store):
     assert sorted(calls) == sorted(operations + proofs)
     assert await _collect(object_store, keep) == 1
     assert _kind(object_store, "operation") == []
+
+
+async def test_collection_deletes_named_retired_objects_in_order(object_store):
+    (original,) = await _write(object_store, "source", b"delta")
+    (manifest,) = await _write(object_store, "manifest", b'{"m":0}')
+    (kept,) = await _write(object_store, "source", b"staged")
+    retired = [("source", original), ("manifest", manifest), ("source", "e" * 64)]
+    keep = {"proof": set(), "operation": set()}
+    assert await object_store.async_object_ids("manifest") == {manifest}
+    removed = await object_store.async_collect_objects(
+        keep,
+        retained_prefix=HISTORY_FENCE_PREFIX,
+        closed=lambda: False,
+        retired=retired,
+    )
+    assert removed == 2
+    assert _kind(object_store, "source") == [kept]
+    assert _kind(object_store, "manifest") == []
+    for invalid in (("proof", kept), ("source", "not-a-digest")):
+        with pytest.raises(HourlyStorageError, match="scope_invalid"):
+            await object_store.async_collect_objects(
+                keep,
+                retained_prefix=HISTORY_FENCE_PREFIX,
+                closed=lambda: False,
+                retired=[invalid],
+            )
+
+
+async def test_collection_keeps_the_manifest_of_an_original_it_cannot_delete(
+    object_store,
+):
+    (original,) = await _write(object_store, "source", b"delta")
+    (manifest,) = await _write(object_store, "manifest", b'{"m":1}')
+    unlink = Path.unlink
+
+    def refuse(path, *args, **kwargs):
+        if path.name == original:
+            raise PermissionError(path)
+        return unlink(path, *args, **kwargs)
+
+    with patch.object(Path, "unlink", refuse), pytest.raises(PermissionError):
+        await object_store.async_collect_objects(
+            {"proof": set(), "operation": set()},
+            retained_prefix=HISTORY_FENCE_PREFIX,
+            closed=lambda: False,
+            retired=[("source", original), ("manifest", manifest)],
+        )
+    assert _kind(object_store, "source") == [original]
+    assert _kind(object_store, "manifest") == [manifest]
 
 
 def _rows(open_hours):
@@ -579,3 +627,131 @@ def test_supersession_keeps_only_nearest_predecessors_with_the_same_closure():
     assert _provider_precedence({}, result, roots) == _provider_precedence(
         {}, full, roots
     )
+
+
+def _series(since, until):
+    # Provider reads return only the requested window's points.
+    first = max(START, since)
+    return [
+        {
+            "thermostat_id": 1,
+            "timestamp": (first + timedelta(minutes=5 * index)).isoformat(),
+            "fan": 75,
+        }
+        for index in range(int((until - first) / timedelta(minutes=5)))
+    ]
+
+
+async def test_daily_compaction_bounds_selected_and_retained_sources(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    passes, days, lookback = 3, 4, 3
+    selected, retained = [], []
+    for step in range(1, passes * days + 1):
+        now = END + timedelta(hours=24 / passes * step)
+        freezer.move_to(now + timedelta(minutes=1))
+        _horizon(runtime, now)
+        rows = _series(now - timedelta(days=lookback), now)
+        root = await _routine(runtime, monkeypatch, rows, days=lookback)
+        selected.append(len(root["history"]["source_ids"]))
+        kinds = _by_kind(_objects(runtime))
+        assert kinds["source"] == kinds["manifest"]
+        retained.append(kinds["manifest"])
+    # Each closed day collapses to one delta and superseded deltas are deleted,
+    # so selection stays within the window and retention grows by one per day.
+    assert max(selected) <= lookback + passes
+    assert retained[-1] - retained[-1 - passes] == 1
+    assert retained[-1] <= 1 + days + passes
+    for start in (START, END + timedelta(days=1), END + timedelta(days=days - 1)):
+        bucket = await _logical_hour(
+            runtime, start=start, end=start + timedelta(hours=1)
+        )
+        assert (bucket["reason"], bucket["value"]) == ("ready", 0.25)
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_refused_retirement_keeps_every_source_until_a_later_pass_retires(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, caplog
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    resolution = writer_module.source_resolution
+    calls = iter(range(1_000))
+    refused = True
+    monkeypatch.setattr(
+        writer_module,
+        "source_resolution",
+        lambda *args, **kwargs: next(calls) if refused else resolution(*args, **kwargs),
+    )
+    passes, lookback = 3, 3
+    selected = []
+    for step in range(1, 2 * passes + 2):
+        refused = step <= 2 * passes
+        now = END + timedelta(hours=24 / passes * step)
+        freezer.move_to(now + timedelta(minutes=1))
+        _horizon(runtime, now)
+        rows = _series(now - timedelta(days=lookback), now)
+        root = await _routine(runtime, monkeypatch, rows, days=lookback)
+        selected.append(len(root["history"]["source_ids"]))
+    # Refused passes keep every delta selected, like roots from earlier
+    # releases; the next pass that may retire returns within the bound.
+    assert selected[:-1] == sorted(set(selected[:-1]))
+    assert selected[-2] > lookback + passes >= selected[-1]
+    assert "would change resolved history" in caplog.text
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def _sealed(runtime, *, revision=None, original=None):
+    """Write a manifest that is a delta on ``revision``, or a staged original."""
+    if original is None:
+        original = await runtime.store.async_write_object(
+            "source", f"payload-{revision}".encode()
+        )
+    delta = (
+        None
+        if revision is None
+        else {"format": "integration_delta_v1", "baseline_source_revision": revision}
+    )
+    sealed = {
+        "sha256": original,
+        "confidence": "integration_delta_v1" if delta else "provider_ordered",
+        "delta": delta,
+    }
+    return original, await runtime.store.async_write_object(
+        "manifest", canonical_json(sealed)
+    )
+
+
+async def test_collection_deletes_only_unreachable_deltas_on_superseded_baselines(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    root = await runtime.store.async_load()
+    current = root["history"]["source_revision"]
+    stale = await _sealed(runtime, revision="0" * 64)
+    pending = await _sealed(runtime, revision=current)
+    staged = await _sealed(runtime)
+    # An original another, reachable manifest names outlives its stale delta.
+    reachable = _read(runtime, "manifest", root["history"]["source_ids"][0])
+    shared = await _sealed(runtime, revision="1" * 64, original=reachable["sha256"])
+    async with runtime.importer._lock:
+        assert (
+            await runtime.importer.hourly.async_collect_history_objects(
+                context=runtime.importer._history_context()
+            )
+            >= 3
+        )
+    objects = _objects(runtime)
+    assert {
+        f"manifest/{stale[1]}",
+        f"manifest/{shared[1]}",
+        f"source/{stale[0]}",
+    }.isdisjoint(objects)
+    for original, manifest in (pending, staged):
+        assert {f"source/{original}", f"manifest/{manifest}"} <= set(objects)
+    assert f"source/{shared[0]}" in objects
+    for source_id in root["history"]["source_ids"]:
+        assert f"manifest/{source_id}" in objects
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)

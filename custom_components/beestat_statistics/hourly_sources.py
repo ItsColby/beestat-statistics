@@ -12,6 +12,7 @@ import math
 import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from copy import deepcopy
 from datetime import UTC, datetime
 from graphlib import CycleError, TopologicalSorter
@@ -1197,3 +1198,146 @@ def _predecessor_closure(
                 pending.extend(edges.get(older, ()))
         resolved[node] = ancestors
     return resolved
+
+
+def source_redundancy(
+    sources: Sequence[dict[str, Any]],
+    *,
+    provider_order: Mapping[str, Sequence[str]] | None,
+    provider_supersedes: Mapping[str, Mapping[str, Sequence[str]]] | None,
+    window: tuple[datetime, datetime],
+    protected: AbstractSet[str],
+) -> dict[str, Any]:
+    """Name integration deltas no slot needs, and each day's needed acquisitions.
+
+    A slot's maximal winners are its winning provider acquisitions that no
+    other winner supersedes. Removing acquisitions that are never maximal keeps
+    every slot's winners, observation, conflicts and blocked windows, because
+    precedence is acyclic; only lineage loses their source IDs. Conflicted
+    slots keep every acquisition. So do staged archive/provider originals,
+    reviewed provider orders, points outside the loaded window, the
+    acquisition setting a thermostat's horizon and the protected source IDs.
+    """
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for source in sources:
+        groups[_acquisition_key(source["manifest"])].append(source)
+    items = {key: _ordered_points(group) for key, group in groups.items()}
+    resources: dict[str, list[tuple[Any, ...]]] = defaultdict(list)
+    horizons: dict[int, datetime] = {}
+    for key, item in items.items():
+        manifest = item["manifest"]
+        resources[f"{manifest['resource']}:{manifest['resource_id']}"].append(key)
+        owner, end = manifest["thermostat_id"], utc(manifest["source_end"])
+        horizons[owner] = max(horizons.get(owner, end), end)
+    orders = _provider_orders(provider_order)
+    precedence = _provider_precedence(
+        orders,
+        _provider_supersessions(provider_supersedes),
+        {
+            resource: {key[3] for key in keys if key[2] == "provider"}
+            for resource, keys in resources.items()
+        },
+    )
+    named = {name for names in orders.values() for name in names}
+    first, stop = window
+    needed = {
+        key
+        for key, group in groups.items()
+        if key[2] != "provider"
+        or key[3] in named
+        or any(
+            source["delta"] is None or source["source_id"] in protected
+            for source in group
+        )
+        or items[key]["conflict_hours"]
+        or items[key]["blocked_windows"]
+        or utc(items[key]["manifest"]["source_end"])
+        >= horizons[items[key]["manifest"]["thermostat_id"]]
+        or any(not first <= stamp < stop for stamp in items[key]["points"])
+    }
+    days: dict[str, dict[str, int]] = {}
+    for resource, keys in resources.items():
+        predecessors = precedence.get(resource, {})
+        slots: dict[datetime, list[dict[str, Any]]] = defaultdict(list)
+        for key in keys:
+            for stamp, point in items[key]["points"].items():
+                slots[stamp].append({**point, "key": key, "acquisition_id": key[3]})
+        maximal_by_day: dict[datetime, set[tuple[Any, ...]]] = defaultdict(set)
+        for stamp, candidates in slots.items():
+            provider = [item for item in candidates if item["key"][2] == "provider"]
+            if not provider:
+                continue
+            winners = _provider_winners(provider, predecessors)
+            if not winners or (
+                not _deleted(winners[0]["row"])
+                and any(
+                    _observation(item["row"]) != _observation(winners[0]["row"])
+                    for item in candidates
+                    if item["key"][2] == "archive"
+                )
+            ):
+                needed.update(item["key"] for item in provider)
+                continue
+            names = {item["acquisition_id"] for item in winners}
+            maximal = {
+                item["key"]
+                for item in winners
+                if not any(
+                    item["acquisition_id"] in predecessors.get(other, set())
+                    for other in names
+                )
+            }
+            needed.update(maximal)
+            day = stamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            maximal_by_day[day].update(maximal)
+        days[resource] = {
+            day.isoformat(): len(keys) for day, keys in sorted(maximal_by_day.items())
+        }
+    retired: dict[str, list[str]] = defaultdict(list)
+    for key in sorted(groups.keys() - needed, key=repr):
+        retired[f"{key[0]}:{key[1]}"].append(key[3])
+    return {
+        "source_ids": sorted(
+            source["source_id"]
+            for key, group in groups.items()
+            if key not in needed
+            for source in group
+        ),
+        "acquisitions": {key: sorted(names) for key, names in retired.items()},
+        "days": days,
+    }
+
+
+def source_resolution(
+    merged: Mapping[str, Any], sources: Sequence[dict[str, Any]]
+) -> str:
+    """Bind everything a merge resolves except lineage, for retirement checks."""
+    horizons: dict[str, str] = {}
+    for source in sources:
+        manifest = source["manifest"]
+        owner, end = str(manifest["thermostat_id"]), utc(manifest["source_end"])
+        if owner not in horizons or end > utc(horizons[owner]):
+            horizons[owner] = end.isoformat()
+    return digest(
+        {
+            "resources": {
+                key: {
+                    "rows": [
+                        [
+                            stamp.isoformat(),
+                            _observation(row),
+                            resource["slots"][stamp.isoformat()]["basis"],
+                        ]
+                        for row in resource["rows"]
+                        if (stamp := _row_stamp(row)) is not None
+                    ],
+                    "conflict_hours": resource["conflict_hours"],
+                    "blocked_windows": resource["blocked_windows"],
+                    "first_provider": resource["first_provider"],
+                }
+                for key, resource in merged["resources"].items()
+            },
+            "first_provider": merged["first_provider"],
+            "horizons": horizons,
+        }
+    )

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
@@ -51,12 +52,16 @@ from .hourly_sources import (
     async_load_source_bundle,
     first_provider_points,
     merge_source_bundle,
+    source_redundancy,
+    source_resolution,
 )
 from .hourly_statistics import build_hourly_statistics
 
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
 _FIELDS = ("entry_id", "api_base", "account_anchors")
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def sealed(value: dict[str, Any]) -> dict[str, Any]:
@@ -296,6 +301,40 @@ def _nearest(edges: dict[str, list[str]], predecessors: set[str]) -> list[str]:
     return sorted(predecessors - reached)
 
 
+def _contract(
+    relation: dict[str, Any], retired: dict[str, list[str]]
+) -> dict[str, Any]:
+    """Remove retired acquisitions, keeping reachability among the rest."""
+    result = deepcopy(relation)
+    for key, names in retired.items():
+        edges = result.get(key)
+        if not edges:
+            continue
+        for name in names:
+            older = set(edges.pop(name, ()))
+            for newer, predecessors in edges.items():
+                if name in predecessors:
+                    edges[newer] = sorted((set(predecessors) - {name}) | older)
+        for newer, predecessors in list(edges.items()):
+            edges[newer] = _nearest(edges, set(predecessors))
+            if not edges[newer]:
+                del edges[newer]
+        if not edges:
+            del result[key]
+    return result
+
+
+def _stale_delta(sealed: dict[str, Any], revision: str | None) -> bool:
+    """Report an integration delta built on a root revision other than this one."""
+    delta = sealed.get("delta")
+    return (
+        isinstance(delta, dict)
+        and sealed.get("confidence") == "integration_delta_v1"
+        and delta.get("format") == "integration_delta_v1"
+        and delta.get("baseline_source_revision") != revision
+    )
+
+
 def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
     state = manager._state
     if state is None or state.get("version") != 3:
@@ -491,10 +530,12 @@ class HistoryWriter:
         return cast(str, reference)
 
     async def collect(self, context: dict[str, Any]) -> int:
-        """Delete proof/operation generations unreachable from the verified root.
+        """Delete objects the verified root no longer reaches or can admit.
 
         Runs only at rest: a completed operation with no intent, whose durable
-        root equals the adopted cache. Sources, manifests and fences are kept.
+        root equals the adopted cache. Proof and operation generations outside
+        the root are swept; fences are kept. Of sources, only integration deltas
+        that are unreachable and built on a superseded baseline are deleted.
         """
         state = await self.root(context)
         if (
@@ -532,15 +573,81 @@ class HistoryWriter:
         }
         for reference in operation | proof:
             require_digest(reference)
+        retired = await self.unreachable_deltas(history, manifest, context)
         if digest(await self.root(context)) != digest(state):
             raise HourlyImportError("history_root_changed_before_collection")
         removed = await self.manager._store.async_collect_objects(
             {"operation": operation, "proof": proof},
             retained_prefix=HISTORY_FENCE_PREFIX,
             closed=lambda: self.manager._closed,
+            retired=retired,
         )
         await self.guard(context)
         return cast(int, removed)
+
+    async def unreachable_deltas(
+        self,
+        history: dict[str, Any],
+        operation: dict[str, Any],
+        context: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        """Name integration deltas that no root reference or future refresh admits.
+
+        A delta binds the root source revision it was built on, so once the root
+        has moved past it and nothing reaches it, refresh can never accept it.
+        Staged archive/provider originals are never named.
+        """
+        reachable = await self.reachable_sources(history, operation, context)
+        candidates: list[tuple[str, str]] = []
+        kept: set[str] = set()
+        for source_id in sorted(await self.manager._store.async_object_ids("manifest")):
+            if source_id in reachable:
+                continue
+            try:
+                sealed = await self.read_object("manifest", source_id, context)
+            except OSError, ValueError:
+                # An unreadable unreferenced manifest is inert; keep it as is.
+                continue
+            original = sealed.get("sha256")
+            if not isinstance(original, str):
+                continue
+            if _stale_delta(sealed, history.get("source_revision")):
+                candidates.append((source_id, original))
+            else:
+                kept.add(original)
+        if not candidates:
+            return []
+        # Originals are content-addressed; keep any another manifest still names.
+        for source_id in reachable:
+            sealed = await self.read_object("manifest", source_id, context)
+            kept.add(sealed.get("sha256", ""))
+        retired: list[tuple[str, str]] = []
+        for source_id, original in candidates:
+            if original not in kept:
+                retired.append(("source", original))
+            retired.append(("manifest", source_id))
+        return retired
+
+    async def reachable_sources(
+        self,
+        history: dict[str, Any],
+        operation: dict[str, Any],
+        context: dict[str, Any],
+    ) -> set[str]:
+        """Collect every source ID the root's lists, catalogs and holds name."""
+        reachable = {*history["source_ids"], *operation.get("source_ids", ())}
+        for reference in {
+            *operation.get("source_catalog", {}).values(),
+            *history.get("source_catalog", {}).values(),
+        }:
+            catalog = await self.read_object("operation", reference, context)
+            reachable.update(catalog.get("source_ids", ()))
+        for months in history.get("source_holds", {}).values():
+            for reference in months.values():
+                hold = await self.read_object("operation", reference, context)
+                for interval in hold.get("intervals", ()):
+                    reachable.update(interval.get("source_ids", ()))
+        return reachable
 
     def binding(self, context: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -723,15 +830,18 @@ class HistoryWriter:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         first, end = bounds(request["start"], request["end"])
         catalogs: dict[str, dict[str, Any]] = {}
-        source_ids = set(request.get("source_ids", ()))
+        requested = set(request.get("source_ids", ()))
+        cataloged: set[str] = set()
+        held: set[str] = set()
         for start, _stop in month_windows(first, end):
             month = start.strftime("%Y-%m")
             catalogs[month] = await self.catalog(history, month, context)
-            source_ids.update(catalogs[month]["source_ids"])
+            cataloged.update(catalogs[month]["source_ids"])
             for key in history.get("source_holds", {}):
                 hold = await self.hold(history, key, month, context)
                 for interval in hold["intervals"]:
-                    source_ids.update(interval["source_ids"])
+                    held.update(interval["source_ids"])
+        source_ids = requested | cataloged | held
         declarations, sources = await self.load_sources(
             sorted(source_ids), first, end, context
         )
@@ -748,15 +858,51 @@ class HistoryWriter:
             if provider_supersedes is not None
             else history.get("provider_supersedes", {})
         )
+        archive_policy = request["archive_policy"] == "before_first_provider"
         merged = await self.cpu(
             merge_source_bundle,
             sources,
-            archive_policy=request["archive_policy"] == "before_first_provider",
+            archive_policy=archive_policy,
             provider_order=order,
             first_provider=anchors,
             provider_supersedes=supersedes,
             context=context,
         )
+        # Sources being admitted and held conflicts are never retired here.
+        redundancy = await self.cpu(
+            source_redundancy,
+            sources,
+            provider_order=order,
+            provider_supersedes=supersedes,
+            window=(first, end),
+            protected=held | (requested - cataloged),
+            context=context,
+        )
+        retired = set(redundancy["source_ids"])
+        if retired:
+            kept = [item for item in sources if item["source_id"] not in retired]
+            contracted = _contract(supersedes, redundancy["acquisitions"])
+            remerged = await self.cpu(
+                merge_source_bundle,
+                kept,
+                archive_policy=archive_policy,
+                provider_order=order,
+                first_provider=anchors,
+                provider_supersedes=contracted,
+                context=context,
+            )
+            before = await self.cpu(source_resolution, merged, sources, context=context)
+            after = await self.cpu(source_resolution, remerged, kept, context=context)
+            # Retirement may change lineage only; any other difference keeps all.
+            if before == after:
+                sources, merged, supersedes = kept, remerged, contracted
+            else:
+                _LOGGER.warning(
+                    "Kept %d redundant hourly history sources because retiring "
+                    "them would change resolved history",
+                    len(retired),
+                )
+                retired = set()
         groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         month_ids = {
             month: set(value["source_ids"]) for month, value in catalogs.items()
@@ -788,14 +934,18 @@ class HistoryWriter:
                     month_ids[month] = set(catalogs[month]["source_ids"])
                 month_ids[month].update(item["source_id"] for item in members)
         for month, ids in month_ids.items():
-            catalogs[month]["source_ids"] = sorted(ids)
+            catalogs[month]["source_ids"] = sorted(ids - retired)
+        # A loaded month's reference follows its catalog, which retirement can
+        # empty; unloaded months keep the reference the root already holds.
+        references = {
+            month: reference
+            for month, reference in history.get("source_catalog", {}).items()
+            if month not in catalogs
+        }
         catalogs = {
             month: value for month, value in catalogs.items() if value["source_ids"]
         }
-        references = {
-            **history.get("source_catalog", {}),
-            **{month: digest(value) for month, value in catalogs.items()},
-        }
+        references.update({month: digest(value) for month, value in catalogs.items()})
         merged["merge_revision"] = merged["source_revision"]
         merged["source_revision"] = digest(
             {
@@ -809,6 +959,8 @@ class HistoryWriter:
         merged["source_catalog"] = references
         merged["source_catalog_objects"] = catalogs
         merged["first_provider"] = anchors
+        merged["provider_supersedes"] = supersedes
+        merged["maximal_days"] = redundancy["days"]
         return sources, merged
 
     async def load_sources(
@@ -869,6 +1021,9 @@ class HistoryWriter:
         resources = await self.cpu(
             self.baseline_resources, merged["resources"], first, end, context=context
         )
+        current = utc(context["evaluated_at"]).replace(
+            minute=0, second=0, microsecond=0
+        )
         result = {
             "start": first.isoformat(),
             "end": end.isoformat(),
@@ -881,6 +1036,7 @@ class HistoryWriter:
             "acquisitions": self.acquisitions(sources),
             "first_provider": history.get("first_provider", {}),
             "routine_policy": history["routine_policy"],
+            "compaction": self.compaction(sources, merged, first, current),
         }
         result["baseline_digest"] = await self.cpu(digest, result, context=context)
         if digest(await self.root(context)) != digest(state):
@@ -909,6 +1065,37 @@ class HistoryWriter:
                 resource.setdefault("slots", {}).setdefault(stamp, {})["row"] = row
             resource["rows"] = kept
         return resources
+
+    def compaction(
+        self,
+        sources: list[dict[str, Any]],
+        merged: dict[str, Any],
+        first: datetime,
+        current: datetime,
+    ) -> dict[str, list[str]]:
+        """Name closed UTC days whose points still need several acquisitions.
+
+        The next delta carries such a day's points again, so one acquisition
+        holds the day and the others retire. A day is closed once it ends by
+        both the current hour and its thermostat's provider horizon.
+        """
+        horizons: dict[int, datetime] = {}
+        for source in sources:
+            manifest = source["manifest"]
+            owner, end = manifest["thermostat_id"], utc(manifest["source_end"])
+            horizons[owner] = max(horizons.get(owner, end), end)
+        result: dict[str, list[str]] = {}
+        for key, days in merged["maximal_days"].items():
+            owner = merged["resources"][key]["thermostat_id"]
+            limit = min(current, horizons.get(owner, current))
+            closed = [
+                day
+                for day, count in days.items()
+                if count > 1 and first <= utc(day) and utc(day) + _DAY <= limit
+            ]
+            if closed:
+                result[key] = closed
+        return result
 
     def acquisitions(self, sources: list[dict[str, Any]]) -> dict[str, list[str]]:
         result: dict[str, set[str]] = {}
@@ -1274,11 +1461,7 @@ class HistoryWriter:
                 if provider_order is not None
                 else history.get("provider_order", {})
             ),
-            "provider_supersedes": deepcopy(
-                provider_supersedes
-                if provider_supersedes is not None
-                else history.get("provider_supersedes", {})
-            ),
+            "provider_supersedes": deepcopy(merged["provider_supersedes"]),
             "routine_policy": {
                 "lookback_days": 45,
                 "cadence_hours": 6,
