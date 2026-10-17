@@ -18,22 +18,29 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.beestat_statistics import backup
-from custom_components.beestat_statistics.hourly_history_contract import canonical_json
+from custom_components.beestat_statistics.hourly_history_contract import (
+    canonical_json,
+    digest,
+    utc,
+)
+from custom_components.beestat_statistics.hourly_history_writer import HistoryWriter
 from custom_components.beestat_statistics.hourly_import import (
     HISTORY_FENCE_PREFIX,
     HourlyImportManager,
 )
+from custom_components.beestat_statistics.hourly_sources import _provider_precedence
 from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
 from tests.test_hourly_history_runtime_ha import (
     _adopted,
+    _finish,
     _logical_hour,
     _objects,
     _provider,
 )
-from tests.test_hourly_history_service_ha import END, START, _content
+from tests.test_hourly_history_service_ha import END, QUANTITY, START, _content
 
 pytestmark = pytest.mark.asyncio
 
@@ -386,3 +393,189 @@ async def test_interrupted_collection_is_inert_and_finishes_on_the_next_pass(
     bucket = await _logical_hour(runtime, start=END, end=END + timedelta(hours=1))
     assert (bucket["reason"], bucket["value"]) == ("ready", 0.25)
     await runtime.entry._async_process_on_unload(hass)
+
+
+async def _routine(runtime, monkeypatch, rows, *, days=12):
+    # Twelve days span two UTC months in one provider request.
+    _provider(runtime, monkeypatch, rows=rows)
+    async with runtime.importer._lock:
+        assert (
+            await runtime.importer._async_refresh_hourly_history(
+                lookback_days=days, rebuilding=False
+            )
+            is None
+        )
+    return await runtime.store.async_load()
+
+
+def _read(runtime, kind, reference):
+    return json.loads(
+        Path(f"{runtime.store.path}.objects/{kind}/{reference}").read_bytes()
+    )
+
+
+async def _reseal(runtime, root):
+    body = {key: value for key, value in root.items() if key != "integrity"}
+    await runtime.store.async_save({**body, "integrity": digest(body)})
+
+
+def _proofs(root):
+    return dict(root["history"]["selections"][QUANTITY]["proofs"])
+
+
+async def test_routine_pass_rewrites_only_touched_months_and_hours(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    freezer.move_to(END + timedelta(minutes=59))
+    _horizon(runtime, END + timedelta(minutes=55))
+    first = await _routine(runtime, monkeypatch, _rows(1))
+    assert set(_proofs(first)) == {"2026-08", "2026-09"}
+    freezer.move_to(END + timedelta(hours=1, minutes=59))
+    _horizon(runtime, END + timedelta(hours=1, minutes=55))
+    before = set(_objects(runtime))
+    second = await _routine(runtime, monkeypatch, _rows(2))
+    # The untouched month keeps its exact proof and gets no batch or catalog.
+    assert _proofs(second)["2026-08"] == _proofs(first)["2026-08"]
+    added = set(_objects(runtime)) - before
+    assert _by_kind(added)["proof"] == 1
+    for path in added:
+        kind, reference = Path(path).parts
+        if kind == "operation":
+            assert _read(runtime, kind, reference).get("month") != "2026-08"
+    manifest = _read(runtime, "operation", second["operation"]["object"])
+    (batch,) = manifest["batches"]
+    assert batch["month"] == "2026-09"
+    assert END <= utc(batch["start"]) < utc(batch["end"]) <= END + timedelta(hours=2)
+    # Same points within the same hour: nothing is planned, saved or written.
+    objects = _objects(runtime)
+    freezer.move_to(END + timedelta(hours=1, minutes=59, seconds=30))
+    assert (await _routine(runtime, monkeypatch, _rows(2)))["revision"] == (
+        second["revision"]
+    )
+    assert _objects(runtime) == objects
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_past_hour_correction_reproves_only_its_hours(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    freezer.move_to(END + timedelta(minutes=59))
+    _horizon(runtime, END + timedelta(minutes=55))
+    first = await _routine(runtime, monkeypatch, _rows(1))
+    corrected = [
+        {**row, "fan": 150} if utc(row["timestamp"]) < END else row for row in _rows(1)
+    ]
+    root = await _routine(runtime, monkeypatch, corrected)
+    manifest = _read(runtime, "operation", root["operation"]["object"])
+    (batch,) = manifest["batches"]
+    assert (batch["month"], batch["start"], batch["end"]) == (
+        "2026-09",
+        START.isoformat(),
+        END.isoformat(),
+    )
+    assert _proofs(root)["2026-08"] == _proofs(first)["2026-08"]
+    bucket = await _logical_hour(runtime)
+    assert (bucket["reason"], bucket["value"]) == ("ready", 0.5)
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("embedded", [True, False])
+async def test_saved_intent_of_either_form_resumes(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, embedded
+):
+    runtime = await _adopted(
+        hass, hass_admin_user, freezer, monkeypatch, tmp_path, finish=False
+    )
+    # Earlier releases embedded the whole batch; intent now names its object.
+    root = await runtime.store.async_load()
+    manifest = _read(runtime, "operation", root["operation"]["object"])
+    summary = manifest["batches"][0]
+    batch = _read(runtime, "operation", summary["object"])
+    pending = {
+        "generation": 3,
+        "operation_id": root["operation"]["operation_id"],
+        "index": 0,
+        "batch_object": summary["object"],
+        **(
+            {"batch": batch}
+            if embedded
+            else {key: batch[key] for key in ("quantity_id", "start", "end")}
+        ),
+    }
+    pending["digest"] = digest(pending)
+    root.update(pending=pending, revision=root["revision"] + 1)
+    root["operation"]["status"] = "in_progress"
+    await _reseal(runtime, root)
+    runtime.importer.hourly = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    await runtime.importer.hourly.async_mode()
+    await _finish(runtime)
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_proofs_from_earlier_releases_are_reproved_once(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    freezer.move_to(END + timedelta(minutes=59))
+    _horizon(runtime, END + timedelta(minutes=55))
+    root = await _routine(runtime, monkeypatch, _rows(1))
+    # Earlier releases bound every proof to the whole-window source revision.
+    selection = root["history"]["selections"][QUANTITY]
+    for month, reference in _proofs(root).items():
+        legacy = {
+            **_read(runtime, "proof", reference),
+            "source_revision": root["history"]["source_revision"],
+        }
+        selection["proofs"][month] = await runtime.store.async_write_object(
+            "proof", canonical_json(legacy)
+        )
+    root["revision"] += 1
+    await _reseal(runtime, root)
+    runtime.importer.hourly = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    await runtime.importer.hourly.async_mode()
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    freezer.move_to(END + timedelta(hours=1, minutes=59))
+    _horizon(runtime, END + timedelta(hours=1, minutes=55))
+    root = await _routine(runtime, monkeypatch, _rows(2))
+    current = _proofs(root)
+    # The untouched month moves to the current form too, then stays stable.
+    for reference in current.values():
+        assert "source_revision" not in _read(runtime, "proof", reference)
+    freezer.move_to(END + timedelta(hours=2, minutes=59))
+    _horizon(runtime, END + timedelta(hours=2, minutes=55))
+    root = await _routine(runtime, monkeypatch, _rows(3))
+    assert _proofs(root)["2026-08"] == current["2026-08"]
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)
+
+
+def test_supersession_keeps_only_nearest_predecessors_with_the_same_closure():
+    resource = "runtime_thermostat:1"
+    # Earlier releases listed every predecessor, growing quadratically.
+    existing = {resource: {"b": ["a"], "c": ["a", "b"]}}
+    fresh = [
+        {
+            "manifest": {
+                "source_kind": "provider",
+                "resource": "runtime_thermostat",
+                "resource_id": 1,
+                "acquisition_id": "d",
+            }
+        }
+    ]
+    baseline = {"acquisitions": {resource: ["a", "b", "c"]}}
+    writer = HistoryWriter.__new__(HistoryWriter)
+    result = writer.supersession(existing, fresh, baseline)
+    assert result == {resource: {"b": ["a"], "c": ["b"], "d": ["c"]}}
+    full = {resource: {**existing[resource], "d": ["a", "b", "c"]}}
+    roots = {resource: {"a", "b", "c", "d"}}
+    assert _provider_precedence({}, result, roots) == _provider_precedence(
+        {}, full, roots
+    )

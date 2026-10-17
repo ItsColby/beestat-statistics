@@ -568,12 +568,51 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             },
             context=self.context,
         )
-        self.assertEqual(result["status"], "accepted")
-        await self.complete()
+        # Nothing to rewrite: the source is admitted without a native batch.
+        self.assertEqual((result["status"], result["batch_count"]), ("completed", 0))
         self.assertEqual(
             [row.mean for row in self.recorder.rows[NATIVE].values()], [50, 50]
         )
         self.assertTrue(old_sources < set(self.store.value["history"]["source_ids"]))
+
+    async def test_interrupted_batchless_accept_resumes_and_keeps_adoption(self):
+        await self.accept()
+        await self.complete()
+        empty = await self.stage(acquisition="empty-later", empty=True)
+        original = self.store.async_save
+
+        async def interrupted(value):
+            if value["phase"] == "hourly" and value["operation"]["batch_count"] == 0:
+                raise OSError("synthetic restart before the marker step")
+            await original(value)
+
+        self.store.async_save = interrupted
+        with self.assertRaises(OSError):
+            await self.writer.async_refresh_history(
+                {
+                    "source_ids": [empty],
+                    "start": START.isoformat(),
+                    "end": (START + 2 * HOUR).isoformat(),
+                },
+                context=self.context,
+            )
+        self.store.async_save = original
+        saved = self.store.value
+        self.assertEqual(
+            (saved["phase"], saved["operation"]["status"]), ("prepared", "completed")
+        )
+        # The entry worker starts on has_pending and owns the marker step.
+        self.assertTrue(writer.status(saved)["has_pending"])
+        self.writer = self.fresh()
+        result = await self.writer.async_advance_history(context=self.context)
+        self.assertEqual(result["status"], "completed")
+        saved = self.store.value
+        self.assertEqual(saved["phase"], "hourly")
+        self.assertFalse(self.writer.has_pending_history)
+        self.assertEqual(
+            saved["history"]["selections"][KEY]["descriptor"]["writer_status"],
+            "adopted",
+        )
 
     async def test_plan_conflict_is_readonly_but_routine_conflict_durably_holds(self):
         await self.accept()
