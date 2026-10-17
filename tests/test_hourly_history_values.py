@@ -333,6 +333,20 @@ class HourlyHistoryValuesTest(unittest.TestCase):
             "blocked",
         )
 
+    def test_unmapped_daily_exception_does_not_accept_malformed_sensor_identity(self):
+        source, identity = self.build()
+        for malformed in (
+            {"sensor_id": True, "thermostat_id": None, "quantity": "temperature"},
+            {"sensor_id": 10, "quantity": "temperature"},
+        ):
+            changed = deepcopy(identity)
+            changed["resources"]["beestat:room_temperature_hourly_v2"] = malformed
+            with (
+                self.subTest(resource=malformed),
+                self.assertRaisesRegex(ValueError, "quantity_identity_invalid"),
+            ):
+                values.build_history_series(source, changed)
+
     def test_physical_parent_unit_and_alias_collisions_fail_closed(self):
         source, identity = self.build()
         saved = {
@@ -341,10 +355,24 @@ class HourlyHistoryValuesTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "identity_ambiguous"):
             values.build_history_series((source[0], source[0]), identity)
-        changed = deepcopy(identity)
-        changed["resources"]["beestat:room_temperature_hourly_v2"]["thermostat_id"] = 2
-        with self.assertRaisesRegex(ValueError, "sensor_parent_changed"):
-            values.build_history_series(source, changed, saved=saved)
+        for parent in (2, None):
+            changed = deepcopy(identity)
+            changed["resources"]["beestat:room_temperature_hourly_v2"][
+                "thermostat_id"
+            ] = parent
+            with (
+                self.subTest(parent=parent),
+                self.assertRaisesRegex(ValueError, "sensor_parent_changed"),
+            ):
+                values.build_history_series(source, changed, saved=saved)
+        rebound = deepcopy(identity)
+        rebound["resources"]["beestat:zone_fan_runtime_hours_hourly_v2"] = {
+            "thermostat_id": None,
+            "sensor_id": 99,
+            "quantity": "temperature",
+        }
+        with self.assertRaisesRegex(ValueError, "legacy_identity_collision"):
+            values.build_history_series(source, rebound, saved=saved)
         changed_saved = deepcopy(saved)
         changed_saved["thermostat:1:fan_runtime_hours"]["logical_unit"] = "min"
         with self.assertRaisesRegex(ValueError, "quantity_contract_changed"):

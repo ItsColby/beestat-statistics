@@ -34,6 +34,10 @@ not a provider-issued account ID. Preserve and compare them with physical IDs.
 Renames retain saved native ownership. An identity or method mismatch requires
 explicit re-admission; a matching display name is insufficient.
 
+An unselected sensor without a thermostat parent retains its daily imports and
+is omitted from hourly inventory until its parent is known. Unbinding an adopted
+sensor or reusing a reserved legacy alias still blocks continuation.
+
 Runtime stores a component-runtime rate in `%`; logical hourly amount is mean /
 100. Aggregate heat can exceed 100% or one hour because compressor and auxiliary
 components both contribute. Degree days store positive departures from 65°F in

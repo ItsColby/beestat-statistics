@@ -30,6 +30,7 @@ from .hourly_history_contract import (
     digest,
     quantity_id,
     require_digest,
+    unmapped_sensor,
     utc,
 )
 from .hourly_history_legacy import async_read_legacy_days
@@ -312,7 +313,9 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
     }
     for base, resource in identity["resources"].items():
         alias_owner = alias_owners.get(base.removesuffix("_hourly_v2"))
-        if alias_owner is not None and alias_owner != quantity_id(resource):
+        if alias_owner is not None and (
+            unmapped_sensor(resource) or alias_owner != quantity_id(resource)
+        ):
             raise HourlyImportError("history_legacy_alias_rebound")
     _current, parents = _partition_resources(identity)
     for item in records:
@@ -324,7 +327,8 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         frozenset(
             base.removesuffix("_hourly_v2")
             for base in identity["resources"]
-            if quantity_id(identity["resources"][base]) not in physical
+            if unmapped_sensor(identity["resources"][base])
+            or quantity_id(identity["resources"][base]) not in physical
         ),
         True,
         "history_operation_pending"
@@ -1711,6 +1715,7 @@ class HistoryWriter:
         enabled = {
             quantity_id(resource)
             for resource in context["identity"]["resources"].values()
+            if not unmapped_sensor(resource)
         }
         return {
             "config_entry_id": self.manager._entry.entry_id,

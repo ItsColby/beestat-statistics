@@ -255,6 +255,19 @@ def bounds(start: str | datetime, end: str | datetime) -> tuple[datetime, dateti
     return first, stop
 
 
+def unmapped_sensor(resource: Mapping[str, Any]) -> bool:
+    """Recognize an unbound daily-only sensor without granting hourly identity."""
+    sensor, quantity = resource.get("sensor_id"), resource.get("quantity")
+    return (
+        "thermostat_id" in resource
+        and resource["thermostat_id"] is None
+        and type(sensor) is int
+        and sensor > 0
+        and isinstance(quantity, str)
+        and re.fullmatch(r"[a-z][a-z0-9_]*", quantity) is not None
+    )
+
+
 def quantity_id(resource: Mapping[str, Any]) -> str:
     """Identify the physical quantity within its explicit entry/account scope."""
     thermostat = resource.get("thermostat_id")

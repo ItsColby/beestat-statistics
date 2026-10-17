@@ -49,7 +49,7 @@ from .coordinator import (
     BeestatRuntimeDataCoordinator,
     TemporalContext,
 )
-from .hourly_history_contract import MAX_SOURCE_BYTES
+from .hourly_history_contract import MAX_SOURCE_BYTES, unmapped_sensor
 from .hourly_history_contract import (
     digest as history_digest,
 )
@@ -173,7 +173,8 @@ class BeestatStatisticsImporter:
                 *(
                     base.removesuffix("_hourly_v2")
                     for base, resource in identity["resources"].items()
-                    if history_quantity_id(resource)
+                    if not unmapped_sensor(resource)
+                    and history_quantity_id(resource)
                     in self.hourly.history_quantity_ids()
                 ),
             ),
@@ -948,11 +949,9 @@ class BeestatStatisticsImporter:
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
         temporal_context: TemporalContext,
-        window: tuple[datetime, datetime] | None = None,
-        preserve_source_rows: bool = False,
         allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = window or _point_window(
+        start, end = _point_window(
             lookback_days,
             temporal_context.local_tz,
             start_day,
@@ -990,10 +989,8 @@ class BeestatStatisticsImporter:
                         skipped_windows,
                     )
                 )
-            rows_by_id[current_thermostat_id] = (
-                rows
-                if preserve_source_rows
-                else _dedupe_rows(rows, id_field="thermostat_id")
+            rows_by_id[current_thermostat_id] = _dedupe_rows(
+                rows, id_field="thermostat_id"
             )
         return rows_by_id
 
@@ -1018,11 +1015,9 @@ class BeestatStatisticsImporter:
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
         temporal_context: TemporalContext,
-        window: tuple[datetime, datetime] | None = None,
-        preserve_source_rows: bool = False,
         allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = window or _point_window(
+        start, end = _point_window(
             lookback_days,
             temporal_context.local_tz,
             start_day,
@@ -1071,11 +1066,7 @@ class BeestatStatisticsImporter:
                         skipped_windows,
                     )
                 )
-            rows_by_id[sensor_id] = (
-                rows
-                if preserve_source_rows
-                else _dedupe_rows(rows, id_field="sensor_id")
-            )
+            rows_by_id[sensor_id] = _dedupe_rows(rows, id_field="sensor_id")
         return rows_by_id
 
     async def _async_read_runtime_sensor_window(

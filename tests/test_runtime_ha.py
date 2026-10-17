@@ -22,6 +22,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed_exact,
 )
 
+from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatClient,
@@ -44,6 +45,7 @@ from custom_components.beestat_statistics.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
+from custom_components.beestat_statistics.hourly_import import WriterPartition
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
 from custom_components.beestat_statistics.import_support import (
     PreparedImport,
@@ -63,7 +65,10 @@ from custom_components.beestat_statistics.sensor import (
     GLOBAL_SENSOR_DESCRIPTIONS,
     BeestatSensor,
 )
-from custom_components.beestat_statistics.statistics_builder import StatisticsSeries
+from custom_components.beestat_statistics.statistics_builder import (
+    CumulativeStatisticSeed,
+    StatisticsSeries,
+)
 from custom_components.beestat_statistics.tracking import (
     _async_track_runtime_entity_states,
     _async_track_source_device_relinks,
@@ -1396,4 +1401,204 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
 
     assert attempts == 3
     assert writes == []
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("change", ["runtime_config", "timezone"])
+async def test_daily_reprepares_current_config_and_calendar_before_submission(
+    hass, freezer, monkeypatch, change
+):
+    now = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    coordinator.data = replace(
+        coordinator.data,
+        config=BeestatConfig(
+            coordinator.data.config.thermostats,
+            (
+                ConfiguredSensor(
+                    10, "room", "Room", 1, "zone_a", False, False, False, True
+                ),
+            ),
+        ),
+        sensor_rows=({"id": 10, "thermostat_id": 1},),
+        summary_rows=(
+            {
+                "thermostat_id": 1,
+                "date": "2026-09-10",
+                "sum_fan": 3600,
+                "sum_compressor_cool_1": 7200,
+            },
+        ),
+        summary_rows_full=True,
+    )
+    client.async_read_runtime_thermostat = AsyncMock(return_value=[])
+    client.async_read_runtime_sensor = AsyncMock(
+        return_value=[
+            {"sensor_id": 10, "timestamp": now.isoformat(), "voc_concentration": 123},
+        ]
+    )
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+
+    def partition(identity):
+        return WriterPartition(
+            frozenset(
+                key.removesuffix("_hourly_v2")
+                for key in identity["resources"]
+                if key != "beestat:zone_a_fan_runtime_hours_hourly_v2"
+            ),
+            True,
+        )
+
+    monkeypatch.setattr(
+        importer.hourly, "async_writer_partition", AsyncMock(side_effect=partition)
+    )
+    monkeypatch.setattr(
+        importer,
+        "_async_existing_detailed_statistic_ids",
+        AsyncMock(return_value=frozenset()),
+    )
+    original = importer._async_prepare_import
+    prepared_snapshots = []
+
+    async def prepare(data, **kwargs):
+        prepared = await original(data, **kwargs)
+        prepared_snapshots.append(prepared)
+        if len(prepared_snapshots) == 1:
+            if change == "runtime_config":
+                coordinator.data = replace(
+                    coordinator.data,
+                    config=replace(
+                        coordinator.data.config,
+                        sensors=(
+                            replace(
+                                coordinator.data.config.sensors[0], include_voc=False
+                            ),
+                        ),
+                    ),
+                )
+            else:
+                coordinator.async_update_local_timezone(ZoneInfo("UTC"))
+        return prepared
+
+    monkeypatch.setattr(importer, "_async_prepare_import", prepare)
+    writes = []
+
+    def write(_hass, metadata, rows):
+        assert importer._lock.locked()
+        assert len(prepared_snapshots) == 2
+        writes.append((metadata["statistic_id"], list(rows)))
+
+    monkeypatch.setattr(importer_module, "async_add_external_statistics", write)
+    identity = importer_module._writer_identity(entry, coordinator.data)
+    async with importer._lock:
+        await importer._async_import_legacy(
+            coordinator.data,
+            lookback_days=1,
+            force_full_summary=True,
+            rebuild_start=None,
+            rebuild_end=None,
+            thermostat_id=None,
+            allowed_legacy_ids=partition(identity).legacy_statistic_ids,
+        )
+    assert {key for key, _ in writes} == {
+        item.statistic_id for item in prepared_snapshots[-1].series
+    }
+    assert "beestat:zone_a_fan_runtime_hours" not in {key for key, _ in writes}
+    if change == "runtime_config":
+        assert any(
+            item.statistic_id == "beestat:room_voc_concentration"
+            for item in prepared_snapshots[0].series
+        )
+        assert "beestat:room_voc_concentration" not in {key for key, _ in writes}
+    else:
+        first = next(
+            item
+            for item in prepared_snapshots[0].series
+            if item.statistic_id == "beestat:zone_a_cool_runtime_hours"
+        )
+        final = next(
+            rows for key, rows in writes if key == "beestat:zone_a_cool_runtime_hours"
+        )
+        assert first.statistics[0]["start"].astimezone(UTC).hour == 4
+        assert final[0]["start"].astimezone(UTC).hour == 0
+    await entry._async_process_on_unload(hass)
+
+
+async def test_daily_summary_excludes_frozen_inventory_seeds_and_new_stages(
+    recorder_mock, freezer, monkeypatch
+):
+    hass = recorder_mock.hass
+    now = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
+    freezer.move_to(now)
+    await hass.async_start()
+    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    coordinator.data = replace(
+        coordinator.data,
+        summary_rows=(
+            {
+                "thermostat_id": 1,
+                "date": "2026-09-10",
+                "sum_fan": 3600,
+                "sum_compressor_cool_1": 7200,
+            },
+        ),
+        summary_rows_full=True,
+    )
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    cool = "beestat:zone_a_cool_runtime_hours"
+    stage = "beestat:zone_a_cool_stage_1_runtime_hours"
+    allowed = frozenset({cool, stage})
+    with patch.object(
+        importer_module, "get_metadata", wraps=importer_module.get_metadata
+    ) as metadata:
+        existing = await importer._async_existing_detailed_statistic_ids(
+            coordinator.data, allowed_legacy_ids=allowed
+        )
+    assert existing == frozenset()
+    assert metadata.call_args.kwargs["statistic_ids"] == {stage}
+
+    async def latest(statistic_ids):
+        assert set(statistic_ids) == allowed
+        return dict.fromkeys(statistic_ids, now)
+
+    async def seeds(statistic_ids, *, seed_day, window_start, local_tz):
+        assert set(statistic_ids) == allowed
+        assert seed_day == window_start - timedelta(days=1)
+        return {
+            key: CumulativeStatisticSeed(
+                datetime.combine(seed_day, datetime.min.time(), local_tz), 10.0, 10.0
+            )
+            for key in statistic_ids
+        }
+
+    monkeypatch.setattr(
+        importer, "_async_latest_cumulative_starts", AsyncMock(side_effect=latest)
+    )
+    monkeypatch.setattr(
+        importer, "_async_cumulative_seeds", AsyncMock(side_effect=seeds)
+    )
+    full = AsyncMock(side_effect=AssertionError("Frozen IDs caused a full baseline"))
+    monkeypatch.setattr(importer, "_async_full_summary_rows", full)
+    client.async_read_runtime_thermostat_summary = AsyncMock(
+        return_value=[
+            {**coordinator.data.summary_rows[0], "sum_compressor_cool_2": 3600},
+        ]
+    )
+    plan = await importer._async_summary_import_plan(
+        coordinator.data,
+        force_full_summary=False,
+        temporal_context=coordinator.capture_temporal_context(),
+        existing_statistic_ids=existing,
+        allowed_legacy_ids=allowed,
+    )
+    assert plan.mode == "windowed"
+    assert plan.window_start == date(2026, 9, 3)
+    assert set(plan.seeds) == allowed
+    assert plan.rows[0]["sum_compressor_cool_2"] == 3600
+    full.assert_not_awaited()
     await entry._async_process_on_unload(hass)

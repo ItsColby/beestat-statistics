@@ -1,7 +1,8 @@
-"""Native storage owner evidence for immutable v3 source/proof objects."""
+"""Native journal durability and immutable v3 source/proof object evidence."""
 
 from __future__ import annotations
 
+import json
 from collections import namedtuple
 from hashlib import sha256
 from pathlib import Path
@@ -9,12 +10,18 @@ from threading import get_ident
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
+from homeassistant.util.file import WriteError
 
 from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
+
+# Capture before hass_storage substitutes its in-memory writer.
+_NATIVE_STORE_WRITE = Store._async_write_data
 
 
 @pytest.fixture
@@ -113,3 +120,116 @@ async def test_failed_atomic_install_cannot_create_receipt_or_touch_journal(
     assert not list(root.rglob(".pending-*"))
     assert not [path for path in root.rglob("*") if path.is_file()]
     assert await object_store.async_load() is None
+
+
+@pytest.fixture
+def disk_store(hass, tmp_path):
+    store = HourlyStore(hass, "writer-contract")
+    native = store._store
+    with (
+        patch.object(native, "path", str(tmp_path / "hourly-journal.json")),
+        patch.object(native, "_async_write_data", _NATIVE_STORE_WRITE.__get__(native)),
+    ):
+        yield store
+
+
+async def test_store_round_trip_proves_real_disk_and_ignores_native_pending_load(
+    disk_store,
+):
+    store = disk_store
+    assert await store.async_load() is None
+    await store.async_save({"revision": 1, "pending": {"sum": 0.25}})
+    assert await store.async_load() == {"revision": 1, "pending": {"sum": 0.25}}
+
+    # Native Store.async_load may return its unsaved _data. The wrapper must read
+    # its file directly rather than accepting that successful native load.
+    store._store._data = {
+        "version": 1,
+        "minor_version": 1,
+        "key": store._store.key,
+        "data": {"revision": 2},
+    }
+    assert await store._store.async_load() == {"revision": 2}
+    assert await store.async_load() == {"revision": 1, "pending": {"sum": 0.25}}
+    with patch.object(store._store, "async_load", new_callable=AsyncMock) as cached:
+        cached.return_value = {"revision": 3}
+        assert await store.async_load() == {"revision": 1, "pending": {"sum": 0.25}}
+        cached.assert_not_called()
+
+
+async def test_native_silent_write_failure_cannot_prove_new_intent(disk_store, caplog):
+    store = disk_store
+    await store.async_save({"revision": 1})
+    with (
+        patch.object(
+            store._store,
+            "_write_prepared_data",
+            side_effect=WriteError("Synthetic journal write failure"),
+        ),
+        pytest.raises(HourlyStorageError, match="hourly_store_write_unverified"),
+    ):
+        await store.async_save({"revision": 2})
+    assert "Synthetic journal write failure" in caplog.text
+    assert await store.async_load() == {"revision": 1}
+
+
+async def test_native_read_only_store_cannot_prove_new_intent(disk_store):
+    store = disk_store
+    store._store.make_read_only()
+    with pytest.raises(HourlyStorageError, match="hourly_store_write_unverified"):
+        await store.async_save({"revision": 1})
+    assert await store.async_load() is None
+
+
+@pytest.mark.parametrize("state", [CoreState.stopping, CoreState.stopped])
+async def test_store_closes_admission_before_native_stopping_deferral(
+    hass, disk_store, state
+):
+    with (
+        patch.object(hass, "state", state),
+        patch.object(disk_store._store, "async_save", new_callable=AsyncMock) as save,
+        pytest.raises(HourlyStorageError, match="hourly_store_stopping"),
+    ):
+        await disk_store.async_save({"revision": 1})
+    save.assert_not_awaited()
+    assert await disk_store.async_load() is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{",
+        "null",
+        "{}",
+        "[]",
+        '{"version":2,"minor_version":1,"key":"KEY","data":{}}',
+        '{"version":1,"minor_version":2,"key":"KEY","data":{}}',
+        '{"version":1,"minor_version":1,"key":"other","data":{}}',
+        '{"version":1,"minor_version":1,"key":"KEY","data":[]}',
+    ],
+)
+async def test_invalid_disk_journal_is_not_absence_or_renamed(
+    hass, disk_store, content
+):
+    store = disk_store
+    content = content.replace("KEY", store._store.key)
+    path = Path(store.path)
+    await hass.async_add_executor_job(path.write_text, content)
+    with pytest.raises((HourlyStorageError, HomeAssistantError)):
+        await store.async_load()
+    assert await hass.async_add_executor_job(path.read_text) == content
+
+
+async def test_readback_requires_json_type_identity(hass, disk_store):
+    store = disk_store
+    await store.async_save({"revision": 1})
+    path = Path(store.path)
+    envelope = {
+        "version": 1,
+        "minor_version": 1,
+        "key": store._store.key,
+        "data": {"revision": True},
+    }
+    await hass.async_add_executor_job(path.write_text, json.dumps(envelope))
+    with pytest.raises(HourlyStorageError, match="hourly_store_write_unverified"):
+        await hass.async_add_executor_job(store._verify_data, {"revision": 1})

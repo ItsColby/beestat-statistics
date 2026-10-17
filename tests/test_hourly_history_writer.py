@@ -378,10 +378,15 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertEqual(self.recorder.submissions, [])
+        self.writer.close()
+        replacement = self.fresh()
+        recovery = self.create_task(replacement._load())
+        await asyncio.sleep(0)
+        self.assertFalse(recovery.done())
         self.store.gate.set()
         await asyncio.gather(*(task for task in self.tasks if not task.cancelled()))
-        self.writer = self.fresh()
-        await self.writer._load()
+        self.writer = replacement
+        await recovery
         await self.complete()
         self.assertEqual(len(self.recorder.rows[NATIVE]), 2)
 
@@ -1087,6 +1092,79 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             partition.legacy_statistic_ids, {"beestat:zone_cool_runtime_hours"}
         )
         self.assertTrue(partition.has_hourly)
+
+    async def test_cold_partition_preserves_daily_voc_and_unmapped_sensors_after_rename_or_disable(
+        self,
+    ):
+        await self.accept()
+        await self.complete()
+        bound = identity()
+        original = next(iter(bound["resources"]))
+        voc = "beestat:room_voc_concentration_hourly_v2"
+        orphan = "beestat:unmapped_temperature_hourly_v2"
+        bound["resources"][voc] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "voc_concentration",
+        }
+        bound["resources"][orphan] = {
+            "thermostat_id": None,
+            "sensor_id": 11,
+            "quantity": "temperature",
+        }
+        renamed = deepcopy(bound)
+        renamed["resources"]["beestat:renamed_fan_runtime_hours_hourly_v2"] = renamed[
+            "resources"
+        ].pop(original)
+        disabled = deepcopy(bound)
+        disabled["resources"].pop(original)
+        empty = {**bound, "resources": {}}
+        saved, saves, reads = (
+            deepcopy(self.store.value),
+            self.store.calls,
+            list(self.recorder.reads),
+        )
+        for current in (bound, renamed, disabled, empty):
+            with self.subTest(resources=current["resources"]):
+                result = await self.fresh().async_writer_partition(current)
+                self.assertTrue(result.has_hourly)
+                expected = (
+                    {voc.removesuffix("_hourly_v2"), orphan.removesuffix("_hourly_v2")}
+                    if current["resources"]
+                    else set()
+                )
+                self.assertEqual(result.legacy_statistic_ids, expected)
+        self.assertEqual(self.store.value, saved)
+        self.assertEqual(self.store.calls, saves)
+        self.assertEqual(self.recorder.reads, reads)
+
+    async def test_partition_rejects_rebound_alias_account_and_marker_without_effects(
+        self,
+    ):
+        await self.accept()
+        await self.complete()
+        saved = deepcopy(self.store.value)
+        submissions = deepcopy(self.recorder.submissions)
+        original_marker = deepcopy(self.entry.data[manager.MARKER])
+        rebound = identity()
+        next(iter(rebound["resources"].values()))["thermostat_id"] = 2
+        other_account = {**identity(), "account_anchors": ["different-account"]}
+        for current in (rebound, other_account):
+            with (
+                self.subTest(identity=current),
+                self.assertRaises(manager.HourlyImportError),
+            ):
+                await self.fresh().async_writer_partition(current)
+        for marker in (None, {"version": 3, "token": "a" * 64}):
+            self.entry.data[manager.MARKER] = marker
+            with (
+                self.subTest(marker=marker),
+                self.assertRaises(manager.HourlyImportError),
+            ):
+                await self.fresh().async_writer_partition(identity())
+        self.entry.data[manager.MARKER] = original_marker
+        self.assertEqual(self.store.value, saved)
+        self.assertEqual(self.recorder.submissions, submissions)
 
     async def test_blocked_history_preserves_unrelated_daily_writer(
         self,
