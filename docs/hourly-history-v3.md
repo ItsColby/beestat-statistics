@@ -1,8 +1,10 @@
 # Qualified hourly history, contract 3
 
-This additive contract separates logical history from Recorder storage. Calls
-without `contract_version: 3` keep the existing coverage contract and v2 selection
-behavior. A v3 capability declaration does not establish installation, admission
+This contract separates logical history from Recorder storage. Coverage reads
+require `contract_version: 3`; earlier cumulative hourly selection and cached
+coverage routes are retired. Use v2026.10.11 for an older cumulative-hourly
+journal; this release does not migrate it. Existing Recorder history remains
+retained. A v3 capability declaration does not establish installation, admission
 of any quantity, or completion of a historical repair. Installation, explicit
 adoption, and verified history remain separate operational outcomes.
 
@@ -352,8 +354,9 @@ not mean the full operation is complete. Reservations persist through failures,
 disablement and reload; unrelated legacy quantities, including VOC, keep their
 existing writer.
 
-V3 adoption changes the journal contract so older releases fail closed. Existing
-v2 users are not automatically converted. Recovery includes the entry/marker,
+V3 adoption changes the journal contract so older releases fail closed.
+Older v2 journals remain supported by v2026.10.11, which must be retained for
+their continued operation. Recovery includes the entry/marker,
 root, its source/proof/operation objects, Recorder rows and metadata, consumer
 configuration/assets, timezone/method and exact component versions. Replacing
 code alone is not a rollback. Restore the root and its object namespace from the

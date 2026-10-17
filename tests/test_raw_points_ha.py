@@ -65,7 +65,10 @@ async def _runtime(hass, freezer, monkeypatch, payloads):
             ),
         ),
         (coordinator, ("async_refresh_runtime", "async_record_import_result")),
-        (importer.hourly, ("async_reconcile", "async_select", "async_import")),
+        (
+            importer.hourly,
+            ("async_accept_history", "async_advance_history", "async_refresh_history"),
+        ),
     ):
         for method in methods:
             spy = AsyncMock(

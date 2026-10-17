@@ -85,52 +85,10 @@ get_raw_points:
       required: true
       selector:
         text: {}
-select_hourly_statistics:
-  name: Select hourly Beestat statistics
-  description: >-
-    Preview explicitly selected hourly statistics or a recovery segment. To apply,
-    repeat the same selection with its returned preview digest and expected revision.
-    Reads Beestat history and can reconcile pending effects. Applying freezes legacy
-    writes for selected quantities and updates retained selection and Recorder statistics.
-    Other enabled quantities continue daily imports.
-  fields:
-    config_entry_id:
-      name: Configuration entry
-      required: true
-      selector:
-        config_entry:
-          integration: beestat_statistics
-    epoch_start:
-      name: First hour
-      description: Whole UTC hour with an explicit offset, within the past 366 days.
-      required: true
-      selector:
-        datetime: {}
-    statistic_ids:
-      name: Statistic IDs
-      description: Explicit hourly base statistic IDs to select; no automatic selection.
-      required: true
-      selector:
-        text:
-          multiple: true
-    expected_revision:
-      name: Expected revision
-      description: Current hourly statistics revision from Get Beestat configuration.
-      required: true
-      selector:
-        number:
-          min: 0
-          step: 1
-          mode: box
-    preview_digest:
-      name: Preview digest
-      description: Omit for a preview. Supply the returned digest to apply that exact selection.
-      selector:
-        text: {}
 get_hourly_coverage:
   name: Get hourly Beestat coverage
   description: >-
-    Read cached v2 coverage or, with contract version 3, qualified logical history
+    Read qualified logical history with contract version 3
     and bounded Recorder verification. Does not contact Beestat, import statistics,
     reconcile pending work, or change retained state.
   fields:
@@ -152,15 +110,10 @@ get_hourly_coverage:
       required: true
       selector:
         datetime: {}
-    statistic_ids:
-      name: Statistic IDs
-      description: V2 only. Omit to inspect all selected hourly series. For contract version 3 use quantity IDs.
-      selector:
-        text:
-          multiple: true
     contract_version:
       name: Contract version
-      description: Set to 3 for qualified logical history. Omit to retain the v2 coverage response.
+      description: Set to 3 for qualified logical history.
+      required: true
       selector:
         number:
           min: 3
@@ -169,7 +122,8 @@ get_hourly_coverage:
           mode: box
     quantity_ids:
       name: Quantity IDs
-      description: Required for contract version 3. Select 1–40 distinct physical quantity IDs from Get Beestat configuration.
+      description: Select 1–40 distinct physical quantity IDs from Get Beestat configuration.
+      required: true
       selector:
         text:
           multiple: true

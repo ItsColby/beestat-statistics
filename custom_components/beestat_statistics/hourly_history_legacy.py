@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .hourly_history_contract import bounds, utc
-from .hourly_import_plan import HourlyStatisticRow, RecorderSnapshot
+from .hourly_rows import HourlyStatisticRow, RecorderSnapshot
 
 _DAY = timedelta(days=1)
 _READ_WINDOW = timedelta(days=20)

@@ -1251,8 +1251,6 @@ def source_redundancy(
         )
         or items[key]["conflict_hours"]
         or items[key]["blocked_windows"]
-        or utc(items[key]["manifest"]["source_end"])
-        >= horizons[items[key]["manifest"]["thermostat_id"]]
         or any(not first <= stamp < stop for stamp in items[key]["points"])
     }
     days: dict[str, dict[str, int]] = {}
@@ -1293,6 +1291,18 @@ def source_redundancy(
         days[resource] = {
             day.isoformat(): len(keys) for day, keys in sorted(maximal_by_day.items())
         }
+    # Preserve each thermostat's horizon with one deterministic witness. Prefer
+    # an acquisition already needed for its observations, so a same-horizon
+    # correction can replace its predecessor without waiting for new history.
+    for owner, end in horizons.items():
+        witnesses = {
+            key
+            for key, item in items.items()
+            if item["manifest"]["thermostat_id"] == owner
+            and utc(item["manifest"]["source_end"]) == end
+        }
+        if not witnesses & needed:
+            needed.add(min(witnesses, key=repr))
     retired: dict[str, list[str]] = defaultdict(list)
     for key in sorted(groups.keys() - needed, key=repr):
         retired[f"{key[0]}:{key[1]}"].append(key[3])

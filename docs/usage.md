@@ -105,37 +105,24 @@ from these statistic IDs. Excluding or removing a source does not delete history
 The daily format is represented as one-hour Recorder rows, so an hourly chart
 cannot recover the day's individual hours from those rows. Explicit hourly
 statistics use actual five-minute observations grouped into complete UTC hours.
-Their initial IDs append `_hourly_v2`, for example
-`beestat:main_fan_runtime_hours_hourly_v2`. Applying an hourly selection freezes
-legacy writes for those selected quantities and preserves their existing legacy
-history. Other enabled quantities continue their daily imports, including enabled
-VOC measurements. Installing this source does not migrate an entry or select a
-starting epoch.
+Runtime values are logical hours of observed operation; stable native destinations
+use rate rows so a missing hour cannot break later totals. Discover the exact
+IDs and physical quantities through `get_configuration`; do not construct IDs
+from names. Admission freezes legacy writes for selected quantities while other
+enabled quantities, including VOC, continue daily imports. Existing daily history
+and charts retain their IDs until you update their consumers.
 
 An hourly value requires twelve valid five-minute slots and a closed source hour.
-Missing or invalid observations are gaps, never zero activity. Runtime values are
-hours of observed operation. VOC hourly statistics remain unavailable until the
-source's units are established; the legacy declaration is not sufficient evidence.
-Newly discovered series are not automatically selected. Disabling or renaming a
-selected quantity does not restart its legacy writer. Existing daily charts keep
-their legacy IDs until you deliberately update their consumers; selecting an hourly
-successor does not change a chart or another integration's accepted IDs.
+Missing or invalid observations are gaps, never zero activity. VOC hourly
+statistics remain blocked until the source's units are established. New quantities
+require explicit admission. Disabling or renaming a selected quantity does not
+restart its daily writer.
 
-Use `get_hourly_coverage` alongside an hourly chart. It returns each selected
-statistic's active ID and segment boundary, per-hour values and coverage,
-`complete_observed_hours`, `requested_hours`, `complete`, and
-`observed_hour_average`. The average divides only by complete observed hours;
-it is null when none are verified. Show the observed count when a requested window
-is incomplete. The current open hour and trailing hours beyond the observed source
-horizon are provisional. Complete earlier hours can advance while those later
-observations are pending. Pending corrections suppress affected values before
-stale Recorder rows finish clearing.
-
-If a cumulative gap cannot be repaired from observations and saved continuity,
-resumption requires a deliberate new segment. Its ID adds an explicit UTC epoch,
-such as `_e20260910t040000z`, to the adopted base ID. Keep the old and new segment
-boundaries visible; joining their totals cannot prove continuous runtime across
-the gap. Display-name or slug changes retain an already adopted hourly identity.
+Use `get_hourly_coverage` with `contract_version: 3` alongside hourly charts. It
+returns qualified values, source and native verification, explicit eligible
+intervals and observed/expected counts. Show incomplete coverage beside partial
+amounts; a missing complete total is not zero. Current and trailing unclosed hours
+remain provisional. Pending corrections suppress affected values until verified.
 
 ### Context and health entities
 
@@ -307,98 +294,17 @@ data:
 ```
 
 Omit `thermostat_id` to rebuild all configured sources. Daily mode reads earlier
-available summary history to seed cumulative totals. Hourly mode requires actual
-point observations and verified saved continuity within its 366-elapsed-day bound.
+available summary history to seed cumulative totals. Hourly history uses actual
+point observations and verified per-hour proofs within its 366-elapsed-day bound.
 Measurement writes obey the selected local dates; cumulative writes continue from
 the start through the latest available source interval so later totals remain
 consistent. `end_date` is therefore not a hard write boundary for cumulative
-series. The start cannot follow the end. A rebuild does not select a new hourly
-epoch when observations or trusted continuity are missing.
-
-### Select hourly statistics deliberately
-
-Before adoption, establish the intended source history and starting hour, preserve
-a consistent backup, and prepare consumers for the new IDs and coverage response.
-The action supplies the selection workflow; it does not prove that historical
-repair or a dashboard transition is complete. Each selected quantity stops updating
-its legacy ID; unselected enabled quantities continue daily imports.
-
-1. Read `hourly_statistics.revision` from `get_configuration`. Choose explicit base
-   IDs and a closed, complete observed UTC hour within the past 366 days. A new
-   entry's hourly revision is zero.
-2. Call `select_hourly_statistics` without `preview_digest` to inspect the selection.
-   Review its target IDs, units, source bindings, first-hour observation, closed
-   boundaries, stale rows, `unselected_series`, and the frozen/continuing IDs in
-   `legacy_writes`. It reads Beestat history but
-   does not adopt the previewed targets. Existing pending effects can be reconciled
-   before the preview.
-3. To apply the reviewed selection, repeat the exact fields with the returned
-   `preview_digest`. Keep `expected_revision` unchanged. Changed source evidence
-   or revision requires a new preview; do not replace the revision just to force an
-   old selection through. Applying can clear an old segment's stale suffix and
-   changes the saved selection. `selected` confirms selection; `already_selected`
-   identifies an exact retry. Subsequent imports and coverage readback establish
-   which selected hours are verified.
-
-The first ordinary cumulative import includes the selected epoch even if it is
-older than the configured lookback. Once a checkpoint is verified, subsequent
-imports use the normal lookback. The first acquisition still cannot exceed 366
-elapsed days; if the epoch ages beyond that bound before initialization, import
-stops for explicit reconciliation rather than moving the epoch. An explicitly
-bounded rebuild retains its requested start.
-
-The expanded first acquisition does not widen other selected quantities' source
-checks. Each quantity uses its saved epoch and applicable import window before
-source quality is assessed, even when it shares a thermostat with the quantity
-being initialized. An invalid timestamp that cannot be placed still blocks the
-affected source; a parseable observation demonstrably outside the quantity's
-window does not.
-
-Illustrative preview only; substitute the actual entry, IDs, epoch and revision:
-
-```yaml
-action: beestat_statistics.select_hourly_statistics
-data:
-  config_entry_id: YOUR_CONFIG_ENTRY_ID
-  epoch_start: "2026-09-10T04:00:00+00:00"
-  statistic_ids:
-    - beestat:main_fan_runtime_hours_hourly_v2
-  expected_revision: 0
-response_variable: hourly_selection
-```
-
-Retain the exact selection and digest for recovery after an uncertain result.
-Missing or mismatched saved adoption state blocks normal continuation; an exact
-selection retry can complete an interrupted selection or restore its missing
-entry marker. A verified interrupted selection reserves its quantities while
-unrelated enabled legacy quantities can continue. Do not delete state to force a
-fresh adoption. If both the entry
-marker and hourly journal were lost, restore a consistent backup or reconcile
-the previous selection and Recorder history before proceeding.
-
-To read cached coverage without provider requests, imports or saved-state changes:
-
-```yaml
-action: beestat_statistics.get_hourly_coverage
-data:
-  config_entry_id: YOUR_CONFIG_ENTRY_ID
-  start: "2026-09-10T04:00:00+00:00"
-  end: "2026-09-11T04:00:00+00:00"
-  statistic_ids:
-    - beestat:main_fan_runtime_hours_hourly_v2
-response_variable: hourly_coverage
-```
-
-`start` is inclusive and `end` exclusive. Both must identify whole UTC hours with
-explicit offsets; the positive window cannot exceed 366 elapsed days. Omit
-`statistic_ids` for all selected series. Returned `series` is keyed by the adopted
-base ID; each item identifies the active statistic ID, including a later segment.
-The response covers cached verified observations, not a fresh provider query or a
-union of closed and active segments.
+series. The start cannot follow the end. A rebuild does not admit quantities or
+replace missing hourly observations.
 
 ### Qualified independent-hour history
 
-The additive v3 contract keeps each physical quantity on a stable identity and
+The v3 contract keeps each physical quantity on a stable identity and
 returns values with explicit point completeness, source qualification and native
 verification. Read its descriptors from `get_configuration`, then pass explicit
 `quantity_ids` and `contract_version: 3` to `get_hourly_coverage`. Both reads
@@ -409,8 +315,10 @@ An active administrator uses `stage_hourly_source` to retain bounded native
 uploads, `plan_hourly_history` to inspect an exact read-only proposal, and
 `apply_hourly_history` to accept that proposal for the entry's background worker.
 Admission preserves the selected quantity's writer reservation through failures.
-Existing v2 history is not converted automatically. Prepare compatible consumers
-and a consistent recovery set before adoption.
+Contract 3 is the supported hourly floor. The former cumulative hourly selection
+and cached coverage routes are retired. Use v2026.10.11 for an older cumulative-hourly
+journal; this release does not migrate it. Retained Recorder history is preserved. Prepare
+compatible consumers and a consistent recovery set before admission.
 
 See [the complete v3 contract](hourly-history-v3.md) for staging manifests,
 original-byte limits, request examples, hourly/daily eligibility, stable paging,
@@ -422,7 +330,7 @@ An active Home Assistant administrator can call `get_raw_points` for one
 configured thermostat or room sensor. It uses the loaded entry's existing client
 and cached resource identity. It reads Beestat history without requesting sync,
 refreshing metadata, importing statistics, reconciling pending effects or saving
-configuration. It cannot select an hourly epoch or repair history.
+configuration. It cannot admit hourly quantities or repair history.
 
 ```yaml
 action: beestat_statistics.get_raw_points
@@ -519,7 +427,7 @@ data:
 - **Hourly holds or incomplete charts:** inspect `hourly_statistics` and
   `get_hourly_coverage`. Missing observations, pending reconciliation, changed
   source identity and incompatible metadata need different recovery. Preserve the
-  saved intent after a conflict; do not force a new epoch or fill the gap with zero.
+  saved intent after a conflict; do not replace missing observations with zero.
 - **Unexpected filter estimate:** inspect the effective date source, boundary
   status, recent complete-day count, and runtime quality before changing policy.
   Use corrections for erroneous records, not another replacement action.

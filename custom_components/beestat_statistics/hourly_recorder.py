@@ -24,7 +24,7 @@ from homeassistant.components.recorder.tasks import SynchronizeTask
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
 
-from .hourly_import_plan import HourlyStatisticRow, RecorderSnapshot
+from .hourly_rows import HourlyStatisticRow, RecorderSnapshot
 
 MAX_SNAPSHOT_ROWS = 366 * 24 + 1  # A maximum source window plus its exact predecessor.
 MAX_BOUNDED_SNAPSHOT_HOURS = 31 * 24
@@ -58,22 +58,6 @@ class HourlyRecorder:
         synchronized: asyncio.Future[None] = self._hass.loop.create_future()
         get_instance(self._hass).queue_task(SynchronizeTask(synchronized))
         await asyncio.shield(synchronized)
-
-    async def async_snapshot(
-        self, statistic_id: str, start: datetime
-    ) -> RecorderSnapshot:
-        """Read every retained row at or after the explicit inclusive UTC bound.
-
-        Callers include the exact predecessor in this bound when needed. There is
-        no end bound, row truncation, display conversion or derived change query.
-        """
-
-        _validate_id(statistic_id)
-        start = _utc_hour(start)
-        await self.async_barrier()
-        return await get_instance(self._hass).async_add_executor_job(
-            partial(self._snapshot, statistic_id, start)
-        )
 
     async def async_snapshot_range(
         self, statistic_id: str, start: datetime, end: datetime
@@ -129,8 +113,8 @@ class HourlyRecorder:
         self,
         statistic_id: str,
         start: datetime,
-        end: datetime | None = None,
-        max_rows: int = MAX_SNAPSHOT_ROWS,
+        end: datetime,
+        max_rows: int,
     ) -> RecorderSnapshot:
         """Keep metadata, projection and metadata recheck in one executor job."""
 
@@ -144,7 +128,7 @@ class HourlyRecorder:
             and metadata["unit_of_measurement"] is not None
             else None
         )
-        requested = fields | {"last_reset"} if end is not None else fields
+        requested = fields | {"last_reset"}
         native_rows = statistics_during_period(
             self._hass,
             start,
@@ -163,14 +147,13 @@ class HourlyRecorder:
             raise HourlyRecorderError("recorder_snapshot_too_large")
         if metadata is None and rows:
             raise HourlyRecorderError("rows_without_metadata")
-        if end is not None:
-            _validate_no_reset(rows)
+        _validate_no_reset(rows)
         detached = tuple(_detached_row(row, fields) for row in rows)
         previous: datetime | None = None
         for row in detached:
             if row.start < start or (previous is not None and row.start <= previous):
                 raise HourlyRecorderError("unordered_recorder_snapshot")
-            if end is not None and row.start >= end:
+            if row.start >= end:
                 raise HourlyRecorderError("out_of_range_recorder_snapshot")
             previous = row.start
         # A metadata change while reading cannot authorize a mixed projection.

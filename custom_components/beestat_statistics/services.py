@@ -26,17 +26,13 @@ from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_END,
     ATTR_END_DATE,
-    ATTR_EPOCH_START,
     ATTR_EXPECTED_CHANGED_AT,
     ATTR_EXPECTED_CHANGED_DATE,
     ATTR_EXPECTED_REQUEST_ID,
-    ATTR_EXPECTED_REVISION,
-    ATTR_PREVIEW_DIGEST,
     ATTR_REQUEST_ID,
     ATTR_SKIP_SYNC,
     ATTR_START,
     ATTR_START_DATE,
-    ATTR_STATISTIC_IDS,
     CONF_POINT_LOOKBACK_DAYS,
     CONF_THERMOSTAT_ID,
     DOMAIN,
@@ -48,7 +44,6 @@ from .const import (
     SERVICE_REBUILD_STATISTICS,
     SERVICE_RECORD_FILTER_CHANGE,
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
-    SERVICE_SELECT_HOURLY_STATISTICS,
 )
 from .coordinator import BeestatRuntimeDataCoordinator
 from .entry_options import (
@@ -105,38 +100,6 @@ GET_CONFIGURATION_SERVICE_SCHEMA = probatio.Schema(
     }
 )
 
-
-def _hourly_revision(value: Any) -> int:
-    if type(value) is not int or value < 0:
-        raise probatio.Invalid("The expected revision must be a non-negative integer")
-    return value
-
-
-SELECT_HOURLY_SERVICE_SCHEMA = probatio.Schema(
-    {
-        probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        probatio.Required(ATTR_EPOCH_START): cv.datetime,
-        probatio.Required(ATTR_STATISTIC_IDS): probatio.All(
-            [cv.string], probatio.Length(min=1)
-        ),
-        probatio.Required(ATTR_EXPECTED_REVISION): _hourly_revision,
-        probatio.Optional(ATTR_PREVIEW_DIGEST): cv.string,
-    }
-)
-
-GET_HOURLY_COVERAGE_SERVICE_SCHEMA = probatio.Any(
-    COVERAGE_HISTORY_SCHEMA,
-    probatio.Schema(
-        {
-            probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-            probatio.Required(ATTR_START): cv.datetime,
-            probatio.Required(ATTR_END): cv.datetime,
-            probatio.Optional(ATTR_STATISTIC_IDS): probatio.All(
-                [cv.string], probatio.Length(min=1)
-            ),
-        }
-    ),
-)
 
 GET_RAW_POINTS_SERVICE_SCHEMA = probatio.Schema(
     {
@@ -200,17 +163,13 @@ def async_register_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
-    for service, schema in (
-        (SERVICE_SELECT_HOURLY_STATISTICS, SELECT_HOURLY_SERVICE_SCHEMA),
-        (SERVICE_GET_HOURLY_COVERAGE, GET_HOURLY_COVERAGE_SERVICE_SCHEMA),
-    ):
-        hass.services.async_register(
-            DOMAIN,
-            service,
-            partial(_async_handle_hourly_service, hass),
-            schema=schema,
-            supports_response=SupportsResponse.ONLY,
-        )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_HOURLY_COVERAGE,
+        partial(_async_handle_hourly_service, hass),
+        schema=COVERAGE_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
     hass.services.async_register(
         DOMAIN,
@@ -381,21 +340,7 @@ async def _async_handle_hourly_service(
 ) -> ServiceResponse:
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
     try:
-        if call.data.get("contract_version") == 3:
-            return await importer.async_get_hourly_history(dict(call.data))
-        if call.service == SERVICE_SELECT_HOURLY_STATISTICS:
-            return await importer.async_select_hourly_statistics(
-                epoch_start=call.data[ATTR_EPOCH_START],
-                statistic_ids=tuple(call.data[ATTR_STATISTIC_IDS]),
-                expected_revision=call.data[ATTR_EXPECTED_REVISION],
-                preview_digest=call.data.get(ATTR_PREVIEW_DIGEST),
-            )
-        ids = call.data.get(ATTR_STATISTIC_IDS)
-        return await importer.async_get_hourly_coverage(
-            start=call.data[ATTR_START],
-            end=call.data[ATTR_END],
-            statistic_ids=tuple(ids) if ids is not None else None,
-        )
+        return await importer.async_get_hourly_history(dict(call.data))
     except BeestatAuthError:
         importer._coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
         raise HomeAssistantError(

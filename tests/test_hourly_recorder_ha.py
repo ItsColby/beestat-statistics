@@ -1,4 +1,4 @@
-"""Native Recorder contracts for the inactive hourly successor producer."""
+"""Native Recorder contracts for qualified hourly history and retained daily rows."""
 
 from __future__ import annotations
 
@@ -25,24 +25,13 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.beestat_statistics import hourly_recorder
-from custom_components.beestat_statistics.config_model import (
-    BeestatConfig,
-    ConfiguredThermostat,
-)
-from custom_components.beestat_statistics.hourly_import_plan import (
-    CumulativeCheckpoint,
-    HourlyStatisticRow,
-    RecorderSnapshot,
-    plan_hourly_import,
-)
 from custom_components.beestat_statistics.hourly_recorder import (
     MAX_BOUNDED_SNAPSHOT_HOURS,
     HourlyRecorder,
     HourlyRecorderError,
 )
-from custom_components.beestat_statistics.hourly_statistics import (
-    HourlySeries,
-    build_hourly_statistics,
+from custom_components.beestat_statistics.hourly_rows import (
+    HourlyStatisticRow,
 )
 from tests.hourly_support import hourly_metadata
 
@@ -91,38 +80,6 @@ def _rate_metadata(statistic_id=RATE_ID, *, temperature_delta=False):
     }
 
 
-def _runtime_series(start, increments, *, slug="contract") -> HourlySeries:
-    """Build real hourly buckets from twelve explicit fan observations per hour."""
-
-    end = start + len(increments) * HOUR
-    rows = [
-        {
-            "thermostat_id": 1,
-            "timestamp": (
-                start + hour * HOUR + slot * timedelta(minutes=5)
-            ).isoformat(),
-            "fan": increment * 300,
-        }
-        for hour, increment in enumerate(increments)
-        if increment is not None
-        for slot in range(12)
-    ]
-    series = build_hourly_statistics(
-        {1: rows},
-        {},
-        BeestatConfig((ConfiguredThermostat(1, slug, "Contract"),), ()),
-        start=start,
-        end=end,
-        evaluated_at=NOW,
-        source_end_by_thermostat={1: end - timedelta(minutes=5)},
-    )
-    return next(
-        item
-        for item in series
-        if item.statistic_id == f"beestat:{slug}_fan_runtime_hours_hourly_v2"
-    )
-
-
 async def _read(
     hass, statistic_ids, *, start=START, period="hour", types=None, drain=True
 ):
@@ -146,73 +103,6 @@ async def _metadata_readback(hass, statistic_id):
     return await get_instance(hass).async_add_executor_job(
         partial(get_metadata, hass, statistic_ids={statistic_id})
     )
-
-
-async def _snapshot(hass, series) -> RecorderSnapshot:
-    # This fixture is the sole writer. Fence its queue and read without an end
-    # bound, from the required predecessor through every retained later row.
-    native = await _read(
-        hass,
-        {series.statistic_id},
-        start=series.hours[0].start - HOUR,
-        types={"state", "sum"},
-    )
-    metadata = await _metadata_readback(hass, series.statistic_id)
-    return RecorderSnapshot(
-        tuple(
-            HourlyStatisticRow(
-                datetime.fromtimestamp(row["start"], UTC),
-                state=row["state"],
-                sum=row["sum"],
-            )
-            for row in native.get(series.statistic_id, ())
-        ),
-        metadata[series.statistic_id][1] if series.statistic_id in metadata else None,
-        complete=True,
-    )
-
-
-def _plan(series, snapshot, *, verified=None):
-    return plan_hourly_import(
-        (series,),
-        snapshots={series.statistic_id: snapshot},
-        checkpoints={series.statistic_id: CumulativeCheckpoint(START, verified)},
-    )[0]
-
-
-def _submit_plan(hass, series, plan):
-    assert not plan.blocking_reasons
-    assert plan.calculated_rows and not plan.blocking_reasons
-    async_add_external_statistics(
-        hass,
-        dict(series.metadata),
-        [
-            {"start": row.start, "state": row.state, "sum": row.sum}
-            for row in plan.calculated_rows
-        ],
-    )
-
-
-async def test_first_partial_day_keeps_first_increment_without_zero_predecessor(hass):
-    # The remaining first-day hours have explicitly observed zero runtime.
-    series = _runtime_series(START, (0.25, 0.5, *([0.0] * 10), 0.125))
-    plan = _plan(series, await _snapshot(hass, series))
-    _submit_plan(hass, series, plan)
-
-    hourly = (await _read(hass, {RUNTIME_ID}, start=DAY_START))[RUNTIME_ID]
-    assert len(hourly) == 13
-    assert hourly[0]["start"] == START.timestamp()
-    assert [row["change"] for row in hourly[:2]] == [0.25, 0.5]
-    assert hourly[0]["sum"] == 0.25
-    assert hourly[-1]["start"] == (DAY_START + 24 * HOUR).timestamp()
-    assert hourly[-1]["sum"] == 0.875
-    assert hourly[-1]["change"] == 0.125
-    daily = (await _read(hass, {RUNTIME_ID}, start=DAY_START, period="day"))[RUNTIME_ID]
-    assert [row["start"] for row in daily] == [
-        DAY_START.timestamp(),
-        (DAY_START + 24 * HOUR).timestamp(),
-    ]
-    assert [row["change"] for row in daily] == [0.75, 0.125]
 
 
 async def test_start_only_measurement_upsert_clears_values_and_daily_omits_them(hass):
@@ -252,53 +142,6 @@ async def test_start_only_measurement_upsert_clears_values_and_daily_omits_them(
     assert (daily[0]["mean"], daily[0]["min"], daily[0]["max"]) == (72, 69, 75)
     # Native reduction has no coverage field distinguishing this partial day.
     assert set(daily[0]) == {"start", "end", "mean", "min", "max"}
-
-
-async def test_cleared_cumulative_suffix_blocks_daily_change_and_restart_is_range_dependent(
-    hass,
-):
-    metadata = hourly_metadata(RUNTIME_ID)
-    async_add_external_statistics(
-        hass, metadata, _counter_rows(START, (0.75, 1.25, 1.5))
-    )
-    await async_wait_recording_done(hass)
-    metadata_before = await _metadata_readback(hass, RUNTIME_ID)
-    async_add_external_statistics(
-        hass, metadata, [{"start": START + HOUR}, {"start": START + 2 * HOUR}]
-    )
-    cleared = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    assert [row["state"] for row in cleared] == [0.75, None, None]
-    assert [row["sum"] for row in cleared] == [0.75, None, None]
-    assert [row["change"] for row in cleared] == [0.75, None, None]
-    assert await _metadata_readback(hass, RUNTIME_ID) == metadata_before
-    daily = (await _read(hass, {RUNTIME_ID}, period="day"))[RUNTIME_ID]
-    assert daily[0]["sum"] is None
-    assert daily[0]["change"] is None
-    gapped = _runtime_series(START, (0.75, None, None))
-    plan = _plan(gapped, await _snapshot(hass, gapped))
-    assert "invalid_recorder_snapshot" not in plan.blocking_reasons
-    assert "cumulative_source_gap" in plan.blocking_reasons
-    assert not plan.stale_starts
-    assert plan.blocking_reasons
-
-    # Probe a hypothetical same-ID continuation, not a safe production proposal.
-    resumed = START + 3 * HOUR
-    async_add_external_statistics(hass, metadata, _counter_rows(resumed, (1.0,)))
-    wide = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    narrow = (await _read(hass, {RUNTIME_ID}, start=resumed))[RUNTIME_ID]
-    assert wide[-1]["change"] == 0.25
-    assert narrow[0]["change"] == 1.0
-    from_first_null = (await _read(hass, {RUNTIME_ID}, start=START + HOUR))[RUNTIME_ID]
-    from_last_null = (await _read(hass, {RUNTIME_ID}, start=START + 2 * HOUR))[
-        RUNTIME_ID
-    ]
-    assert [row["change"] for row in from_first_null] == [None, None, 0.25]
-    assert [row["change"] for row in from_last_null] == [None, 1.0]
-    resumed_daily = (await _read(hass, {RUNTIME_ID}, period="day"))[RUNTIME_ID]
-    assert len(resumed_daily) == 1
-    assert resumed_daily[0]["sum"] == 1.0
-    assert resumed_daily[0]["change"] == 1.0
-    assert set(resumed_daily[0]) == {"start", "end", "state", "sum", "change"}
 
 
 async def test_same_id_reset_cannot_repair_both_ranges_but_distinct_segment_can(hass):
@@ -418,58 +261,6 @@ async def test_cancelled_wait_requires_native_reconciliation_before_stable_repla
         assert await _metadata_readback(hass, RUNTIME_ID) == metadata_before
 
 
-@pytest.mark.parametrize("has_exact_seed", [True, False])
-async def test_expired_raw_prefix_requires_exact_verified_native_seed(
-    hass, has_exact_seed
-):
-    prefix = _runtime_series(START, (0.25, 0.5) if has_exact_seed else (0.25,))
-    _submit_plan(hass, prefix, _plan(prefix, await _snapshot(hass, prefix)))
-    verified_rows = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    verified = datetime.fromtimestamp(verified_rows[-1]["start"], UTC)
-
-    # Only the rolling window's raw observations remain available to the builder.
-    rolling = _runtime_series(START + 2 * HOUR, (0.125, 0.25))
-    snapshot = await _snapshot(hass, rolling)
-    plan = _plan(rolling, snapshot, verified=verified)
-    if not has_exact_seed:
-        assert not snapshot.rows
-        assert "unproven_cumulative_basis" in plan.blocking_reasons
-        assert plan.blocking_reasons
-        assert (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID] == verified_rows
-        return
-    assert snapshot.rows[0].start == START + HOUR
-    assert snapshot.rows[0].sum == 0.75
-    _submit_plan(hass, rolling, plan)
-    appended = (await _read(hass, {RUNTIME_ID}, start=START + 2 * HOUR))[RUNTIME_ID]
-    assert [row["sum"] for row in appended] == [0.875, 1.125]
-    assert [row["change"] for row in appended] == [0.125, 0.25]
-
-
-async def test_early_correction_requires_rewriting_native_cumulative_suffix(hass):
-    original = _runtime_series(START, (0.25, 0.5, 0.125))
-    _submit_plan(hass, original, _plan(original, await _snapshot(hass, original)))
-    corrected_first = _runtime_series(START, (0.5,))
-    plan = _plan(corrected_first, await _snapshot(hass, corrected_first))
-    assert "surviving_stale_rows" in plan.blocking_reasons
-    assert plan.stale_starts == (START + HOUR, START + 2 * HOUR)
-    assert plan.blocking_reasons
-
-    # Demonstrate why updating only the early row is insufficient in native HA.
-    async_add_external_statistics(
-        hass, dict(original.metadata), _counter_rows(START, (0.5,))
-    )
-    partial_update = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    assert [row["sum"] for row in partial_update] == [0.5, 0.75, 0.875]
-    assert [row["change"] for row in partial_update] == [0.5, 0.25, 0.125]
-    corrected = _runtime_series(START, (0.5, 0.5, 0.125))
-    full_plan = _plan(corrected, await _snapshot(hass, corrected))
-    assert not full_plan.stale_starts
-    _submit_plan(hass, corrected, full_plan)
-    complete_update = (await _read(hass, {RUNTIME_ID}))[RUNTIME_ID]
-    assert [row["sum"] for row in complete_update] == [0.5, 1.0, 1.125]
-    assert [row["change"] for row in complete_update] == [0.5, 0.5, 0.125]
-
-
 async def test_bounded_month_snapshot_includes_all_slots_without_predecessor_or_tail(
     hass,
 ):
@@ -498,8 +289,6 @@ async def test_bounded_month_snapshot_includes_all_slots_without_predecessor_or_
     )
     assert all(row.min is None and row.max is None for row in snapshot.rows)
     assert all(row.sum is None and row.state is None for row in snapshot.rows)
-    # Existing v2 callers continue to get the full retained tail.
-    assert (await adapter.async_snapshot(RATE_ID, end)).rows == rows[-2:]
     empty = await adapter.async_snapshot_range(RATE_ID, end + 2 * HOUR, end + 3 * HOUR)
     assert empty.complete and not empty.rows and empty.metadata == snapshot.metadata
 
@@ -608,7 +397,7 @@ async def test_bounded_snapshot_does_not_certify_out_of_range_native_result(hass
         await adapter.async_snapshot_range(RATE_ID, START, START + HOUR)
 
 
-async def test_bounded_snapshot_rejects_explicit_reset_but_v2_read_stays_compatible(
+async def test_bounded_snapshot_rejects_explicit_reset(
     hass,
 ):
     adapter = HourlyRecorder(hass)
@@ -619,6 +408,3 @@ async def test_bounded_snapshot_rejects_explicit_reset_but_v2_read_stays_compati
     )
     with pytest.raises(HourlyRecorderError, match="unexpected_statistic_reset"):
         await adapter.async_snapshot_range(RUNTIME_ID, START, START + HOUR)
-    assert (await adapter.async_snapshot(RUNTIME_ID, START)).rows == (
-        HourlyStatisticRow(START, sum=2, state=2),
-    )

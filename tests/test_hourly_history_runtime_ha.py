@@ -30,7 +30,7 @@ from custom_components.beestat_statistics.hourly_history_runtime import (
 )
 from custom_components.beestat_statistics.hourly_history_writer import sealed
 from custom_components.beestat_statistics.hourly_import import HourlyImportError
-from custom_components.beestat_statistics.hourly_import_plan import RecorderSnapshot
+from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.test_hourly_history_service_ha import (
     END,
     NOW,
