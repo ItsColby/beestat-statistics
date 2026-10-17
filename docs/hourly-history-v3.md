@@ -348,10 +348,17 @@ reuse fails. Query/configuration expose progress without effectful polling.
 
 The existing entry worker (or, for a routine correction, the import pass that
 accepted it) executes one quantity/month batch at a time, at most
-744 hour slots. Before submission it durably names the sealed batch, whose
-content-addressed object holds the exact before/intended rows, then fences
-and compares native readback, persists the proof shard, then advances the root
-revision and clears pending. Cancellation cannot turn uncertain effects into
+744 hour slots. Sealing a plan stores each batch's month proof once, as its own
+content-addressed proof object, before the batch object that names it by digest
+in `proof_object`. Before submission the worker durably names the sealed batch,
+whose content-addressed object holds the exact before/intended rows, then
+fences and compares native readback, reads back the named proof, then publishes
+it, advances the root revision and clears pending in one root save. Batches
+sealed by v2026.10.10 and v2026.10.11 embed the proof as `proof` instead;
+verifying one writes that proof object, so an operation interrupted across an
+upgrade resumes unchanged. A plan returned by an earlier release has a
+different digest and is refused with `history_plan_changed`; plan again.
+Cancellation cannot turn uncertain effects into
 success or a new plan. Recovery uses that same immutable intent; a third native
 state or metadata mismatch holds the operation. Partially verified batches do
 not mean the full operation is complete. Reservations persist through failures,

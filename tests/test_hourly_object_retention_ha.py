@@ -592,6 +592,90 @@ async def test_saved_intent_of_either_form_resumes(
     await runtime.entry._async_process_on_unload(hass)
 
 
+def _batches(runtime, root):
+    manifest = _read(runtime, "operation", root["operation"]["object"])
+    return manifest, [
+        _read(runtime, "operation", summary["object"])
+        for summary in manifest["batches"]
+    ]
+
+
+async def test_each_proof_is_stored_once_and_named_by_its_batch(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(
+        hass, hass_admin_user, freezer, monkeypatch, tmp_path, finish=False
+    )
+    _, batches = _batches(runtime, await runtime.store.async_load())
+    sealed = {batch["month"]: batch["proof_object"] for batch in batches}
+    assert batches and not any("proof" in batch for batch in batches)
+    # Sealing writes each proof; verifying a batch only publishes its name.
+    objects = _objects(runtime)
+    assert {f"proof/{reference}" for reference in sealed.values()} <= set(objects)
+    await _finish(runtime)
+    assert _proofs(await runtime.store.async_load()) == sealed
+    assert _by_kind(set(_objects(runtime)) - set(objects))["proof"] == 0
+    freezer.move_to(END + timedelta(minutes=59))
+    _horizon(runtime, END + timedelta(minutes=55))
+    root = await _routine(runtime, monkeypatch, _rows(1))
+    _, batches = _batches(runtime, root)
+    assert batches and not any("proof" in batch for batch in batches)
+    for batch in batches:
+        assert _proofs(root)[batch["month"]] == batch["proof_object"]
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_batches_that_embed_their_proof_still_replay(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, interrupted
+):
+    runtime = await _adopted(
+        hass, hass_admin_user, freezer, monkeypatch, tmp_path, finish=False
+    )
+    # v2026.10.10 and v2026.10.11 sealed the proof inside each batch and wrote
+    # the proof object only once the batch verified.
+    root = await runtime.store.async_load()
+    manifest, batches = _batches(runtime, root)
+    expected = {}
+    for summary, batch in zip(manifest["batches"], batches, strict=True):
+        reference = batch.pop("proof_object")
+        batch["proof"] = _read(runtime, "proof", reference)
+        Path(f"{runtime.store.path}.objects/proof/{reference}").unlink()
+        summary["object"] = await runtime.store.async_write_object(
+            "operation", canonical_json(batch)
+        )
+        expected[batch["month"]] = reference
+    root["operation"]["object"] = await runtime.store.async_write_object(
+        "operation", canonical_json(manifest)
+    )
+    root["operation"]["plan_digest"] = digest(manifest)
+    if interrupted:
+        # The intent was saved, then Home Assistant stopped before submission.
+        pending = {
+            "generation": 3,
+            "operation_id": root["operation"]["operation_id"],
+            "index": 0,
+            "batch_object": manifest["batches"][0]["object"],
+            **{key: batches[0][key] for key in ("quantity_id", "start", "end")},
+        }
+        pending["digest"] = digest(pending)
+        root.update(pending=pending)
+        root["operation"]["status"] = "in_progress"
+    root["revision"] += 1
+    await _reseal(runtime, root)
+    runtime.importer.hourly = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    await runtime.importer.hourly._load()
+    await _finish(runtime)
+    assert _proofs(await runtime.store.async_load()) == expected
+    assert {f"proof/{reference}" for reference in expected.values()} <= set(
+        _objects(runtime)
+    )
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)
+
+
 async def test_proofs_from_earlier_releases_are_reproved_once(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
