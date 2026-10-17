@@ -13,10 +13,11 @@ and the **Release gate** that requires them,
 [`.github/dependabot.yml`](../.github/dependabot.yml) the dependency update
 policy. The [Dependabot auto-merge workflow](../.github/workflows/dependabot-auto-merge.yaml)
 merges its Actions and pre-commit updates once required checks pass. Install
-the static checks once and run them before pushing:
+pre-commit once as a [uv tool](https://docs.astral.sh/uv/guides/tools/) and
+run the static checks before pushing:
 
 ```bash
-python -m pip install --group dev
+uv tool install pre-commit
 pre-commit install
 pre-commit run --all-files
 ```
