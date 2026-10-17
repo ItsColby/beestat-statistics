@@ -205,22 +205,28 @@ def _validate_history_intent(state: dict[str, Any]) -> None:
         ):
             raise ValueError("history_pending_invalid")
         require_digest(pending["batch_object"])
-        batch = pending["batch"]
+        # The intent names its sealed, hash-verified batch object and range.
+        # Intents saved by earlier releases embed the whole batch instead.
+        batch = pending.get("batch", pending)
         first, end = bounds(batch["start"], batch["end"])
-        if (
-            (end - first) / _HOUR > MAX_BATCH_HOURS
-            or len(batch["before"]) > MAX_BATCH_HOURS
-            or len(batch["rows"]) > MAX_BATCH_HOURS
+        if (end - first) / _HOUR > MAX_BATCH_HOURS or not isinstance(
+            batch["quantity_id"], str
         ):
             raise ValueError("history_pending_bounds_invalid")
-        for collection in (batch["before"], batch["rows"]):
-            stamps = [_native(row).start for row in collection]
-            if stamps != sorted(set(stamps)) or any(
-                not first <= stamp < end for stamp in stamps
+        if "batch" in pending:
+            if (
+                len(batch["before"]) > MAX_BATCH_HOURS
+                or len(batch["rows"]) > MAX_BATCH_HOURS
             ):
-                raise ValueError("history_pending_rows_invalid")
-        if digest(batch) != pending["batch_object"]:
-            raise ValueError("history_pending_object_invalid")
+                raise ValueError("history_pending_bounds_invalid")
+            for collection in (batch["before"], batch["rows"]):
+                stamps = [_native(row).start for row in collection]
+                if stamps != sorted(set(stamps)) or any(
+                    not first <= stamp < end for stamp in stamps
+                ):
+                    raise ValueError("history_pending_rows_invalid")
+            if digest(batch) != pending["batch_object"]:
+                raise ValueError("history_pending_object_invalid")
     elif pending and pending.get("generation") != 2:
         raise ValueError("history_pending_generation_invalid")
 
@@ -243,6 +249,51 @@ def status(state: dict[str, Any] | None) -> dict[str, Any]:
         "has_pending": state["phase"] == "prepared"
         or operation["status"] in {"accepted", "in_progress"},
     }
+
+
+def _changed_window(
+    old: dict[str, Any],
+    proof: dict[str, Any],
+    assessed: list[str],
+    before: dict[str, dict[str, Any] | None],
+    rows: list[dict[str, Any]],
+    held: frozenset[str],
+    window: tuple[datetime, datetime],
+) -> tuple[datetime, datetime] | None:
+    """Bound a routine batch to its touched hours, or None when nothing changes.
+
+    A touched hour has a changed proof entry or row, a hold or a conflict. A
+    proof that differs only outside its hours, such as an earlier release's
+    format, is re-proved over the whole assessed window once.
+    """
+    previous = {row["start"]: canonical_json(row) for row in old["hours"]}
+    current = {row["start"]: row for row in proof["hours"]}
+    intended = {row["start"]: row for row in rows}
+    touched = [
+        stamp
+        for stamp in assessed
+        if previous.get(stamp) != canonical_json(current[stamp])
+        or before.get(stamp) != intended.get(stamp)
+        or current[stamp]["status"] == "source_conflict"
+        or stamp in held
+    ]
+    if touched:
+        return utc(touched[0]), utc(touched[-1]) + _HOUR
+    if canonical_json(proof) == canonical_json(old):
+        return None
+    return window
+
+
+def _nearest(edges: dict[str, list[str]], predecessors: set[str]) -> list[str]:
+    """Drop predecessors already reachable through another listed one."""
+    reached: set[str] = set()
+    pending = [older for name in predecessors for older in edges.get(name, ())]
+    while pending:
+        name = pending.pop()
+        if name not in reached:
+            reached.add(name)
+            pending.extend(edges.get(name, ()))
+    return sorted(predecessors - reached)
 
 
 def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
@@ -874,11 +925,22 @@ class HistoryWriter:
         fresh: list[dict[str, Any]],
         baseline: dict[str, Any],
     ) -> dict[str, Any]:
+        """Record each new acquisition's nearest predecessors only.
+
+        Precedence uses the transitive closure, so dropping predecessors that
+        another listed predecessor already reaches keeps it exact while the
+        relation grows linearly. Lists left unreduced by earlier releases are
+        reduced once on the next delta.
+        """
         result = deepcopy(existing)
         for key, names in self.acquisitions(fresh).items():
+            edges = result.setdefault(key, {})
             for name in names:
                 predecessors = set(baseline["acquisitions"].get(key, ())) - {name}
-                result.setdefault(key, {})[name] = sorted(predecessors)
+                edges[name] = _nearest(edges, predecessors)
+            for newer, older in list(edges.items()):
+                if len(older) > 1:
+                    edges[newer] = _nearest(edges, set(older))
         return result
 
     async def hold(
@@ -1004,9 +1066,17 @@ class HistoryWriter:
         first: datetime,
         end: datetime,
         resource: dict[str, Any],
-        merged: dict[str, Any],
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+        *,
+        changed_only: bool = False,
+        held: frozenset[str] = frozenset(),
+    ) -> dict[str, Any] | None:
+        """Assess one quantity/month; a routine pass keeps only touched hours.
+
+        The proof always covers the whole month. With ``changed_only`` the
+        native range narrows to the hours whose proof, row or hold changes,
+        and an untouched month yields no batch at all.
+        """
         month = first.strftime("%Y-%m")
         old = await self.proof(selection, month, context)
         proof_hours = {row["start"]: row for row in old["hours"]}
@@ -1020,7 +1090,7 @@ class HistoryWriter:
         before = {row.start.isoformat(): _row(row) for row in snapshot.rows}
         _validate_owned_rows(before, proof_hours)
         rows: list[dict[str, Any]] = []
-        counts: Counter[str] = Counter()
+        assessed: list[str] = []
         conflict = {
             utc(value, whole_hour=True) for value in resource.get("conflict_hours", ())
         }
@@ -1043,6 +1113,7 @@ class HistoryWriter:
                 reason = item.blocked_reason or "source_timestamp_unplaced"
             values = hour.values if reason == "ready" else None
             stamp = hour.start.isoformat()
+            assessed.append(stamp)
             native = _row(_native({"start": stamp, **values})) if values else None
             if native is None and stamp in before:
                 native = _row(_native({"start": stamp}))
@@ -1071,15 +1142,28 @@ class HistoryWriter:
                 "confidence": sorted(confidence),
                 "row": native,
             }
-            counts[reason] += 1
+        # The proof binds each hour's own lineage, not the whole-catalog
+        # revision, so an untouched month's proof stays byte-identical.
         proof = {
             "contract_version": 3,
             "quantity_id": item.descriptor["quantity_id"],
             "month": month,
             "metadata": item.metadata,
-            "source_revision": merged["source_revision"],
             "hours": [proof_hours[key] for key in sorted(proof_hours)],
         }
+        if changed_only:
+            window = _changed_window(
+                old, proof, assessed, before, rows, held, (first, end)
+            )
+            if window is None:
+                return None
+            first, end = window
+            assessed = [stamp for stamp in assessed if first <= utc(stamp) < end]
+            rows = [row for row in rows if first <= utc(row["start"]) < end]
+            before = {
+                stamp: row for stamp, row in before.items() if first <= utc(stamp) < end
+            }
+        counts = Counter(proof_hours[stamp]["status"] for stamp in assessed)
         return {
             "quantity_id": item.descriptor["quantity_id"],
             "statistic_id": item.statistic_id,
@@ -1100,6 +1184,8 @@ class HistoryWriter:
         context: dict[str, Any],
         provider_order: dict[str, Any] | None = None,
         provider_supersedes: dict[str, Any] | None = None,
+        *,
+        changed_only: bool = False,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
         normalized = self.request(request, context)
         state = await self.root(context)
@@ -1153,15 +1239,19 @@ class HistoryWriter:
             )
             resource = merged["resources"].get(resource_key, {})
             for start, stop in month_windows(first, end):
+                hold = await self.hold(history, key, start.strftime("%Y-%m"), context)
                 batch = await self.batch(
                     item,
                     history.get("selections", {}).get(key),
                     start,
                     stop,
                     resource,
-                    merged,
                     context,
+                    changed_only=changed_only,
+                    held=frozenset(row["start"] for row in hold["intervals"]),
                 )
+                if batch is None:
+                    continue
                 if (
                     item.statistic_id in metadata_predecessors
                     and batch["before_metadata"] is None
@@ -1299,6 +1389,8 @@ class HistoryWriter:
         context: dict[str, Any],
         provider_order: dict[str, Any] | None = None,
         provider_supersedes: dict[str, Any] | None = None,
+        *,
+        changed_only: bool = False,
     ) -> dict[str, Any]:
         plan_digest = require_digest(request["plan_digest"])
         state = await self.root(context)
@@ -1329,7 +1421,11 @@ class HistoryWriter:
                 await self.guard(context)
             return status(self.manager._state)
         manifest, batches, state = await self.plan(
-            request, context, provider_order, provider_supersedes
+            request,
+            context,
+            provider_order,
+            provider_supersedes,
+            changed_only=changed_only,
         )
         if digest(manifest) != plan_digest:
             raise HourlyImportError("history_plan_changed")
@@ -1365,8 +1461,14 @@ class HistoryWriter:
         for descriptor in manifest["descriptors"]:
             key = descriptor["quantity_id"]
             prior = root["history"]["selections"].get(key, {})
+            # Adoption is ownership, not verification, so a pass that leaves a
+            # quantity untouched keeps it adopted.
+            adopted = prior.get("descriptor", {}).get("writer_status") == "adopted"
             root["history"]["selections"][key] = {
-                "descriptor": {**descriptor, "writer_status": "reserved"},
+                "descriptor": {
+                    **descriptor,
+                    "writer_status": "adopted" if adopted else "reserved",
+                },
                 "metadata": manifest["metadata"][key],
                 "proofs": prior.get("proofs", {}),
                 "adopted_at": prior.get("adopted_at", context["evaluated_at"]),
@@ -1391,7 +1493,9 @@ class HistoryWriter:
             "object": reference,
             "cursor": 0,
             "batch_count": len(batches),
-            "status": "accepted",
+            # A routine source that changes no proof or row commits only its
+            # catalog membership; there is no native effect left to verify.
+            "status": "accepted" if batches else "completed",
             "error": None,
         }
         root["revision"] += 1
@@ -1470,7 +1574,9 @@ class HistoryWriter:
         normalized = self.routine_request(request, root, prior, context)
         if not normalized["quantity_ids"]:
             return status(root)
-        manifest, batches, _ = await self.plan(normalized, context, order, supersedes)
+        manifest, batches, _ = await self.plan(
+            normalized, context, order, supersedes, changed_only=True
+        )
         if any(batch["dispositions"].get("source_conflict") for batch in batches):
             await self.save_holds(root, batches, request["source_ids"], context)
             return {
@@ -1483,7 +1589,11 @@ class HistoryWriter:
             baseline = await self.source_points(request, context)
             self.validate_deltas(deltas, baseline, first, end, context)
         return await self.accept(
-            {**normalized, "plan_digest": digest(manifest)}, context, order, supersedes
+            {**normalized, "plan_digest": digest(manifest)},
+            context,
+            order,
+            supersedes,
+            changed_only=True,
         )
 
     def routine_request(
@@ -1537,11 +1647,15 @@ class HistoryWriter:
         )
         if not normalized["source_ids"] or not normalized["quantity_ids"]:
             return {"status": "unchanged", "changed_rows": 0}
-        manifest, batches, _state = await self.plan(normalized, context)
+        manifest, batches, _state = await self.plan(
+            normalized, context, changed_only=True
+        )
         if not await self.new_ready_hours(root, batches, context):
             return {"status": "unchanged", "changed_rows": 0}
         return await self.accept(
-            {**normalized, "plan_digest": digest(manifest)}, context
+            {**normalized, "plan_digest": digest(manifest)},
+            context,
+            changed_only=True,
         )
 
     async def new_ready_hours(
@@ -1641,7 +1755,9 @@ class HistoryWriter:
             return status(root)
         _identity_matches(root["identity"], context["identity"])
         operation = root["operation"]
-        if operation["status"] in {"completed", "blocked"}:
+        if operation["status"] == "blocked" or (
+            operation["status"] == "completed" and root["phase"] != "prepared"
+        ):
             return status(root)
         manifest = await self.read_object("operation", operation["object"], context)
         if digest(manifest) != operation["plan_digest"] or manifest[
@@ -1649,8 +1765,11 @@ class HistoryWriter:
         ] != self.binding(context):
             raise HourlyImportError("history_operation_context_changed")
         if root["phase"] == "prepared":
+            # A batchless accept is saved completed; only its marker step remains.
             await self.finish_accept(context)
             root = self.manager._state
+            if root["operation"]["status"] == "completed":
+                return status(root)
         if self.manager._entry.data.get(MARKER) != {
             "version": 3,
             "token": root["token"],
@@ -1674,7 +1793,7 @@ class HistoryWriter:
                 "operation_id": operation["operation_id"],
                 "index": index,
                 "batch_object": summary["object"],
-                "batch": batch,
+                **{key: batch[key] for key in ("quantity_id", "start", "end")},
             }
             pending["digest"] = digest(pending)
             after = deepcopy(root)
@@ -1688,9 +1807,12 @@ class HistoryWriter:
             if (
                 pending.get("generation") != 3
                 or pending["batch_object"] != summary["object"]
+                or any(
+                    pending.get("batch", pending)[key] != batch[key]
+                    for key in ("quantity_id", "start", "end")
+                )
             ):
                 raise HourlyImportError("history_pending_owner_changed")
-            batch = pending["batch"]
         # A fresh fenced comparison after durable intent also catches external
         # effects that appeared while the Store write was awaiting completion.
         snapshot = await self.snapshot(
@@ -1826,7 +1948,7 @@ class HistoryWriter:
                 )
         pending = (state or {}).get("pending")
         if pending and pending.get("generation") == 3:
-            batch = pending["batch"]
+            batch = pending.get("batch", pending)
             result["pending_affected"][batch["quantity_id"]] = [
                 [batch["start"], batch["end"]]
             ]

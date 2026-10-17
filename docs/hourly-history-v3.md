@@ -340,7 +340,8 @@ reuse fails. Query/configuration expose progress without effectful polling.
 
 The existing entry worker (or, for a routine correction, the import pass that
 accepted it) executes one quantity/month batch at a time, at most
-744 hour slots. It saves exact before/intended rows before submission, fences
+744 hour slots. Before submission it durably names the sealed batch, whose
+content-addressed object holds the exact before/intended rows, then fences
 and compares native readback, persists the proof shard, then advances the root
 revision and clears pending. Cancellation cannot turn uncertain effects into
 success or a new plan. Recovery uses that same immutable intent; a third native
@@ -372,8 +373,20 @@ baseline digest. An empty or shortened response never deletes old observations.
 If no observation changes, the pass adds no source object and earns no automatic
 coverage or settlement credit. The existing writer may reevaluate retained
 observations at a fixed evaluation and import newly closed, qualified hours.
-Each accepted pass, changed or not, commits a new operation and new proofs for
-the whole policy window; retention below removes the generations it replaces.
+Each pass still reassesses and validates every owned native row in the policy
+window, but commits only what changes. A quantity/month whose proof, rows and
+holds are unchanged gets no batch, and its proof object stays byte-identical,
+since a proof binds each hour's own source lineage rather than the whole-window
+source revision. A changed month's batch covers only the span from its first to
+its last touched hour (changed proof hour, changed row, held or conflicted
+hour); its proof still covers the whole month. Because hours are independent, a
+past-hour correction re-proves only that hour's month. A pass with no new
+observation and no newly closed hour writes nothing. A changed source that
+alters no proof or row is admitted without a native batch. Proofs written by
+earlier releases also carry the whole-window revision; readers ignore it, and
+the first accepted routine pass after an upgrade re-proves each window month
+once in the current form.
+Retention below removes the generations a pass replaces.
 Twelve samples and elapsed time do not replace the required source horizon:
 insufficient evidence remains provisional. Exact durable intent, native
 readback and durable proof are required before coverage advances, including
@@ -387,7 +400,11 @@ revision/digest and changed original row objects. These hashes commit to incomin
 bytes; the delta does not retain or reconstruct the full incoming response.
 Externally staged originals retain the exact byte-reassembly contract above.
 The manager rechecks the baseline before acceptance; stale input requires a new
-comparison, never substitution under an existing operation identity.
+comparison, never substitution under an existing operation identity. Each
+accepted acquisition supersedes the provider acquisitions in its baseline. The
+root records only its nearest predecessors, since precedence uses the
+transitive closure, so the relation grows linearly with acquisitions; lists
+saved in full by earlier releases are reduced on the next accepted delta.
 
 Admitted initial originals, accepted deltas and their source manifests remain
 retained. Proof and operation objects remain only while the committed root
