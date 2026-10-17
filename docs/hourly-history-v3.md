@@ -351,9 +351,11 @@ existing writer.
 
 V3 adoption changes the journal contract so older releases fail closed. Existing
 v2 users are not automatically converted. Recovery includes the entry/marker,
-root, immutable sources/proofs/operation, Recorder rows and metadata, consumer
+root, its source/proof/operation objects, Recorder rows and metadata, consumer
 configuration/assets, timezone/method and exact component versions. Replacing
-code alone is not a rollback.
+code alone is not a rollback. Restore the root and its object namespace from the
+same backup: superseded proof and operation generations are not retained, so an
+older root needs the objects saved with it.
 
 ## Routine corrections after adoption
 
@@ -370,6 +372,8 @@ baseline digest. An empty or shortened response never deletes old observations.
 If no observation changes, the pass adds no source object and earns no automatic
 coverage or settlement credit. The existing writer may reevaluate retained
 observations at a fixed evaluation and import newly closed, qualified hours.
+Each accepted pass, changed or not, commits a new operation and new proofs for
+the whole policy window; retention below removes the generations it replaces.
 Twelve samples and elapsed time do not replace the required source horizon:
 insufficient evidence remains provisional. Exact durable intent, native
 readback and durable proof are required before coverage advances, including
@@ -385,9 +389,20 @@ Externally staged originals retain the exact byte-reassembly contract above.
 The manager rechecks the baseline before acceptance; stale input requires a new
 comparison, never substitution under an existing operation identity.
 
-Admitted initial originals, accepted deltas, proof and operation dependencies
-remain retained. The monthly source index selects operation dependencies while
-preserving corrections, tombstones and supersession outside the newest window.
+Admitted initial originals, accepted deltas and their source manifests remain
+retained. Proof and operation objects remain only while the committed root
+needs them: the current operation, its batches and monthly source index, each
+quantity/month's current proof, current source holds and every invalidation
+record. After an operation completes and its root is durably verified, the
+import pass deletes superseded proof and operation generations, so their
+storage is bounded by history length rather than by the number of passes. An
+interrupted deletion leaves only unreferenced objects, which the next completed
+pass removes. Collection never runs while an operation is pending, blocked or
+failed. A Home Assistant backup pauses it until the backup finishes, so a
+backup's deletions cannot outrun the root it saved; an unload stops it, and a
+reloaded entry's writes wait for any sweep still running. The monthly source
+index selects operation dependencies while preserving corrections, tombstones
+and supersession outside the newest window.
 The 2,048-chunk and 512 MiB limits apply to the selected operation bundle.
 Internal catalog scans validate complete acquisition metadata before selecting
 whole overlapping originals; unrelated retained declarations do not consume the
@@ -400,9 +415,10 @@ durably invalidates its predecessor token. A cold reader checks that record even
 if Home Assistant has not yet saved the updated entry marker. The in-memory hold
 starts before the write; cancellation and replacement workers wait for the same
 write and readback. A hold survives a crash only after its invalidation record
-is durably verified. A failed write does not prove that persistence. Retain these
-records with the consistent recovery set; changing the marker or restoring only
-an older root cannot remove a verified hold.
+is durably verified. A failed write does not prove that persistence. Collection
+never deletes these records; retain them with the consistent recovery set.
+Changing the marker or restoring only an older root cannot remove a verified
+hold.
 
 ## Consumer display semantics
 

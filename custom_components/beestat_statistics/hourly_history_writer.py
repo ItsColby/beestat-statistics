@@ -34,6 +34,7 @@ from .hourly_history_contract import (
 from .hourly_history_legacy import async_read_legacy_days
 from .hourly_history_values import build_history_series
 from .hourly_import import (
+    HISTORY_FENCE_PREFIX,
     MARKER,
     HourlyImportError,
     HourlyReconciliationError,
@@ -437,6 +438,58 @@ class HistoryWriter:
         ):
             raise HourlyImportError("history_object_write_unverified")
         return cast(str, reference)
+
+    async def collect(self, context: dict[str, Any]) -> int:
+        """Delete proof/operation generations unreachable from the verified root.
+
+        Runs only at rest: a completed operation with no intent, whose durable
+        root equals the adopted cache. Sources, manifests and fences are kept.
+        """
+        state = await self.root(context)
+        if (
+            state is None
+            or state["version"] != 3
+            or state["phase"] != "hourly"
+            or state.get("pending")
+            or state["operation"]["status"] != "completed"
+            or self.manager._state is None
+            or digest(self.manager._state) != digest(state)
+        ):
+            return 0
+        history = state["history"]
+        manifest = await self.read_object(
+            "operation", state["operation"]["object"], context
+        )
+        if digest(manifest) != state["operation"]["plan_digest"]:
+            raise HourlyImportError("history_operation_object_invalid")
+        operation = {
+            state["operation"]["object"],
+            *(batch["object"] for batch in manifest["batches"]),
+            *manifest.get("source_catalog", {}).values(),
+            *history.get("source_catalog", {}).values(),
+            *history.get("invalidation_fences", ()),
+            *(
+                reference
+                for months in history.get("source_holds", {}).values()
+                for reference in months.values()
+            ),
+        }
+        proof = {
+            reference
+            for selected in history["selections"].values()
+            for reference in selected["proofs"].values()
+        }
+        for reference in operation | proof:
+            require_digest(reference)
+        if digest(await self.root(context)) != digest(state):
+            raise HourlyImportError("history_root_changed_before_collection")
+        removed = await self.manager._store.async_collect_objects(
+            {"operation": operation, "proof": proof},
+            retained_prefix=HISTORY_FENCE_PREFIX,
+            closed=lambda: self.manager._closed,
+        )
+        await self.guard(context)
+        return cast(int, removed)
 
     def binding(self, context: dict[str, Any]) -> dict[str, Any]:
         return {

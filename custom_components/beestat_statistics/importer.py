@@ -330,6 +330,8 @@ class BeestatStatisticsImporter:
                 async with self._lock:
                     context = self._history_context()
                     result = await self.hourly.async_advance_history(context=context)
+                    if result.get("status") == "completed":
+                        await self._async_collect_hourly_objects()
                     self._notify_history_changed()
                 if result.get("status") in {"blocked", "completed"}:
                     break
@@ -401,9 +403,25 @@ class BeestatStatisticsImporter:
         finally:
             self._ensure_history_worker()
             self._notify_history_changed()
-        return (
-            "history_operation_blocked" if result.get("status") == "blocked" else None
-        )
+        if result.get("status") == "blocked":
+            return "history_operation_blocked"
+        await self._async_collect_hourly_objects()
+        return None
+
+    async def _async_collect_hourly_objects(self) -> None:
+        """Reclaim superseded history objects; the caller holds the entry lock."""
+        try:
+            removed = await self.hourly.async_collect_history_objects(
+                context=self._history_context()
+            )
+        except (OSError, ValueError) as err:
+            # Unreferenced objects are inert; the next completed pass retries.
+            _LOGGER.warning(
+                "History object collection skipped (%s)", exception_fingerprint(err)
+            )
+            return
+        if removed:
+            _LOGGER.debug("Removed %s superseded history objects", removed)
 
     async def async_get_raw_points(self, request: RawPointRequest) -> dict[str, Any]:
         """Run a bounded source read under the loaded entry's task lifecycle."""
