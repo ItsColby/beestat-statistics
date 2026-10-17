@@ -289,6 +289,13 @@ def _changed_window(
     return window
 
 
+def _sealed(batch: dict[str, Any]) -> dict[str, Any]:
+    """Return a batch's stored form, naming its proof object by digest."""
+    sealed = {key: value for key, value in batch.items() if key != "proof"}
+    sealed["proof_object"] = digest(batch["proof"])
+    return sealed
+
+
 def _nearest(edges: dict[str, list[str]], predecessors: set[str]) -> list[str]:
     """Drop predecessors already reachable through another listed one."""
     reached: set[str] = set()
@@ -1484,7 +1491,7 @@ class HistoryWriter:
             ),
             "batches": [
                 {
-                    "object": digest(batch),
+                    "object": digest(_sealed(batch)),
                     **{
                         key: batch[key]
                         for key in (
@@ -1695,8 +1702,13 @@ class HistoryWriter:
         context: dict[str, Any],
     ) -> str:
         for batch, summary in zip(batches, manifest["batches"], strict=True):
+            sealed = _sealed(batch)
+            # The proof precedes the batch that names it, so a sealed batch
+            # never references a missing proof.
             if (
-                await self.write_object("operation", batch, context)
+                await self.write_object("proof", batch["proof"], context)
+                != sealed["proof_object"]
+                or await self.write_object("operation", sealed, context)
                 != summary["object"]
             ):
                 raise HourlyImportError("history_batch_changed")
@@ -2013,7 +2025,7 @@ class HistoryWriter:
             if self.compare(batch, snapshot):
                 raise HourlyReconciliationError("history_native_readback_incomplete")
         # An empty assessed batch creates only proof, never phantom metadata.
-        reference = await self.write_object("proof", batch["proof"], context)
+        reference = await self.batch_proof(batch, context)
         after = deepcopy(self.manager._state)
         selected = after["history"]["selections"][batch["quantity_id"]]
         selected["proofs"][batch["month"]] = reference
@@ -2032,6 +2044,16 @@ class HistoryWriter:
         await self.manager._save(after)
         await self.guard(context)
         return status(self.manager._state)
+
+    async def batch_proof(self, batch: dict[str, Any], context: dict[str, Any]) -> str:
+        """Return the retained proof a verified batch publishes."""
+        if "proof" in batch:
+            # Batches sealed by earlier releases embed their proof.
+            return await self.write_object("proof", batch["proof"], context)
+        reference = require_digest(batch["proof_object"])
+        # Hash-verified readback keeps the root from naming a missing proof.
+        await self.read_object("proof", reference, context)
+        return reference
 
     def configuration(self, context: dict[str, Any]) -> dict[str, Any]:
         state = self.manager._state or {}
