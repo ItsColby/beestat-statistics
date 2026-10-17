@@ -74,21 +74,21 @@ async def test_native_commit_has_mean_only_row_and_verified_checkpoint(
     await runtime.entry._async_process_on_unload(hass)
 
 
-async def test_native_effect_with_failed_proof_save_restarts_without_resubmission(
+async def test_native_effect_with_failed_proof_readback_restarts_without_resubmission(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
     runtime, apply = await _accepted(
         hass, hass_admin_user, freezer, monkeypatch, tmp_path
     )
-    original_write = runtime.store.async_write_object
+    original_read = runtime.store.async_read_object
 
-    async def fail_proof(kind, content):
+    async def fail_proof(kind, reference):
         if kind == "proof":
-            raise OSError("proof persistence interrupted")
-        return await original_write(kind, content)
+            raise OSError("proof readback interrupted")
+        return await original_read(kind, reference)
 
-    monkeypatch.setattr(runtime.store, "async_write_object", fail_proof)
-    with pytest.raises(OSError, match="proof persistence"):
+    monkeypatch.setattr(runtime.store, "async_read_object", fail_proof)
+    with pytest.raises(OSError, match="proof readback"):
         await runtime.importer.hourly.async_advance_history(
             context=runtime.importer._history_context()
         )
@@ -98,7 +98,7 @@ async def test_native_effect_with_failed_proof_save_restarts_without_resubmissio
     assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
         0
     ].mean == pytest.approx(25)
-    monkeypatch.setattr(runtime.store, "async_write_object", original_write)
+    monkeypatch.setattr(runtime.store, "async_read_object", original_read)
     recovered = HourlyImportManager(
         hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
     )

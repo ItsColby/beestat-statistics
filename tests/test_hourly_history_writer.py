@@ -33,6 +33,7 @@ class Store(LegacyStore):
         super().__init__()
         self.objects = {}
         self.fail_object_kind = None
+        self.fail_read_kind = None
 
     async def async_write_object(self, kind, content):
         if kind == self.fail_object_kind:
@@ -42,6 +43,8 @@ class Store(LegacyStore):
         return reference
 
     async def async_read_object(self, kind, reference):
+        if kind == self.fail_read_kind:
+            raise OSError("object readback failed")
         try:
             return self.objects[kind, reference]
         except KeyError as err:
@@ -353,11 +356,11 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_third_native_state_holds_without_replacing_intent(self):
         _, apply = await self.accept()
-        self.store.fail_object_kind = "proof"
+        self.store.fail_read_kind = "proof"
         with self.assertRaises(OSError):
             await self.writer.async_advance_history(context=self.context)
         pending = deepcopy(self.store.value["pending"])
-        self.store.fail_object_kind = None
+        self.store.fail_read_kind = None
         self.recorder.rows[NATIVE][START] = manager.HourlyStatisticRow(START, mean=99)
         before = len(self.recorder.submissions)
         await self.writer.async_accept_history(apply, context=self.context)
@@ -410,7 +413,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_query_is_readonly_and_pending_suppresses_exact_window(self):
         await self.accept()
-        self.store.fail_object_kind = "proof"
+        self.store.fail_read_kind = "proof"
         with self.assertRaises(OSError):
             await self.writer.async_advance_history(context=self.context)
         before = (self.store.calls, len(self.recorder.submissions))
@@ -813,6 +816,28 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             (self.store.value, self.entry.data, len(self.recorder.submissions)), before
         )
 
+    async def test_failed_seal_leaves_the_root_and_recorder_untouched(self):
+        plan = await self.writer.async_plan_history(
+            await self.request(), context=self.context
+        )
+        apply = {**plan["request"], "plan_digest": plan["plan_digest"]}
+        before = deepcopy(self.store.value)
+        # A batch names a proof only once it is written; an orphan proof is inert.
+        for kind in ("proof", "operation"):
+            self.store.fail_object_kind = kind
+            with self.assertRaises(OSError):
+                await self.writer.async_accept_history(apply, context=self.context)
+            self.assertEqual(self.store.value, before)
+            self.assertFalse(
+                [key for key in self.store.objects if key[0] == "operation"]
+            )
+        self.assertTrue([key for key in self.store.objects if key[0] == "proof"])
+        self.assertEqual(self.recorder.submissions, [])
+        self.store.fail_object_kind = None
+        await self.writer.async_accept_history(apply, context=self.context)
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+
     async def test_baseline_is_window_bounded_and_empty_refresh_has_no_effect(self):
         await self.accept()
         await self.complete()
@@ -1101,7 +1126,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         await self.accept()
-        self.store.fail_object_kind = "proof"
+        self.store.fail_read_kind = "proof"
         with self.assertRaises(OSError):
             await self.writer.async_advance_history(context=self.context)
         current = identity()
