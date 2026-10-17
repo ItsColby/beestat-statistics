@@ -29,9 +29,6 @@ from tests.test_hourly_recorder_ha import (
     _started_recorder,  # noqa: F401 - native SQLite fixture
 )
 
-pytestmark = pytest.mark.asyncio
-
-
 NATIVE = "beestat:zone_a_fan_runtime_rate_hourly_v3"
 
 

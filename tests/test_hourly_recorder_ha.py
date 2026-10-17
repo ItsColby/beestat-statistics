@@ -46,9 +46,6 @@ from custom_components.beestat_statistics.hourly_statistics import (
 )
 from tests.hourly_support import hourly_metadata
 
-pytestmark = pytest.mark.asyncio
-
-
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 16, tzinfo=UTC)  # New York noon.
 DAY_START = START - 12 * HOUR

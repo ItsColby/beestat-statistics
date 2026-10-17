@@ -42,8 +42,6 @@ from tests.test_hourly_history_service_ha import (
     _stage,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 async def _finish(runtime):
     async with runtime.importer._lock:

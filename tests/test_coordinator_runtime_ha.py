@@ -23,8 +23,6 @@ from custom_components.beestat_statistics.tracking import (
     _async_track_room_temperature_sources,
 )
 
-pytestmark = pytest.mark.asyncio
-
 
 def _coordinator(hass: HomeAssistant):
     entry = MockConfigEntry(

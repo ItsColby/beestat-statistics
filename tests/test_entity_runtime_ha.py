@@ -63,7 +63,6 @@ from custom_components.beestat_statistics.tracking import (
     _async_track_room_temperature_sources,
 )
 
-pytestmark = pytest.mark.asyncio
 _LOGGER = logging.getLogger(__name__)
 
 

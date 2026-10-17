@@ -41,10 +41,7 @@ from custom_components.beestat_statistics.const import (
     MIN_SCAN_INTERVAL_SECONDS,
 )
 
-pytestmark = [
-    pytest.mark.asyncio,
-    pytest.mark.usefixtures("recorder_mock"),
-]
+pytestmark = pytest.mark.usefixtures("recorder_mock")
 
 
 @pytest.mark.parametrize(
