@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
 
 CONTRACT_VERSION = 3
 METHOD_VERSION = "five_minute_complete_hour_v3"
@@ -33,9 +33,7 @@ SERVICE_PLAN_HOURLY_HISTORY = "plan_hourly_history"
 SERVICE_APPLY_HOURLY_HISTORY = "apply_hourly_history"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 
-type QuantityKind = Literal["runtime", "degree_days", "measurement"]
 type SourceKind = Literal["provider", "archive"]
-type HistoryPeriod = Literal["hour", "day"]
 
 
 class SourceManifest(TypedDict):
@@ -66,136 +64,6 @@ class SourceManifest(TypedDict):
     acquired_at: str
     source_end: str
     unit_contract: Literal["beestat_points_v1"]
-
-
-class HistoryIdentity(TypedDict):
-    entry_id: str
-    api_base: str
-    account_anchors: list[str]
-
-
-class HistoryRepresentation(TypedDict):
-    kind: Literal["arithmetic_mean"]
-    native_field: Literal["mean"]
-    unit_of_measurement: str
-    unit_class: str | None
-    logical_multiplier: float
-    v2_statistic_id: str
-
-
-class QuantityDescriptor(TypedDict):
-    """Stable physical identity and exact representation/legacy mapping."""
-
-    quantity_id: str
-    thermostat_id: int
-    sensor_id: int | None
-    quantity: str
-    kind: QuantityKind
-    logical_unit: str
-    method_version: str
-    statistic_id: str
-    legacy_statistic_ids: list[str]
-    representation: HistoryRepresentation
-    admission: Literal["eligible", "blocked"]
-    writer_status: Literal["unselected", "reserved", "adopted"]
-    blocked_reason: NotRequired[str]
-
-
-type CoverageReason = Literal[
-    "ready",
-    "partial",
-    "legacy_day",
-    "missing",
-    "invalid",
-    "provisional",
-    "pending",
-    "conflict",
-    "unassessed",
-    "unverified_native",
-    "blocked",
-]
-
-
-class HistoryOperation(TypedDict):
-    status: Literal["unselected", "accepted", "in_progress", "completed", "blocked"]
-    root_revision: int
-    has_pending: bool
-    contract_version: NotRequired[int]
-    operation_id: NotRequired[str]
-    plan_digest: NotRequired[str]
-    cursor: NotRequired[int]
-    batch_count: NotRequired[int]
-    verified_batches: NotRequired[int]
-    remaining_batches: NotRequired[int]
-    error: NotRequired[str | None]
-
-
-class HistoryBucket(TypedDict):
-    """One half-open bucket; absent evidence is null, never fabricated zero."""
-
-    start: str
-    end: str
-    value: float | None
-    min: float | None
-    max: float | None
-    reason: CoverageReason
-    failure_reason: str | None
-    valid_slots: int
-    expected_slots: int
-    verified_hours: int
-    expected_hours: int
-    closed_hours: int
-    observed_amount: float | None
-    complete_total: float | None
-    source_basis: Literal["points", "legacy_daily", "unavailable"]
-    method_basis: str
-    confidence: list[str]
-    source_ids: list[str]
-    eligible_intervals: list[list[str]]
-    calendar_start: NotRequired[str]
-    calendar_end: NotRequired[str]
-    calendar_hours: NotRequired[int]
-    point_observed_amount: NotRequired[float | None]
-    observed_intervals: NotRequired[list[list[str]]]
-    coverage_reasons: NotRequired[dict[str, int]]
-    legacy_reason: NotRequired[
-        Literal["legacy_calendar_mismatch", "legacy_day_not_eligible"]
-    ]
-
-
-class HistorySummary(TypedDict):
-    """Whole-query summary per quantity; repeated page copies MUST NOT be added."""
-
-    scope: Literal["query"]
-    start: str
-    end: str
-    verified_hours: int
-    expected_hours: int
-    closed_hours: int
-    eligible_hours: int
-    eligible_buckets: int
-    legacy_days: int
-    coverage_reasons: dict[str, int]
-    observed_amount: NotRequired[float | None]
-    complete_total: NotRequired[float | None]
-    eligible_amount: NotRequired[float | None]
-    observed_mean: NotRequired[float | None]
-    observed_min: NotRequired[float | None]
-    observed_max: NotRequired[float | None]
-    summary_basis: NotRequired[Literal["verified_point_hours"]]
-
-
-class HistoryPagination(TypedDict):
-    offset: int
-    next_offset: int | None
-    has_more: bool
-    total_buckets: int
-
-
-class HistorySeriesResponse(TypedDict):
-    descriptor: QuantityDescriptor
-    buckets: list[HistoryBucket]
-    summary: HistorySummary
 
 
 def canonical_json(value: Any) -> bytes:
