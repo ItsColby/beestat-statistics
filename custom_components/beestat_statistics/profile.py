@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .config_rows import finite_float_or_none
+from .config_rows import finite_float_or_none, optional_bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +53,7 @@ def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
         profiles[ref] = ScheduleProfile(
             ref=ref,
             name=_text_or_none(climate.get("name")) or ref,
-            is_occupied=_bool_or_none(climate.get("isOccupied")),
+            is_occupied=optional_bool(climate.get("isOccupied")),
             sensors=tuple(
                 sensor.name for sensor in sensor_references if sensor.name is not None
             ),
@@ -61,7 +61,7 @@ def schedule_profiles_by_ref(program: Any) -> dict[str, ScheduleProfile]:
             cool_temperature=finite_float_or_none(climate.get("coolTemp")),
             heat_fan=_enum_or_none(climate.get("heatFan"), {"auto", "on"}),
             cool_fan=_enum_or_none(climate.get("coolFan"), {"auto", "on"}),
-            is_optimized=_bool_or_none(climate.get("isOptimized")),
+            is_optimized=optional_bool(climate.get("isOptimized")),
             vent=_enum_or_none(climate.get("vent"), {"auto", "on", "off"}),
             ventilator_min_on_time=_nonnegative_int_or_none(
                 climate.get("ventilatorMinOnTime")
@@ -131,19 +131,6 @@ def _nonnegative_int_or_none(value: Any) -> int | None:
     if isinstance(value, float) and value != parsed:
         return None
     return parsed if parsed >= 0 else None
-
-
-def _bool_or_none(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        if value.lower() in {"true", "1", "yes", "on"}:
-            return True
-        if value.lower() in {"false", "0", "no", "off"}:
-            return False
-    if value in (0, 1):
-        return bool(value)
-    return None
 
 
 def _enum_or_none(value: Any, allowed: set[str]) -> str | None:

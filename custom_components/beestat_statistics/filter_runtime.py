@@ -9,6 +9,8 @@ from math import ceil, floor, fsum, isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .config_rows import as_bool
+
 _STEP = 300
 
 
@@ -144,16 +146,8 @@ def _summary_days(rows: Iterable[Mapping[str, Any]]) -> dict[date, Mapping[str, 
             continue
         effective[day] = row
     return {
-        day: row for day, row in effective.items() if not _deleted(row.get("deleted"))
+        day: row for day, row in effective.items() if not as_bool(row.get("deleted"))
     }
-
-
-def _deleted(value: Any) -> bool:
-    return (
-        value.lower() in {"true", "1", "yes", "on"}
-        if isinstance(value, str)
-        else bool(value)
-    )
 
 
 def _point_rows(rows: Iterable[Mapping[str, Any]]) -> dict[datetime, float | None]:
@@ -164,7 +158,7 @@ def _point_rows(rows: Iterable[Mapping[str, Any]]) -> dict[datetime, float | Non
             continue
         effective[timestamp] = (
             None
-            if _deleted(row.get("deleted"))
+            if as_bool(row.get("deleted"))
             else finite_nonnegative(row.get("fan"), _STEP)
         )
     return effective

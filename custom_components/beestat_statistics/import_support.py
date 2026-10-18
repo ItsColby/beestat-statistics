@@ -25,12 +25,8 @@ from .config_rows import finite_float_or_none, positive_resource_id, row_resourc
 from .const import (
     API_BASE,
     CONF_API_BASE,
-    DETAILED_RUNTIME_FIELDS,
     MAX_WINDOW_DAYS,
-    RUNTIME_FIELD_GROUPS,
-    SUMMARY_MEAN_STATISTICS,
-    SUMMARY_SUM_STATISTICS,
-    THERMOSTAT_POINT_STATISTICS,
+    THERMOSTAT_QUANTITIES,
 )
 from .coordinator import BeestatRuntimeData
 from .filter_runtime import parse_source_datetime
@@ -323,13 +319,6 @@ def _point_window(
 
 
 def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, Any]]:
-    quantities = {
-        *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
-        *(f"{key}_runtime_hours" for key, _label, _field in DETAILED_RUNTIME_FIELDS),
-        *(spec.statistic_suffix for spec in SUMMARY_MEAN_STATISTICS),
-        *(spec.statistic_suffix for spec in SUMMARY_SUM_STATISTICS),
-        *(spec.statistic_suffix for spec in THERMOSTAT_POINT_STATISTICS),
-    }
     candidates = [
         (
             f"beestat:{thermostat.slug}_{quantity}_hourly_v2",
@@ -340,7 +329,7 @@ def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, An
             },
         )
         for thermostat in config.thermostats
-        for quantity in quantities
+        for quantity in THERMOSTAT_QUANTITIES
     ]
     sensors = {sensor.sensor_id: sensor for sensor in config.sensors}
     candidates.extend(

@@ -58,6 +58,85 @@ TO_REDACT = {
 }
 
 
+_COORDINATOR_FIELDS = (
+    "last_error",
+    "last_error_at",
+    "last_import_success_at",
+    "last_imported_series",
+    "last_imported_rows",
+    "last_import_source_rows",
+    "last_import_partial",
+    "last_import_skipped_windows",
+    "last_import_skipped_runtime_thermostat_windows",
+    "last_import_skipped_runtime_sensor_windows",
+    "last_import_skipped_window_examples",
+    "last_import_summary_mode",
+    "last_import_summary_window_start",
+    "last_import_summary_window_end",
+    "last_import_summary_overlap_days",
+    "last_import_summary_fallback_reason",
+    "last_import_cumulative_seed_count",
+    "last_import_writers",
+    "last_filter_alert_dismiss_attempt_at",
+    "last_filter_alert_dismiss_thermostat_id",
+    "last_filter_alert_dismiss_matched",
+    "last_filter_alert_dismissed",
+    "last_filter_alert_dismiss_error",
+    "last_filter_boundary_reconcile_attempt_at",
+    "last_filter_boundary_reconciled_count",
+    "last_filter_boundary_pending_count",
+    "last_filter_boundary_reconcile_error",
+)
+_ISO_FIELDS = frozenset(
+    {
+        "last_error_at",
+        "last_import_success_at",
+        "last_filter_alert_dismiss_attempt_at",
+        "last_filter_boundary_reconcile_attempt_at",
+    }
+)
+_TEXT_FIELDS = frozenset(
+    {
+        "last_error",
+        "last_filter_alert_dismiss_error",
+        "last_filter_boundary_reconcile_error",
+    }
+)
+
+
+def _coordinator_diagnostics(
+    runtime: BeestatStatisticsRuntime | None,
+    redaction_values: tuple[str, ...],
+) -> dict[str, Any]:
+    """Return coordinator status fields, or their defaults when not loaded."""
+
+    if runtime is None:
+        return {
+            "status": "not_loaded",
+            **dict.fromkeys(_COORDINATOR_FIELDS),
+            "last_import_skipped_window_examples": [],
+        }
+    coordinator = runtime.coordinator
+    result: dict[str, Any] = {"status": coordinator.status}
+    for name in _COORDINATOR_FIELDS:
+        value = getattr(coordinator, name)
+        if name in _ISO_FIELDS:
+            value = _isoformat(value)
+        elif name in _TEXT_FIELDS:
+            value = _redacted_text(value, redaction_values)
+        elif name == "last_import_skipped_window_examples":
+            value = list(value)
+        elif name == "last_import_writers" and value is not None:
+            value = {
+                key: _redacted_text(item, redaction_values)
+                if isinstance(item, str)
+                else item
+                for key, item in value.items()
+            }
+        result[name] = value
+    return result
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
     entry: BeestatStatisticsConfigEntry,
@@ -69,141 +148,7 @@ async def async_get_config_entry_diagnostics(
     redaction_values = _redaction_values(entry.data)
     diagnostics = {
         "entry": _entry_diagnostics(entry),
-        "coordinator": {
-            "status": runtime.coordinator.status if runtime else "not_loaded",
-            "last_error": _redacted_text(
-                runtime.coordinator.last_error, redaction_values
-            )
-            if runtime
-            else None,
-            "last_error_at": _isoformat(runtime.coordinator.last_error_at)
-            if runtime
-            else None,
-            "last_import_success_at": _isoformat(
-                runtime.coordinator.last_import_success_at
-            )
-            if runtime
-            else None,
-            "last_imported_series": runtime.coordinator.last_imported_series
-            if runtime
-            else None,
-            "last_imported_rows": runtime.coordinator.last_imported_rows
-            if runtime
-            else None,
-            "last_import_source_rows": runtime.coordinator.last_import_source_rows
-            if runtime
-            else None,
-            "last_import_partial": runtime.coordinator.last_import_partial
-            if runtime
-            else None,
-            "last_import_skipped_windows": (
-                runtime.coordinator.last_import_skipped_windows
-            )
-            if runtime
-            else None,
-            "last_import_skipped_runtime_thermostat_windows": (
-                runtime.coordinator.last_import_skipped_runtime_thermostat_windows
-            )
-            if runtime
-            else None,
-            "last_import_skipped_runtime_sensor_windows": (
-                runtime.coordinator.last_import_skipped_runtime_sensor_windows
-            )
-            if runtime
-            else None,
-            "last_import_skipped_window_examples": list(
-                runtime.coordinator.last_import_skipped_window_examples
-            )
-            if runtime
-            else [],
-            "last_import_summary_mode": runtime.coordinator.last_import_summary_mode
-            if runtime
-            else None,
-            "last_import_summary_window_start": (
-                runtime.coordinator.last_import_summary_window_start
-            )
-            if runtime
-            else None,
-            "last_import_summary_window_end": (
-                runtime.coordinator.last_import_summary_window_end
-            )
-            if runtime
-            else None,
-            "last_import_summary_overlap_days": (
-                runtime.coordinator.last_import_summary_overlap_days
-            )
-            if runtime
-            else None,
-            "last_import_summary_fallback_reason": (
-                runtime.coordinator.last_import_summary_fallback_reason
-            )
-            if runtime
-            else None,
-            "last_import_cumulative_seed_count": (
-                runtime.coordinator.last_import_cumulative_seed_count
-            )
-            if runtime
-            else None,
-            "last_import_writers": {
-                key: _redacted_text(value, redaction_values)
-                if isinstance(value, str)
-                else value
-                for key, value in runtime.coordinator.last_import_writers.items()
-            }
-            if runtime and runtime.coordinator.last_import_writers is not None
-            else None,
-            "last_filter_alert_dismiss_attempt_at": _isoformat(
-                runtime.coordinator.last_filter_alert_dismiss_attempt_at
-            )
-            if runtime
-            else None,
-            "last_filter_alert_dismiss_thermostat_id": (
-                runtime.coordinator.last_filter_alert_dismiss_thermostat_id
-            )
-            if runtime
-            else None,
-            "last_filter_alert_dismiss_matched": (
-                runtime.coordinator.last_filter_alert_dismiss_matched
-            )
-            if runtime
-            else None,
-            "last_filter_alert_dismissed": (
-                runtime.coordinator.last_filter_alert_dismissed
-            )
-            if runtime
-            else None,
-            "last_filter_alert_dismiss_error": (
-                _redacted_text(
-                    runtime.coordinator.last_filter_alert_dismiss_error,
-                    redaction_values,
-                )
-            )
-            if runtime
-            else None,
-            "last_filter_boundary_reconcile_attempt_at": _isoformat(
-                runtime.coordinator.last_filter_boundary_reconcile_attempt_at
-            )
-            if runtime
-            else None,
-            "last_filter_boundary_reconciled_count": (
-                runtime.coordinator.last_filter_boundary_reconciled_count
-            )
-            if runtime
-            else None,
-            "last_filter_boundary_pending_count": (
-                runtime.coordinator.last_filter_boundary_pending_count
-            )
-            if runtime
-            else None,
-            "last_filter_boundary_reconcile_error": (
-                _redacted_text(
-                    runtime.coordinator.last_filter_boundary_reconcile_error,
-                    redaction_values,
-                )
-            )
-            if runtime
-            else None,
-        },
+        "coordinator": _coordinator_diagnostics(runtime, redaction_values),
         "beestat_data": {
             "fetched_at": _isoformat(data.fetched_at) if data else None,
             "sync_success_at": _isoformat(data.sync_success_at) if data else None,

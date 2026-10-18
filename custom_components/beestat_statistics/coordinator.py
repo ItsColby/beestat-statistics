@@ -35,7 +35,13 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
-from .config_rows import as_bool, finite_float_or_none, row_resource_id, string_or_none
+from .config_rows import (
+    as_bool,
+    finite_float_or_none,
+    optional_bool,
+    row_resource_id,
+    string_or_none,
+)
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -113,7 +119,6 @@ class ThermostatMetadata:
     next_scheduled_at: datetime | None
     schedule_profiles: tuple[ScheduleProfile, ...]
     active_sensor_count: int | None
-    active_sensor_names: tuple[str, ...]
     current_profile_sensor_names: tuple[str, ...]
     active_alert_count: int
     active_alerts: tuple[dict[str, Any], ...]
@@ -1331,7 +1336,7 @@ def _build_sensor_metadata(
             name=string_or_none(row.get("name")),
             identifier=string_or_none(row.get("identifier")),
             sensor_type=string_or_none(row.get("type")),
-            in_use=_optional_bool(row.get("in_use")),
+            in_use=optional_bool(row.get("in_use")),
             inactive=as_bool(row.get("inactive")),
             deleted=as_bool(row.get("deleted")),
         )
@@ -1357,17 +1362,10 @@ def _build_thermostat_metadata(
             and not item.inactive
             and not item.deleted
         )
-        active_sensors = tuple(
-            sorted(
-                item.name or str(item.sensor_id)
-                for item in eligible_sensors
-                if item.in_use is True
-            )
-        )
         active_sensor_count = (
             None
             if any(item.in_use is None for item in eligible_sensors)
-            else len(active_sensors)
+            else sum(item.in_use is True for item in eligible_sensors)
         )
         profiles_by_ref = schedule_profiles_by_ref(row.get("program"))
         current_ref, current_name, current_profile_sensors = _current_profile(
@@ -1393,7 +1391,6 @@ def _build_thermostat_metadata(
             next_scheduled_at=schedule["next_at"],
             schedule_profiles=schedule["profiles"],
             active_sensor_count=active_sensor_count,
-            active_sensor_names=active_sensors,
             current_profile_sensor_names=tuple(
                 sensor.name or "Unnamed sensor" for sensor in current_profile_sensors
             ),
@@ -1529,18 +1526,12 @@ def _temperature_state_value(
     if value is None:
         return None
     destination = target_unit or source_unit
-    converted = _convert_temperature(value, source_unit, destination)
+    converted = TemperatureConverter.convert(value, source_unit, destination)
     return (
         (converted, destination)
         if converted is not None and isfinite(converted)
         else None
     )
-
-
-def _convert_temperature(value: float, source: str, target: str) -> float | None:
-    if source == target:
-        return value
-    return TemperatureConverter.convert(value, source, target)
 
 
 def _canonical_temperature_unit(value: Any) -> str | None:
@@ -1887,19 +1878,3 @@ def _effective_summary_rows(
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
-
-
-def _optional_bool(value: Any) -> bool | None:
-    """Return an explicit source boolean without manufacturing false."""
-
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int) and value in (0, 1):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "off"}:
-            return False
-    return None

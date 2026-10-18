@@ -1286,7 +1286,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )[1]
 
         self.assertEqual(metadata.active_sensor_count, 1)
-        self.assertEqual(metadata.active_sensor_names, ("Room Sensor B",))
         self.assertEqual(metadata.data_lag_minutes, 60)
         self.assertEqual(metadata.active_alert_count, 1)
         self.assertEqual(metadata.active_alerts[0]["code"], "filter")
@@ -1325,7 +1324,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertIsNone(sensor_metadata[10].in_use)
         self.assertFalse(sensor_metadata[11].in_use)
         self.assertIsNone(metadata.active_sensor_count)
-        self.assertEqual((), metadata.active_sensor_names)
 
         empty_snapshot = self.coordinator._build_thermostat_metadata(
             ({"id": 1},),
@@ -1335,7 +1333,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
             (thermostat,),
         )[1]
         self.assertEqual(0, empty_snapshot.active_sensor_count)
-        self.assertEqual((), empty_snapshot.active_sensor_names)
 
     def test_filter_alert_guids_selects_active_filter_alerts_only(self) -> None:
         row = {

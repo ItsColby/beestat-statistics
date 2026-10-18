@@ -20,6 +20,7 @@ from .hourly_history_contract import (
     DAILY_POLICY,
     MAX_BUCKETS,
     MAX_QUANTITIES,
+    METADATA_FIELDS,
     METHOD_VERSION,
     bounds,
     digest,
@@ -28,14 +29,6 @@ from .hourly_history_contract import (
 
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
-_METADATA_FIELDS = (
-    "statistic_id",
-    "source",
-    "unit_of_measurement",
-    "unit_class",
-    "mean_type",
-    "has_sum",
-)
 _REASONS = {
     "missing_slots": "missing",
     "invalid_slots": "invalid",
@@ -343,7 +336,7 @@ def _metadata_agrees(descriptor: Mapping[str, Any], expected: Any, native: Any) 
         field in expected
         and field in native
         and _same_scalar(expected[field], native[field])
-        for field in _METADATA_FIELDS
+        for field in METADATA_FIELDS
     )
 
 

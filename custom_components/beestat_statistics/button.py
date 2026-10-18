@@ -25,7 +25,11 @@ from .entity import (
     thermostat_suggested_object_id,
 )
 from .entry_options import async_mark_filter_changed
-from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+from .runtime import (
+    BeestatStatisticsConfigEntry,
+    BeestatStatisticsRuntime,
+    beestat_error_boundary,
+)
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceInfo
@@ -185,34 +189,12 @@ class BeestatFilterChangedButton(
     async def async_press(self) -> None:
         """Mark the filter changed and reset runtime at the current boundary."""
 
-        try:
+        with beestat_error_boundary(self.coordinator, "filter-change button failure"):
             await async_mark_filter_changed(
                 self.coordinator,
                 self._thermostat_id,
                 dt_util.now(),
             )
-        except BeestatAuthError:
-            self.coordinator.beestat_config_entry.async_start_reauth_if_available(
-                self.coordinator.hass
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_auth_failed",
-            ) from None
-        except BeestatApiError:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
-            _LOGGER.error(
-                "Unexpected filter-change button failure (%s)",
-                exception_fingerprint(err),
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
 
     @property
     def available(self) -> bool:

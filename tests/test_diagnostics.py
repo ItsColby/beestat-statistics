@@ -48,6 +48,39 @@ class DiagnosticsTest(unittest.TestCase):
         )
         self.assertEqual(result["coordinator"]["status"], "not_loaded")
         self.assertEqual(
+            set(result["coordinator"]),
+            {
+                "status",
+                "last_error",
+                "last_error_at",
+                "last_import_success_at",
+                "last_imported_series",
+                "last_imported_rows",
+                "last_import_source_rows",
+                "last_import_partial",
+                "last_import_skipped_windows",
+                "last_import_skipped_runtime_thermostat_windows",
+                "last_import_skipped_runtime_sensor_windows",
+                "last_import_skipped_window_examples",
+                "last_import_summary_mode",
+                "last_import_summary_window_start",
+                "last_import_summary_window_end",
+                "last_import_summary_overlap_days",
+                "last_import_summary_fallback_reason",
+                "last_import_cumulative_seed_count",
+                "last_import_writers",
+                "last_filter_alert_dismiss_attempt_at",
+                "last_filter_alert_dismiss_thermostat_id",
+                "last_filter_alert_dismiss_matched",
+                "last_filter_alert_dismissed",
+                "last_filter_alert_dismiss_error",
+                "last_filter_boundary_reconcile_attempt_at",
+                "last_filter_boundary_reconciled_count",
+                "last_filter_boundary_pending_count",
+                "last_filter_boundary_reconcile_error",
+            },
+        )
+        self.assertEqual(
             result["entry"]["timing"],
             {"point_lookback_days": None, "scan_interval_seconds": None},
         )
@@ -113,7 +146,6 @@ class DiagnosticsTest(unittest.TestCase):
             next_scheduled_at=datetime(2026, 7, 5, 22, 30, tzinfo=UTC),
             schedule_profiles=(),
             active_sensor_count=1,
-            active_sensor_names=("Room Sensor A",),
             current_profile_sensor_names=("Room Sensor A",),
             active_alert_count=0,
             active_alerts=(),

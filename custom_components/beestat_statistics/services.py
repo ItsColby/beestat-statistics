@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Any, cast
+from typing import Any
 
 import probatio
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -18,7 +19,7 @@ from homeassistant.core import (
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
-from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
+from .api import BeestatAuthError, exception_fingerprint
 from .config_rows import positive_resource_id
 from .configuration import configuration_response
 from .const import (
@@ -69,6 +70,7 @@ from .importer import BeestatStatisticsImporter
 from .raw_points import parse_raw_point_request
 from .runtime import (
     BeestatStatisticsRuntime,
+    beestat_error_boundary,
     entry_point_lookback_days,
     entry_scan_interval_seconds,
 )
@@ -225,6 +227,33 @@ def _first_runtime(hass: HomeAssistant) -> BeestatStatisticsRuntime | None:
     return None
 
 
+def _has_data(runtime: BeestatStatisticsRuntime) -> bool:
+    return runtime.coordinator.data is not None
+
+
+def _loaded_entry(
+    hass: HomeAssistant,
+    entry_id: str,
+    *,
+    ready: Callable[[BeestatStatisticsRuntime], bool],
+) -> tuple[ConfigEntry, BeestatStatisticsRuntime]:
+    """Return a loaded entry and its runtime once ready accepts the runtime."""
+
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if (
+        entry is None
+        or entry.domain != DOMAIN
+        or entry.state is not ConfigEntryState.LOADED
+        or (runtime := getattr(entry, "runtime_data", None)) is None
+        or not ready(runtime)
+    ):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_loaded_entry",
+        )
+    return entry, runtime
+
+
 async def _async_handle_import_service(hass: HomeAssistant, call: ServiceCall) -> None:
     """Import Beestat statistics on demand."""
 
@@ -234,34 +263,16 @@ async def _async_handle_import_service(hass: HomeAssistant, call: ServiceCall) -
             translation_domain=DOMAIN,
             translation_key="no_loaded_entry",
         )
-    try:
+    with beestat_error_boundary(
+        runtime.coordinator,
+        "Beestat statistics import service failure",
+        record_error=True,
+        generic_key="statistics_import_failed",
+    ):
         await runtime.importer.async_import_statistics(
             point_lookback_days=call.data.get(CONF_POINT_LOOKBACK_DAYS),
             skip_sync=call.data[ATTR_SKIP_SYNC],
         )
-    except BeestatAuthError as err:
-        runtime.coordinator.async_record_import_error(err)
-        runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="beestat_auth_failed",
-        ) from None
-    except BeestatApiError as err:
-        runtime.coordinator.async_record_import_error(err)
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="beestat_request_failed",
-        ) from None
-    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
-        runtime.coordinator.async_record_import_error(err)
-        _LOGGER.error(
-            "Unexpected Beestat statistics import service failure (%s)",
-            exception_fingerprint(err),
-        )
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="statistics_import_failed",
-        ) from None
 
 
 async def _async_handle_get_configuration(
@@ -269,18 +280,9 @@ async def _async_handle_get_configuration(
 ) -> ServiceResponse:
     """Return the effective configuration for one loaded entry."""
 
-    entry = hass.config_entries.async_get_entry(call.data[ATTR_CONFIG_ENTRY_ID])
-    if (
-        entry is None
-        or entry.domain != DOMAIN
-        or entry.state is not ConfigEntryState.LOADED
-        or (runtime := getattr(entry, "runtime_data", None)) is None
-        or runtime.coordinator.data is None
-    ):
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="no_loaded_entry",
-        )
+    entry, runtime = _loaded_entry(
+        hass, call.data[ATTR_CONFIG_ENTRY_ID], ready=_has_data
+    )
     data = runtime.coordinator.data
     return configuration_response(
         entry_id=entry.entry_id,
@@ -321,18 +323,12 @@ async def _async_handle_get_configuration(
 def _loaded_hourly_importer(
     hass: HomeAssistant, entry_id: str
 ) -> BeestatStatisticsImporter:
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if (
-        entry is None
-        or entry.domain != DOMAIN
-        or entry.state is not ConfigEntryState.LOADED
-        or (runtime := getattr(entry, "runtime_data", None)) is None
-        or getattr(runtime, "importer", None) is None
-    ):
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="no_loaded_entry"
-        )
-    return cast(BeestatStatisticsImporter, runtime.importer)
+    _entry, runtime = _loaded_entry(
+        hass,
+        entry_id,
+        ready=lambda runtime: getattr(runtime, "importer", None) is not None,
+    )
+    return runtime.importer
 
 
 async def _async_handle_hourly_service(
@@ -355,19 +351,23 @@ async def _async_handle_hourly_service(
         ) from None
 
 
-async def _async_handle_history_service(
-    hass: HomeAssistant, call: ServiceCall
-) -> ServiceResponse:
-    """Keep evidence admission and history effects behind an active admin."""
+async def _admin_required(hass: HomeAssistant, call: ServiceCall, key: str) -> None:
+    """Allow only an active administrator, with a translated refusal."""
+
     user = (
         await hass.auth.async_get_user(call.context.user_id)
         if call.context.user_id is not None
         else None
     )
     if user is None or not user.is_active or not user.is_admin:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="hourly_history_admin_required"
-        )
+        raise ServiceValidationError(translation_domain=DOMAIN, translation_key=key)
+
+
+async def _async_handle_history_service(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    """Keep evidence admission and history effects behind an active admin."""
+    await _admin_required(hass, call, "hourly_history_admin_required")
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
     try:
         request = dict(call.data)
@@ -390,15 +390,7 @@ async def _async_handle_raw_points_service(
 ) -> ServiceResponse:
     """Export only a bounded fixed resource read for an active admin caller."""
 
-    user = (
-        await hass.auth.async_get_user(call.context.user_id)
-        if call.context.user_id is not None
-        else None
-    )
-    if user is None or not user.is_active or not user.is_admin:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN, translation_key="raw_points_admin_required"
-        )
+    await _admin_required(hass, call, "raw_points_admin_required")
     importer = _loaded_hourly_importer(hass, call.data[ATTR_CONFIG_ENTRY_ID])
     try:
         request = parse_raw_point_request(
@@ -438,41 +430,25 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
             translation_key="invalid_rebuild_date_range",
         )
     try:
-        await runtime.importer.async_import_statistics(
-            skip_sync=call.data[ATTR_SKIP_SYNC],
-            force_full_summary=True,
-            rebuild_start=start_date,
-            rebuild_end=end_date,
-            thermostat_id=call.data.get(CONF_THERMOSTAT_ID),
-        )
+        with beestat_error_boundary(
+            runtime.coordinator,
+            "Beestat statistics rebuild service failure",
+            record_error=True,
+            generic_key="statistics_import_failed",
+            passthrough=(UnknownThermostatError,),
+        ):
+            await runtime.importer.async_import_statistics(
+                skip_sync=call.data[ATTR_SKIP_SYNC],
+                force_full_summary=True,
+                rebuild_start=start_date,
+                rebuild_end=end_date,
+                thermostat_id=call.data.get(CONF_THERMOSTAT_ID),
+            )
     except UnknownThermostatError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="unknown_thermostat_id",
             translation_placeholders={"thermostat_id": str(err.thermostat_id)},
-        ) from None
-    except BeestatAuthError as err:
-        runtime.coordinator.async_record_import_error(err)
-        runtime.coordinator.beestat_config_entry.async_start_reauth_if_available(hass)
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="beestat_auth_failed",
-        ) from None
-    except BeestatApiError as err:
-        runtime.coordinator.async_record_import_error(err)
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="beestat_request_failed",
-        ) from None
-    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
-        runtime.coordinator.async_record_import_error(err)
-        _LOGGER.error(
-            "Unexpected Beestat statistics rebuild service failure (%s)",
-            exception_fingerprint(err),
-        )
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="statistics_import_failed",
         ) from None
 
 
@@ -575,18 +551,7 @@ async def _async_handle_record_filter_change(
 def _loaded_filter_coordinator(
     hass: HomeAssistant, entry_id: str, thermostat_id: int
 ) -> BeestatRuntimeDataCoordinator:
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if (
-        entry is None
-        or entry.domain != DOMAIN
-        or entry.state is not ConfigEntryState.LOADED
-        or (runtime := getattr(entry, "runtime_data", None)) is None
-        or runtime.coordinator.data is None
-    ):
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="no_loaded_entry",
-        )
+    _entry, runtime = _loaded_entry(hass, entry_id, ready=_has_data)
     if not any(
         item.thermostat_id == thermostat_id
         for item in runtime.coordinator.data.config.thermostats
@@ -596,4 +561,4 @@ def _loaded_filter_coordinator(
             translation_key="unknown_thermostat_id",
             translation_placeholders={"thermostat_id": str(thermostat_id)},
         )
-    return cast(BeestatRuntimeDataCoordinator, runtime.coordinator)
+    return runtime.coordinator

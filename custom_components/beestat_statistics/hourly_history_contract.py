@@ -32,6 +32,14 @@ SERVICE_STAGE_HOURLY_SOURCE = "stage_hourly_source"
 SERVICE_PLAN_HOURLY_HISTORY = "plan_hourly_history"
 SERVICE_APPLY_HOURLY_HISTORY = "apply_hourly_history"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+METADATA_FIELDS = (
+    "statistic_id",
+    "source",
+    "unit_of_measurement",
+    "unit_class",
+    "mean_type",
+    "has_sum",
+)
 
 type SourceKind = Literal["provider", "archive"]
 

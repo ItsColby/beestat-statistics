@@ -15,13 +15,8 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
-from .const import (
-    DETAILED_RUNTIME_FIELDS,
-    RUNTIME_FIELD_GROUPS,
-    SUMMARY_MEAN_STATISTICS,
-    SUMMARY_SUM_STATISTICS,
-    THERMOSTAT_POINT_STATISTICS,
-)
+from .const import THERMOSTAT_QUANTITIES
+from .hourly_history_contract import METADATA_FIELDS, canonical_json, digest
 from .hourly_rows import (
     HourlyStatisticRow,
 )
@@ -31,14 +26,6 @@ if TYPE_CHECKING:
 
 MARKER = "hourly_import_contract"
 _HOUR = timedelta(hours=1)
-_FIELDS = (
-    "statistic_id",
-    "source",
-    "unit_of_measurement",
-    "unit_class",
-    "mean_type",
-    "has_sum",
-)
 _SAVES = "beestat_hourly_storage_tasks"
 
 
@@ -53,15 +40,6 @@ HISTORY_FENCE_PREFIX = (
     .removesuffix(b'""}')
 )
 _SUCCESSOR = "_hourly_v2"
-_THERMOSTAT_QUANTITIES = frozenset(
-    (
-        *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
-        *(f"{key}_runtime_hours" for key, _label, _field in DETAILED_RUNTIME_FIELDS),
-        *(spec.statistic_suffix for spec in SUMMARY_MEAN_STATISTICS),
-        *(spec.statistic_suffix for spec in SUMMARY_SUM_STATISTICS),
-        *(spec.statistic_suffix for spec in THERMOSTAT_POINT_STATISTICS),
-    )
-)
 _SENSOR_QUANTITIES = frozenset(
     {
         "temperature",
@@ -104,14 +82,6 @@ def _iso(value: datetime) -> str:
     return _time(value).isoformat()
 
 
-def _digest(value: Any) -> str:
-    return sha256(
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode()
-    ).hexdigest()
-
-
 def _row(row: HourlyStatisticRow | None) -> dict[str, Any] | None:
     return None if row is None else {**asdict(row), "start": _iso(row.start)}
 
@@ -121,7 +91,11 @@ def _native(row: dict[str, Any]) -> HourlyStatisticRow:
 
 
 def _metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    return None if metadata is None else {key: metadata.get(key) for key in _FIELDS}
+    return (
+        None
+        if metadata is None
+        else {key: metadata.get(key) for key in METADATA_FIELDS}
+    )
 
 
 def _resource(value: dict[str, Any]) -> tuple[Any, ...]:
@@ -142,7 +116,7 @@ def _validate_resource(
         or (sensor_id is not None and (type(sensor_id) is not int or sensor_id <= 0))
         or not isinstance(quantity, str)
         or quantity
-        not in (_THERMOSTAT_QUANTITIES if sensor_id is None else _SENSOR_QUANTITIES)
+        not in (THERMOSTAT_QUANTITIES if sensor_id is None else _SENSOR_QUANTITIES)
     ):
         raise ValueError("Invalid source resource")
     return thermostat_id, sensor_id, quantity
@@ -330,7 +304,7 @@ class HourlyImportManager:
                 raise HourlyImportError("history_invalidation_fence_unverified")
         fence = _history_fence(state["token"])
         try:
-            raw = await self._store.async_read_object("operation", _digest(fence))
+            raw = await self._store.async_read_object("operation", digest(fence))
         except FileNotFoundError:
             self._admit()
             # Absence was observed before this await completed. A save or fence
@@ -348,7 +322,7 @@ class HourlyImportManager:
             raise HourlyImportError("history_invalidation_fence_unreadable") from err
         self._admit()
         self._invalidated_history_token = state["token"]
-        if sha256(raw).hexdigest() != _digest(fence):
+        if sha256(raw).hexdigest() != digest(fence):
             raise HourlyImportError("history_invalidation_fence_corrupt")
         raise HourlyImportError("history_root_invalidated")
 
@@ -358,10 +332,8 @@ class HourlyImportManager:
         if self.has_pending_store_save():
             raise HourlyImportError("history_store_write_pending")
         fence = _history_fence(token)
-        raw = json.dumps(
-            fence, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode()
-        expected = _digest(fence)
+        raw = canonical_json(fence)
+        expected = digest(fence)
         self._invalidated_history_token = token
         task = self._hass.async_create_task(self._persist_history_fence(raw, expected))
         task._beestat_history_fence = token
@@ -437,7 +409,7 @@ class HourlyImportManager:
         self._admit()
         state = deepcopy(value)
         state.pop("integrity", None)
-        state["integrity"] = _digest(state)
+        state["integrity"] = digest(state)
         self._validate(state)
         # A new intent must suppress before yielding. Completion, including
         # removal of that suppression, is visible only after verified persistence.

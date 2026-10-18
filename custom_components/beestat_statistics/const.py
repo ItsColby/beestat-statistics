@@ -261,3 +261,13 @@ SUMMARY_SUM_STATISTICS: tuple[SummarySumStatistic, ...] = (
         None,
     ),
 )
+
+THERMOSTAT_QUANTITIES = frozenset(
+    (
+        *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
+        *(f"{key}_runtime_hours" for key, _label, _field in DETAILED_RUNTIME_FIELDS),
+        *(spec.statistic_suffix for spec in SUMMARY_MEAN_STATISTICS),
+        *(spec.statistic_suffix for spec in SUMMARY_SUM_STATISTICS),
+        *(spec.statistic_suffix for spec in THERMOSTAT_POINT_STATISTICS),
+    )
+)

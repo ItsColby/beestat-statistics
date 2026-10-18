@@ -70,6 +70,23 @@ def as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def optional_bool(value: Any) -> bool | None:
+    """Return an explicit source boolean without manufacturing false."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+        return None
+    if value in (0, 1):
+        return bool(value)
+    return None
+
+
 def safe_scalar(value: Any) -> str | int | float | bool | None:
     if isinstance(value, bool):
         return value

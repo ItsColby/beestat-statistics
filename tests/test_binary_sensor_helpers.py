@@ -102,7 +102,6 @@ class BinarySensorHelpersTest(unittest.TestCase):
                     next_scheduled_at=None,
                     schedule_profiles=(),
                     active_sensor_count=1,
-                    active_sensor_names=("Room Sensor C",),
                     current_profile_sensor_names=("Room Sensor C",),
                     active_alert_count=1,
                     active_alerts=(

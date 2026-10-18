@@ -9,7 +9,6 @@ serialization and drains surviving save tasks before replacing the writer.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shutil
@@ -26,6 +25,8 @@ from typing import Any
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util.json import load_json
+
+from .hourly_history_contract import canonical_json
 
 _VERSION = 1
 _MINOR_VERSION = 1
@@ -390,9 +391,5 @@ class HourlyStore:
         stored = self._read_data()
         # JSON comparison distinguishes booleans from integers and integers from
         # floats; ordinary Python nested equality does not prove exact content.
-        if stored is None or json.dumps(
-            stored, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ) != json.dumps(
-            expected, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ):
+        if stored is None or canonical_json(stored) != canonical_json(expected):
             raise HourlyStorageError("hourly_store_write_unverified")

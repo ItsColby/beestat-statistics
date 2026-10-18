@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from homeassistant.core import Event
 from homeassistant.helpers import entity_registry as er
 
 from .config_rows import effective_override_items
@@ -227,6 +228,16 @@ def _nonempty_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def event_entity_ids(event: Event[Any]) -> set[str]:
+    """Return the current and previous entity ids of a registry update event."""
+
+    return {
+        str(value)
+        for key in ("entity_id", "old_entity_id")
+        if (value := event.data.get(key)) is not None
+    }
 
 
 def entity_registry_event_matches_references(

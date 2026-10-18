@@ -20,6 +20,7 @@ from hashlib import sha256
 from itertools import pairwise
 from typing import Any, Protocol
 
+from .config_rows import as_bool
 from .hourly_history_contract import (
     CONTRACT_VERSION,
     MAX_BUNDLE_BYTES,
@@ -869,15 +870,6 @@ def _hour(stamp: datetime) -> str:
     return stamp.replace(minute=0, second=0, microsecond=0).isoformat()
 
 
-def _deleted(row: Mapping[str, Any]) -> bool:
-    value = row.get("deleted")
-    return (
-        value.lower() in {"true", "1", "yes", "on"}
-        if isinstance(value, str)
-        else bool(value)
-    )
-
-
 def _ordered_points(sources: list[dict[str, Any]]) -> dict[str, Any]:
     manifests = [source["manifest"] for source in sources]
     first = manifests[0]
@@ -947,7 +939,7 @@ def _resolve_slot(
         current = chosen[0]
         # An explicit authoritative deletion/invalid correction is preserved;
         # an older archive must never fill its slot by falling back.
-        if not _deleted(current["row"]) and any(
+        if not as_bool(current["row"].get("deleted")) and any(
             _observation(item["row"]) != _observation(current["row"])
             for item in archives
         ):
@@ -1267,7 +1259,7 @@ def source_redundancy(
                 continue
             winners = _provider_winners(provider, predecessors)
             if not winners or (
-                not _deleted(winners[0]["row"])
+                not as_bool(winners[0]["row"].get("deleted"))
                 and any(
                     _observation(item["row"]) != _observation(winners[0]["row"])
                     for item in candidates

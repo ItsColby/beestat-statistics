@@ -22,6 +22,7 @@ from .coordinator import BeestatRuntimeData, BeestatRuntimeDataCoordinator
 from .entity_reference import (
     configured_entity_references,
     entity_registry_event_matches_references,
+    event_entity_ids,
 )
 from .issues import _async_update_mapping_device_conflicts_issue
 from .migrations import _async_migrate_homekit_device_assignments
@@ -228,11 +229,7 @@ def _async_track_source_device_relinks(
 
     @callback
     def handle_entity_registry_update(event: Event[Any]) -> None:
-        changed_entity_ids = {
-            str(value)
-            for key in ("entity_id", "old_entity_id")
-            if (value := event.data.get(key)) is not None
-        }
+        changed_entity_ids = event_entity_ids(event)
         if any(
             is_thermostat_identity_source(entity_registry.async_get(entity_id))
             for entity_id in changed_entity_ids
