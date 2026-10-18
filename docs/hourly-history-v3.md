@@ -111,8 +111,10 @@ view, but cannot silently substitute guessed/native-only values.
 
 The authoritative response structures are `HistoryIdentity`,
 `HistoryRepresentation`, `QuantityDescriptor`, `HistoryOperation`, `HistoryBucket`,
-`HistorySummary`, `HistoryPagination`, `HistorySeriesResponse`, and
-`HistoryResponse` in [the public contract](../custom_components/beestat_statistics/hourly_history_contract.py).
+`HistorySummary`, `HistoryPagination` and `HistorySeriesResponse` in
+[the public contract](../custom_components/beestat_statistics/hourly_history_contract.py);
+the top-level response is built by
+[`history_response`](../custom_components/beestat_statistics/hourly_history_query.py).
 `NotRequired` keys are absent when inapplicable; nullable keys are present with
 JSON null. Timestamps are offset-qualified ISO strings; counters/revisions are
 integers; numeric observations are finite numbers. No numeric string or boolean

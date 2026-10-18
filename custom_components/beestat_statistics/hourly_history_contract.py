@@ -198,28 +198,6 @@ class HistorySeriesResponse(TypedDict):
     summary: HistorySummary
 
 
-class HistoryResponse(TypedDict):
-    contract_version: Literal[3]
-    identity: HistoryIdentity
-    config_revision: str
-    root_revision: int
-    source_revision: str | None
-    coverage_revision: int
-    method_version: str
-    daily_policy: Literal["complete_points_else_legacy_day"]
-    period: HistoryPeriod
-    start: str
-    end: str
-    evaluated_at: str
-    timezone: str
-    timezone_revision: int
-    native_verification: Literal["bounded_readback"]
-    operation: HistoryOperation
-    view_token: str
-    pagination: HistoryPagination
-    series: list[HistorySeriesResponse]
-
-
 def canonical_json(value: Any) -> bytes:
     """Encode finite JSON values as compact, key-sorted UTF-8 bytes."""
     return json.dumps(
