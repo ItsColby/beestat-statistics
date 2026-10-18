@@ -371,10 +371,37 @@ async def test_repeated_changed_and_unchanged_passes_keep_storage_bounded(
     )
     assert (await _logical_hour(runtime))["value"] == 0.25
     # The import pass resolves the marker and loads the root before refreshing.
-    await runtime.importer.hourly.async_mode()
+    await runtime.importer.hourly._load()
     freezer.move_to(END + timedelta(hours=4, minutes=59))
     _horizon(runtime, END + timedelta(hours=4, minutes=55))
     await _accepted_pass(runtime, monkeypatch, rows=_rows(5))
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_same_horizon_corrections_retire_deltas_and_recover_after_restart(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    freezer.move_to(END + timedelta(hours=1, minutes=1))
+    _horizon(runtime, END + timedelta(minutes=55))
+    generations = []
+    for fan in (90, 120, 150):
+        rows = [{**row, "fan": fan} for row in _rows(1)]
+        root = await _routine(runtime, monkeypatch, rows, days=1)
+        assert root["operation"]["status"] == "completed"
+        generations.append(set(_objects(runtime)))
+        # One staged original and the latest correction delta suffice.
+        assert _by_kind(generations[-1])["manifest"] == 2
+        bucket = await _logical_hour(runtime, start=END, end=END + timedelta(hours=1))
+        assert bucket["reason"] == "ready"
+        assert bucket["value"] == pytest.approx(fan / 300)
+    assert generations[0] - generations[-1]
+    runtime.importer.hourly = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    await runtime.importer.hourly._load()
+    bucket = await _logical_hour(runtime, start=END, end=END + timedelta(hours=1))
+    assert (bucket["reason"], bucket["value"]) == ("ready", 0.5)
     await runtime.entry._async_process_on_unload(hass)
 
 
@@ -559,7 +586,7 @@ async def test_saved_intent_of_either_form_resumes(
     runtime.importer.hourly = HourlyImportManager(
         hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
     )
-    await runtime.importer.hourly.async_mode()
+    await runtime.importer.hourly._load()
     await _finish(runtime)
     assert (await _logical_hour(runtime))["value"] == 0.25
     await runtime.entry._async_process_on_unload(hass)
@@ -639,7 +666,7 @@ async def test_batches_that_embed_their_proof_still_replay(
     runtime.importer.hourly = HourlyImportManager(
         hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
     )
-    await runtime.importer.hourly.async_mode()
+    await runtime.importer.hourly._load()
     await _finish(runtime)
     assert _proofs(await runtime.store.async_load()) == expected
     assert {f"proof/{reference}" for reference in expected.values()} <= set(
@@ -671,7 +698,7 @@ async def test_proofs_from_earlier_releases_are_reproved_once(
     runtime.importer.hourly = HourlyImportManager(
         hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
     )
-    await runtime.importer.hourly.async_mode()
+    await runtime.importer.hourly._load()
     assert (await _logical_hour(runtime))["value"] == 0.25
     freezer.move_to(END + timedelta(hours=1, minutes=59))
     _horizon(runtime, END + timedelta(hours=1, minutes=55))

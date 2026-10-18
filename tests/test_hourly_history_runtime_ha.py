@@ -29,8 +29,11 @@ from custom_components.beestat_statistics.hourly_history_runtime import (
     async_refresh_history,
 )
 from custom_components.beestat_statistics.hourly_history_writer import sealed
-from custom_components.beestat_statistics.hourly_import import HourlyImportError
-from custom_components.beestat_statistics.hourly_import_plan import RecorderSnapshot
+from custom_components.beestat_statistics.hourly_import import (
+    HourlyImportError,
+    HourlyImportManager,
+)
+from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.test_hourly_history_service_ha import (
     END,
     NOW,
@@ -679,3 +682,68 @@ async def test_detached_serialization_cannot_publish_after_context_or_task_ends(
     assert runtime.write.call_count == writes
     if interruption != "unload":
         await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_cold_adoption_keeps_unmapped_unselected_sensor_on_daily_writer(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    data = runtime.coordinator.data
+    runtime.coordinator.data = replace(
+        data,
+        config=replace(
+            data.config,
+            sensors=(
+                *data.config.sensors,
+                ConfiguredSensor(
+                    11, "unmapped", "Unmapped", None, None, True, False, False, False
+                ),
+            ),
+        ),
+        sensor_rows=(*data.sensor_rows, {"id": 11}),
+    )
+    runtime.importer.hourly = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    runtime.client.async_read_runtime_thermostat = AsyncMock(
+        side_effect=lambda *_args, raw_response=False, **_kwargs: (
+            _response(json.loads(_content()))
+            if raw_response
+            else json.loads(_content())
+        )
+    )
+    runtime.coordinator.async_refresh_runtime = AsyncMock(
+        side_effect=lambda **_: runtime.coordinator.data
+    )
+    runtime.client.async_read_runtime_sensor = AsyncMock(
+        return_value=[
+            {"sensor_id": 11, "timestamp": START.isoformat(), "temperature": 72},
+        ]
+    )
+    monkeypatch.setattr(
+        runtime.importer,
+        "_async_existing_detailed_statistic_ids",
+        AsyncMock(return_value=frozenset()),
+    )
+    writes = Mock()
+    monkeypatch.setattr(
+        "custom_components.beestat_statistics.importer.async_add_external_statistics",
+        writes,
+    )
+    result = await runtime.importer.async_import_statistics(
+        skip_sync=True, force_full_summary=True
+    )
+    assert result.hourly_blocked_reason is None
+    assert "beestat:unmapped_temperature" in {
+        call.args[1]["statistic_id"] for call in writes.call_args_list
+    }
+    assert "beestat:zone_a_fan_runtime_hours" not in {
+        call.args[1]["statistic_id"] for call in writes.call_args_list
+    }
+    context = runtime.importer._history_context()
+    assert all(item["sensor_id"] != 11 for item in context["descriptors"])
+    assert any(item["quantity_id"] == QUANTITY for item in context["descriptors"])
+    configuration = runtime.importer.history_configuration()
+    assert all(item["sensor_id"] != 11 for item in configuration["quantities"])
+    assert (await _logical_hour(runtime))["value"] == 0.25
+    await runtime.entry._async_process_on_unload(hass)

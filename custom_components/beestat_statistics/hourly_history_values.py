@@ -16,7 +16,7 @@ from math import isfinite
 from typing import Any
 
 from .const import STATISTIC_MEAN_TYPE_ARITHMETIC, STATISTIC_SOURCE
-from .hourly_history_contract import METHOD_VERSION, quantity_id
+from .hourly_history_contract import METHOD_VERSION, quantity_id, unmapped_sensor
 from .hourly_statistics import HourlyBucket, HourlySeries
 
 _V2_SUFFIX = "_hourly_v2"
@@ -79,6 +79,8 @@ def build_history_series(
         resource = resources.get(item.statistic_id)
         if not isinstance(resource, Mapping):
             raise TypeError("history_quantity_identity_missing")
+        if _daily_only(item, resource, parents, aliases):
+            continue
         physical_id = quantity_id(resource)
         if physical_id in used:
             raise ValueError("history_quantity_identity_ambiguous")
@@ -118,6 +120,21 @@ def build_history_series(
             )
         )
     return tuple(result)
+
+
+def _daily_only(
+    item: HourlySeries,
+    resource: Mapping[str, Any],
+    parents: dict[int, int],
+    aliases: Mapping[str, str],
+) -> bool:
+    if not unmapped_sensor(resource):
+        return False
+    # Saved ownership cannot be erased by unbinding or reusing its alias.
+    _check_parent(resource, parents)
+    if item.statistic_id.removesuffix(_V2_SUFFIX) in aliases:
+        raise ValueError("history_legacy_identity_collision")
+    return True
 
 
 def _check_parent(resource: Mapping[str, Any], parents: dict[int, int]) -> None:

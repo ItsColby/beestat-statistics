@@ -939,6 +939,92 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         slot = after["resources"]["runtime_sensor:10"]["slots"][row()["timestamp"]]
         self.assertEqual(slot["source_ids"], [middle["source_id"]])
 
+    async def test_same_horizon_correction_retires_its_superseded_delta(self):
+        early = await self.routine("early", [row(temperature=70)])
+        latest = await self.routine("latest", [row(temperature=73)])
+        relation = {"runtime_sensor:10": {"latest": ["early"]}}
+        loaded, result = await self.redundancy(
+            [early, latest], supersedes=relation["runtime_sensor:10"]
+        )
+        self.assertEqual(result["source_ids"], [early["source_id"]])
+        kept = [
+            item for item in loaded if item["source_id"] not in result["source_ids"]
+        ]
+        self.assertEqual(
+            sources.source_resolution(
+                sources.merge_source_bundle(loaded, provider_supersedes=relation),
+                loaded,
+            ),
+            sources.source_resolution(sources.merge_source_bundle(kept), kept),
+        )
+        # Selection is independent of supplied bundle order.
+        _loaded, reversed_result = await self.redundancy(
+            [latest, early], supersedes=relation["runtime_sensor:10"]
+        )
+        self.assertEqual(reversed_result, result)
+
+    async def test_same_horizon_retirement_keeps_distinct_resource_observations(self):
+        current = identity()
+        current["resources"]["second-sensor"] = {"thermostat_id": 1, "sensor_id": 11}
+        with patch(__name__ + ".identity", return_value=current):
+            early = await self.routine("early", [row(temperature=70)])
+            latest = await self.routine("latest", [row(temperature=73)])
+            other = self.delta()
+            other["resource"]["resource_id"] = 11
+            other["acquisition"]["acquisition_id"] = "other"
+            other["acquisition"]["original_chunks"][0]["manifest"].update(
+                resource_id=11, acquisition_id="other"
+            )
+            other["rows"] = [row(sensor_id=11, temperature=68)]
+            receipt = await self.stage(
+                other, manifest(resource_id=11, acquisition_id="other")
+            )
+            loaded, result = await self.redundancy(
+                [early, latest, receipt], supersedes={"latest": ["early"]}
+            )
+        self.assertEqual(result["source_ids"], [early["source_id"]])
+        kept = [
+            item for item in loaded if item["source_id"] not in result["source_ids"]
+        ]
+        self.assertEqual(
+            sources.source_resolution(
+                sources.merge_source_bundle(
+                    loaded,
+                    provider_supersedes={"runtime_sensor:10": {"latest": ["early"]}},
+                ),
+                loaded,
+            ),
+            sources.source_resolution(sources.merge_source_bundle(kept), kept),
+        )
+
+    async def test_horizon_only_acquisitions_keep_one_witness_per_thermostat(self):
+        receipts = [await self.routine(name, []) for name in ("a", "b", "c", "d")]
+        loaded, _result = await self.redundancy(receipts, supersedes={})
+        for item in loaded[2:]:
+            item["manifest"]["thermostat_id"] = 2
+        options = {
+            "provider_order": None,
+            "provider_supersedes": None,
+            "window": (
+                datetime(2026, 9, 1, tzinfo=UTC),
+                datetime(2026, 9, 2, tzinfo=UTC),
+            ),
+            "protected": set(),
+        }
+        result = sources.source_redundancy(loaded, **options)
+        kept = [
+            item for item in loaded if item["source_id"] not in result["source_ids"]
+        ]
+        self.assertEqual(len(kept), 2)
+        self.assertEqual({item["manifest"]["thermostat_id"] for item in kept}, {1, 2})
+        self.assertEqual(
+            sources.source_redundancy(list(reversed(loaded)), **options), result
+        )
+        self.assertEqual(
+            sources.source_resolution(sources.merge_source_bundle(loaded), loaded),
+            sources.source_resolution(sources.merge_source_bundle(kept), kept),
+        )
+
     async def test_redundancy_keeps_every_acquisition_the_merge_still_depends_on(
         self,
     ):

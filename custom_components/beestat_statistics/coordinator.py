@@ -1733,19 +1733,33 @@ def _next_schedule_transition(
     local_now: datetime,
     current_ref: str | None,
 ) -> tuple[str | None, datetime | None]:
-    candidate_utc = local_now.astimezone(UTC).replace(second=0, microsecond=0)
-    candidate_utc += timedelta(minutes=1)
-    for _offset in range(8 * 24 * 60):
-        candidate_local = candidate_utc.astimezone(local_now.tzinfo)
-        if candidate_local.minute in (0, 30):
-            candidate_ref = _schedule_ref(
-                schedule,
-                _ecobee_day_index(candidate_local),
-                candidate_local.hour * 2 + (candidate_local.minute // 30),
+    now_utc = local_now.astimezone(UTC)
+    first = local_now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    # Construct local boundaries, then round-trip both folds through UTC. This
+    # skips nonexistent spring slots and retains both actual fall-back instants,
+    # including half-hour DST shifts and non-whole-hour UTC offsets.
+    candidates: set[datetime] = set()
+    for offset in range(9 * 48):
+        boundary = first + timedelta(minutes=30 * offset)
+        for fold in (0, 1):
+            instant = boundary.replace(tzinfo=local_now.tzinfo, fold=fold).astimezone(
+                UTC
             )
-            if candidate_ref is not None and candidate_ref != current_ref:
-                return candidate_ref, candidate_local
-        candidate_utc += timedelta(minutes=1)
+            if (
+                now_utc < instant <= now_utc + timedelta(days=8)
+                and instant.astimezone(local_now.tzinfo).replace(tzinfo=None)
+                == boundary
+            ):
+                candidates.add(instant)
+    for candidate_utc in sorted(candidates):
+        candidate_local = candidate_utc.astimezone(local_now.tzinfo)
+        candidate_ref = _schedule_ref(
+            schedule,
+            _ecobee_day_index(candidate_local),
+            candidate_local.hour * 2 + (candidate_local.minute // 30),
+        )
+        if candidate_ref is not None and candidate_ref != current_ref:
+            return candidate_ref, candidate_local
     return None, None
 
 

@@ -8,10 +8,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from custom_components.beestat_statistics import hourly_history_legacy as legacy
-from custom_components.beestat_statistics.hourly_import_plan import (
+from custom_components.beestat_statistics.hourly_rows import (
     HourlyStatisticRow as Row,
 )
-from custom_components.beestat_statistics.hourly_import_plan import (
+from custom_components.beestat_statistics.hourly_rows import (
     RecorderSnapshot as Snapshot,
 )
 

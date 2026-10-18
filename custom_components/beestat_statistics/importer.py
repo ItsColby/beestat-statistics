@@ -49,7 +49,7 @@ from .coordinator import (
     BeestatRuntimeDataCoordinator,
     TemporalContext,
 )
-from .hourly_history_contract import MAX_SOURCE_BYTES
+from .hourly_history_contract import MAX_SOURCE_BYTES, unmapped_sensor
 from .hourly_history_contract import (
     digest as history_digest,
 )
@@ -59,15 +59,12 @@ from .hourly_history_contract import (
 from .hourly_history_query import history_response
 from .hourly_history_runtime import async_refresh_history
 from .hourly_history_values import build_history_series
-from .hourly_import import HourlyImportManager, HourlyReconciliationError
-from .hourly_recorder import HourlyRecorderError
+from .hourly_import import HourlyImportManager
 from .hourly_sources import stage_source
 from .hourly_statistics import build_hourly_statistics
-from .hourly_storage import HourlyStorageError
 from .import_evidence import SkippedWindowEvidence, SkippedWindowResource
 from .import_support import (
     ImportResult,
-    PreparedHourlyImport,
     PreparedImport,
     SummaryImportPlan,
     _combined_import_result,
@@ -78,20 +75,14 @@ from .import_support import (
     _format_beestat_time,
     _format_day,
     _format_start,
-    _hourly_identity,
     _hourly_resource_identities,
-    _hourly_retained_ids,
-    _hourly_utc_hour,
-    _hourly_window,
     _iter_windows,
     _latest_cumulative_starts,
     _latest_summary_day,
     _local_midnight,
-    _observed_hourly_horizons,
     _point_window,
     _sensor_thermostat_map,
     _thermostat_data_end_map,
-    _validate_hourly_window,
     _validate_thermostat_id,
     _writer_identity,
 )
@@ -182,7 +173,8 @@ class BeestatStatisticsImporter:
                 *(
                     base.removesuffix("_hourly_v2")
                     for base, resource in identity["resources"].items()
-                    if history_quantity_id(resource)
+                    if not unmapped_sensor(resource)
+                    and history_quantity_id(resource)
                     in self.hourly.history_quantity_ids()
                 ),
             ),
@@ -521,17 +513,6 @@ class BeestatStatisticsImporter:
             )
             self._ensure_history_worker()
             blocked = partition.hourly_blocked_reason
-            if partition.hourly_ready:
-                try:
-                    await self.hourly.async_reconcile()
-                except (
-                    HourlyReconciliationError,
-                    HourlyRecorderError,
-                    HourlyStorageError,
-                ):
-                    # Only identified hourly persistence/readback failures are
-                    # isolated. Revalidation below must still prove ownership.
-                    blocked = "hourly_reconciliation_unverified"
             lookback_days = point_lookback_days or self._point_lookback_days
             runtime_data = await self._coordinator.async_refresh_runtime(
                 skip_sync=skip_sync,
@@ -542,26 +523,6 @@ class BeestatStatisticsImporter:
                 _writer_identity(self._coordinator.beestat_config_entry, runtime_data)
             )
             blocked = blocked or partition.hourly_blocked_reason
-            hourly_result: ImportResult | None = None
-            if (
-                partition.hourly_ready
-                and partition.hourly_statistic_ids
-                and blocked is None
-            ):
-                try:
-                    hourly_result = await self._async_import_hourly(
-                        runtime_data,
-                        lookback_days=lookback_days,
-                        rebuild_start=rebuild_start,
-                        rebuild_end=rebuild_end,
-                        thermostat_id=thermostat_id,
-                    )
-                except (
-                    HourlyReconciliationError,
-                    HourlyRecorderError,
-                    HourlyStorageError,
-                ):
-                    blocked = "hourly_effect_unverified"
             history_blocked = await self._async_refresh_hourly_history(
                 lookback_days=lookback_days,
                 rebuilding=rebuild_start is not None or rebuild_end is not None,
@@ -589,7 +550,7 @@ class BeestatStatisticsImporter:
                 )
             result = _combined_import_result(
                 legacy_result,
-                hourly_result,
+                None,
                 has_hourly=partition.has_hourly,
                 hourly_blocked_reason=blocked,
             )
@@ -715,253 +676,6 @@ class BeestatStatisticsImporter:
             legacy_imported_series=len(prepared.series),
             legacy_imported_rows=imported_rows,
         )
-
-    async def _async_import_hourly(
-        self,
-        runtime_data: BeestatRuntimeData,
-        *,
-        lookback_days: int,
-        rebuild_start: dt_date | None,
-        rebuild_end: dt_date | None,
-        thermostat_id: int | None,
-    ) -> ImportResult:
-        prepared = await self._async_prepare_hourly(
-            runtime_data,
-            lookback_days=lookback_days,
-            rebuild_start=rebuild_start,
-            rebuild_end=rebuild_end,
-            thermostat_id=thermostat_id,
-        )
-        imported = await self.hourly.async_import(
-            prepared.series,
-            prepared.identity,
-            ordinary_start=prepared.ordinary_start,
-            eligible_resources=prepared.eligible_resources,
-        )
-        status = self.hourly.status()
-        coverage_incomplete = bool(status.get("pending")) or any(
-            record.get("coverage_incomplete", False)
-            for record in status.get("series", {}).values()
-        )
-        skipped = prepared.skipped_windows
-        return ImportResult(
-            imported_series=imported["imported_series"],
-            imported_rows=imported["imported_rows"],
-            source_rows=prepared.source_rows,
-            skipped_windows=skipped.total_count,
-            skipped_runtime_thermostat_windows=skipped.runtime_thermostat_count,
-            skipped_runtime_sensor_windows=skipped.runtime_sensor_count,
-            skipped_window_examples=skipped.examples,
-            latest_start_by_statistic_id=imported["latest_start_by_statistic_id"],
-            summary_mode="hourly",
-            summary_window_start=None,
-            summary_window_end=None,
-            summary_overlap_days=None,
-            summary_fallback_reason=(
-                "hourly_coverage_incomplete" if coverage_incomplete else None
-            ),
-            cumulative_seed_count=0,
-            hourly_imported_series=imported["imported_series"],
-            hourly_imported_rows=imported["imported_rows"],
-            coverage_incomplete=coverage_incomplete,
-        )
-
-    async def _async_prepare_hourly(
-        self,
-        runtime_data: BeestatRuntimeData,
-        *,
-        lookback_days: int,
-        rebuild_start: dt_date | None = None,
-        rebuild_end: dt_date | None = None,
-        thermostat_id: int | None = None,
-        epoch_start: datetime | None = None,
-        statistic_ids: tuple[str, ...] = (),
-    ) -> PreparedHourlyImport:
-        for attempt in range(_IMPORT_TEMPORAL_CONTEXT_ATTEMPTS):
-            context = self._coordinator.capture_temporal_context()
-            start, end, measurement_end = _hourly_window(
-                context,
-                lookback_days=lookback_days,
-                rebuild_start=rebuild_start,
-                rebuild_end=rebuild_end,
-                epoch_start=epoch_start,
-                bootstrap_start=self.hourly.bootstrap_start(
-                    thermostat_id=thermostat_id,
-                    eligible_resources=_hourly_resource_identities(runtime_data.config),
-                ),
-            )
-            skipped = SkippedWindowEvidence()
-            thermostat_rows = await self._async_fetch_thermostat_rows(
-                lookback_days,
-                runtime_data,
-                skipped,
-                thermostat_id=thermostat_id,
-                temporal_context=context,
-                window=(start, end),
-                preserve_source_rows=True,
-            )
-            sensor_rows = await self._async_fetch_sensor_rows(
-                lookback_days,
-                runtime_data,
-                skipped,
-                thermostat_id=thermostat_id,
-                temporal_context=context,
-                window=(start, end),
-                preserve_source_rows=True,
-            )
-            if (
-                self._coordinator.temporal_context_is_current(context)
-                and runtime_data.config == self._coordinator.data.config
-            ):
-                break
-            if attempt + 1 == _IMPORT_TEMPORAL_CONTEXT_ATTEMPTS:
-                raise RuntimeError(
-                    "Home Assistant timezone or configuration changed during hourly preparation"
-                )
-            runtime_data = self._coordinator.data or runtime_data
-        config = runtime_data.config
-        if thermostat_id is not None:
-            config = replace(
-                config,
-                thermostats=tuple(
-                    item
-                    for item in config.thermostats
-                    if item.thermostat_id == thermostat_id
-                ),
-                sensors=tuple(
-                    item
-                    for item in config.sensors
-                    if item.thermostat_id == thermostat_id
-                ),
-            )
-        retained = (*self.hourly.base_statistic_ids(), *statistic_ids)
-        ordinary_start = (
-            end - timedelta(days=lookback_days)
-            if epoch_start is None and rebuild_start is None
-            else None
-        )
-        source_starts = (
-            self.hourly.source_starts(
-                _hourly_resource_identities(config),
-                start=start,
-                end=end,
-                ordinary_start=ordinary_start,
-            )
-            if epoch_start is None
-            else {}
-        )
-        series = build_hourly_statistics(
-            thermostat_rows,
-            sensor_rows,
-            config,
-            start=start,
-            end=end,
-            evaluated_at=context.evaluated_at,
-            source_end_by_thermostat=_observed_hourly_horizons(
-                thermostat_rows,
-                _thermostat_data_end_map(list(runtime_data.thermostat_rows)),
-            ),
-            existing_statistic_ids=_hourly_retained_ids(config, retained),
-            start_by_statistic_id=source_starts,
-            measurement_end=measurement_end,
-        )
-        return PreparedHourlyImport(
-            series,
-            _hourly_identity(
-                self._coordinator.beestat_config_entry,
-                runtime_data,
-                series,
-                selected_thermostat_id=thermostat_id,
-            ),
-            sum(len(rows) for rows in thermostat_rows.values())
-            + sum(len(rows) for rows in sensor_rows.values()),
-            skipped,
-            ordinary_start,
-            _hourly_resource_identities(config),
-        )
-
-    async def async_select_hourly_statistics(
-        self,
-        *,
-        epoch_start: datetime,
-        statistic_ids: tuple[str, ...],
-        expected_revision: int,
-        preview_digest: str | None = None,
-    ) -> dict[str, Any]:
-        if self._unloaded:
-            raise RuntimeError("Beestat Statistics config entry is unloaded")
-        return (
-            await self._coordinator.beestat_config_entry.async_create_background_task(
-                self._hass,
-                self._async_select_hourly_statistics(
-                    epoch_start=epoch_start,
-                    statistic_ids=statistic_ids,
-                    expected_revision=expected_revision,
-                    preview_digest=preview_digest,
-                ),
-                f"{DOMAIN}_select_hourly_statistics",
-            )
-        )
-
-    async def _async_select_hourly_statistics(
-        self,
-        *,
-        epoch_start: datetime,
-        statistic_ids: tuple[str, ...],
-        expected_revision: int,
-        preview_digest: str | None,
-    ) -> dict[str, Any]:
-        async with self._lock:
-            if self._unloaded:
-                raise RuntimeError("Beestat Statistics config entry is unloaded")
-            epoch_start = _hourly_utc_hour(epoch_start)
-            if not statistic_ids or len(set(statistic_ids)) != len(statistic_ids):
-                raise ValueError("Select distinct hourly statistic IDs")
-            await self.hourly.async_reconcile()
-            data = await self._coordinator.async_refresh_runtime(
-                skip_sync=True, summary_window=True
-            )
-            prepared = await self._async_prepare_hourly(
-                data,
-                lookback_days=self._point_lookback_days,
-                epoch_start=epoch_start,
-                statistic_ids=statistic_ids,
-            )
-            return await self.hourly.async_select(
-                prepared.series,
-                prepared.identity,
-                epoch_start=epoch_start,
-                statistic_ids=statistic_ids,
-                expected_revision=expected_revision,
-                preview_digest=preview_digest,
-            )
-
-    async def async_get_hourly_coverage(
-        self,
-        *,
-        start: datetime,
-        end: datetime,
-        statistic_ids: tuple[str, ...] | None = None,
-    ) -> dict[str, Any]:
-        if self._unloaded:
-            raise RuntimeError("Beestat Statistics config entry is unloaded")
-        return (
-            await self._coordinator.beestat_config_entry.async_create_background_task(
-                self._hass,
-                self._async_get_hourly_coverage(start, end, statistic_ids),
-                f"{DOMAIN}_get_hourly_coverage",
-            )
-        )
-
-    async def _async_get_hourly_coverage(
-        self, start: datetime, end: datetime, statistic_ids: tuple[str, ...] | None
-    ) -> dict[str, Any]:
-        if self._unloaded:
-            raise RuntimeError("Beestat Statistics config entry is unloaded")
-        start, end = _hourly_utc_hour(start), _hourly_utc_hour(end)
-        _validate_hourly_window(start, end)
-        # A cached read must expose suppression while a writer awaits Recorder.
-        return self.hourly.coverage(start=start, end=end, statistic_ids=statistic_ids)
 
     async def _async_prepare_import(
         self,
@@ -1235,11 +949,9 @@ class BeestatStatisticsImporter:
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
         temporal_context: TemporalContext,
-        window: tuple[datetime, datetime] | None = None,
-        preserve_source_rows: bool = False,
         allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = window or _point_window(
+        start, end = _point_window(
             lookback_days,
             temporal_context.local_tz,
             start_day,
@@ -1277,10 +989,8 @@ class BeestatStatisticsImporter:
                         skipped_windows,
                     )
                 )
-            rows_by_id[current_thermostat_id] = (
-                rows
-                if preserve_source_rows
-                else _dedupe_rows(rows, id_field="thermostat_id")
+            rows_by_id[current_thermostat_id] = _dedupe_rows(
+                rows, id_field="thermostat_id"
             )
         return rows_by_id
 
@@ -1305,11 +1015,9 @@ class BeestatStatisticsImporter:
         end_day: dt_date | None = None,
         thermostat_id: int | None = None,
         temporal_context: TemporalContext,
-        window: tuple[datetime, datetime] | None = None,
-        preserve_source_rows: bool = False,
         allowed_statistic_ids: frozenset[str] | None = None,
     ) -> dict[int, list[dict[str, Any]]]:
-        start, end = window or _point_window(
+        start, end = _point_window(
             lookback_days,
             temporal_context.local_tz,
             start_day,
@@ -1358,11 +1066,7 @@ class BeestatStatisticsImporter:
                         skipped_windows,
                     )
                 )
-            rows_by_id[sensor_id] = (
-                rows
-                if preserve_source_rows
-                else _dedupe_rows(rows, id_field="sensor_id")
-            )
+            rows_by_id[sensor_id] = _dedupe_rows(rows, id_field="sensor_id")
         return rows_by_id
 
     async def _async_read_runtime_sensor_window(

@@ -30,6 +30,7 @@ from .hourly_history_contract import (
     digest,
     quantity_id,
     require_digest,
+    unmapped_sensor,
     utc,
 )
 from .hourly_history_legacy import async_read_legacy_days
@@ -44,7 +45,6 @@ from .hourly_import import (
     _native,
     _partition_resources,
     _row,
-    _validated_records,
 )
 from .hourly_sources import (
     _row_stamp,
@@ -70,38 +70,6 @@ def sealed(value: dict[str, Any]) -> dict[str, Any]:
     return {**result, "integrity": digest(result)}
 
 
-def legacy_document(state: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Project the old document while retaining exactly one root pending slot."""
-    if state is None or state.get("version") != 3:
-        return state
-    old = deepcopy(state.get("legacy_v2"))
-    if old is not None:
-        old["revision"] = state["revision"]
-        pending = state.get("pending")
-        old["pending"] = (
-            pending["intent"] if pending and pending.get("generation") == 2 else None
-        )
-        old = sealed(old)
-    return old
-
-
-def wrap_legacy_save(root: dict[str, Any], old: dict[str, Any]) -> dict[str, Any]:
-    if root.get("operation", {}).get("status") in {
-        "accepted",
-        "in_progress",
-        "blocked",
-    }:
-        raise HourlyImportError("history_operation_owns_writer")
-    result = deepcopy(root)
-    legacy = deepcopy(old)
-    pending = legacy.get("pending")
-    legacy["pending"] = None
-    result["legacy_v2"] = sealed(legacy)
-    result["pending"] = {"generation": 2, "intent": pending} if pending else None
-    result["revision"] += 1
-    return result
-
-
 def validate_root(manager: Any, state: dict[str, Any]) -> None:
     """Validate references and the sole intent before any root can be adopted."""
     try:
@@ -123,24 +91,17 @@ def validate_root(manager: Any, state: dict[str, Any]) -> None:
             or not identity["account_anchors"]
         ):
             raise ValueError("history_identity_invalid")
-        physical = _validate_history(state["history"])
-        old = legacy_document(state)
-        if old:
-            manager._validate(old)
-            if any(
-                quantity_id(record["resource"]) in physical
-                for record in _validated_records(old).values()
-            ):
-                raise ValueError("history_physical_owner_collision")
+        _validate_history(state["history"])
+        if state.get("legacy_v2") is not None:
+            raise ValueError("history_v2_retired")
         _validate_operation(state["operation"])
         _validate_history_intent(state)
     except (KeyError, TypeError, ValueError, AttributeError) as err:
         raise HourlyImportError("history_root_missing_corrupt_or_unsupported") from err
 
 
-def _validate_history(history: dict[str, Any]) -> set[str]:
+def _validate_history(history: dict[str, Any]) -> None:
     native_ids: set[str] = set()
-    physical: set[str] = set()
     for key, selected in history["selections"].items():
         descriptor = selected["descriptor"]
         if (
@@ -160,7 +121,6 @@ def _validate_history(history: dict[str, Any]) -> set[str]:
         ):
             raise ValueError("history_metadata_invalid")
         native_ids.add(descriptor["statistic_id"])
-        physical.add(key)
         for reference in selected["proofs"].values():
             require_digest(reference)
     for reference in (
@@ -177,7 +137,6 @@ def _validate_history(history: dict[str, Any]) -> set[str]:
         or history["coverage_revision"] < 0
     ):
         raise ValueError("history_coverage_revision_invalid")
-    return physical
 
 
 def _validate_operation(operation: dict[str, Any]) -> None:
@@ -232,7 +191,7 @@ def _validate_history_intent(state: dict[str, Any]) -> None:
                     raise ValueError("history_pending_rows_invalid")
             if digest(batch) != pending["batch_object"]:
                 raise ValueError("history_pending_object_invalid")
-    elif pending and pending.get("generation") != 2:
+    elif pending:
         raise ValueError("history_pending_generation_invalid")
 
 
@@ -359,22 +318,12 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         for item in records
         for alias in item["descriptor"]["legacy_statistic_ids"]
     }
-    v2_physical: set[str] = set()
-    old = legacy_document(state)
-    if old:
-        for base, record in _validated_records(old).items():
-            physical.add(quantity_id(record["resource"]))
-            v2_physical.add(quantity_id(record["resource"]))
-            alias_owners[base.removesuffix("_hourly_v2")] = quantity_id(
-                record["resource"]
-            )
-    selected: set[str] = set()
     for base, resource in identity["resources"].items():
         alias_owner = alias_owners.get(base.removesuffix("_hourly_v2"))
-        if alias_owner is not None and alias_owner != quantity_id(resource):
+        if alias_owner is not None and (
+            unmapped_sensor(resource) or alias_owner != quantity_id(resource)
+        ):
             raise HourlyImportError("history_legacy_alias_rebound")
-        if quantity_id(resource) in v2_physical:
-            selected.add(base)
     _current, parents = _partition_resources(identity)
     for item in records:
         descriptor = item["descriptor"]
@@ -385,14 +334,12 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         frozenset(
             base.removesuffix("_hourly_v2")
             for base in identity["resources"]
-            if quantity_id(identity["resources"][base]) not in physical
+            if unmapped_sensor(identity["resources"][base])
+            or quantity_id(identity["resources"][base]) not in physical
         ),
-        frozenset(selected),
         True,
         "history_operation_pending"
-        if state.get("pending")
-        or state["operation"]["status"] != "completed"
-        or (old or {}).get("pending_selection")
+        if state.get("pending") or state["operation"]["status"] != "completed"
         else None,
     )
 
@@ -1388,8 +1335,6 @@ class HistoryWriter:
             raise HourlyImportError("history_revision_changed")
         if state and (
             state.get("pending")
-            or state.get("pending_selection")
-            or (legacy_document(state) or {}).get("pending_selection")
             or state.get("phase") == "prepared"
             or (
                 state.get("version") == 3
@@ -1400,15 +1345,6 @@ class HistoryWriter:
         built, merged = await self.built(
             normalized, state, context, provider_order, provider_supersedes
         )
-        old = legacy_document(state)
-        old_owned = (
-            {
-                quantity_id(record["resource"])
-                for record in _validated_records(old).values()
-            }
-            if old
-            else set()
-        )
         history = state["history"] if state and state["version"] == 3 else {}
         batches: list[dict[str, Any]] = []
         descriptors: list[dict[str, Any]] = []
@@ -1417,12 +1353,8 @@ class HistoryWriter:
         first, end = bounds(normalized["start"], normalized["end"])
         for key in normalized["quantity_ids"]:
             item = built.get(key)
-            if (
-                item is None
-                or item.descriptor["admission"] != "eligible"
-                or key in old_owned
-            ):
-                raise HourlyImportError("history_quantity_blocked_or_v2_owned")
+            if item is None or item.descriptor["admission"] != "eligible":
+                raise HourlyImportError("history_quantity_blocked")
             descriptors.append(item.descriptor)
             metadata[key] = item.metadata
             sensor = item.descriptor["sensor_id"]
@@ -1622,11 +1554,6 @@ class HistoryWriter:
         reference = await self.seal_plan(manifest, batches, context)
         if digest(await self.root(context)) != digest(state):
             raise HourlyImportError("history_root_changed_before_accept")
-        old = (
-            state
-            if state and state.get("version") != 3
-            else (state or {}).get("legacy_v2")
-        )
         root = (
             deepcopy(state)
             if state and state.get("version") == 3
@@ -1636,7 +1563,6 @@ class HistoryWriter:
                 "revision": (state or {}).get("revision", 0),
                 "token": plan_digest,
                 "identity": deepcopy(manifest["binding"]["identity"]),
-                "legacy_v2": deepcopy(old),
                 "history": {
                     "selections": {},
                     "source_ids": [],
@@ -1801,6 +1727,7 @@ class HistoryWriter:
         enabled = {
             quantity_id(resource)
             for resource in context["identity"]["resources"].values()
+            if not unmapped_sensor(resource)
         }
         return {
             "config_entry_id": self.manager._entry.entry_id,

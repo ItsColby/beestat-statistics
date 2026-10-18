@@ -1094,6 +1094,65 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertEqual(snapshot["next_ref"], "away")
         self.assertEqual(snapshot["next_at"], datetime(2026, 11, 1, 7, tzinfo=UTC))
 
+    def test_schedule_boundaries_use_actual_instants_across_offsets_and_folds(self):
+        cases = (
+            (
+                "America/New_York",
+                datetime(2026, 11, 1, 5, 45, tzinfo=UTC),
+                2,
+                datetime(2026, 11, 1, 6, tzinfo=UTC),
+            ),
+            (
+                "Australia/Lord_Howe",
+                datetime(2026, 10, 3, 15, 15, tzinfo=UTC),
+                5,
+                datetime(2026, 10, 3, 15, 30, tzinfo=UTC),
+            ),
+            (
+                "Asia/Kathmandu",
+                datetime(2026, 6, 1, 6, 30, tzinfo=UTC),
+                25,
+                datetime(2026, 6, 1, 6, 45, tzinfo=UTC),
+            ),
+            (
+                "Asia/Kathmandu",
+                datetime(2026, 6, 1, 6, 45, tzinfo=UTC),
+                26,
+                datetime(2026, 6, 1, 7, 15, tzinfo=UTC),
+            ),
+        )
+        for zone, instant, slot, expected in cases:
+            with self.subTest(zone=zone, instant=instant):
+                schedule = [["sleep"] * 48 for _ in range(7)]
+                schedule[expected.astimezone(ZoneInfo(zone)).weekday()][slot] = "home"
+                ref, at = self.coordinator._next_schedule_transition(
+                    schedule, instant.astimezone(ZoneInfo(zone)), "sleep"
+                )
+                self.assertEqual(ref, "home")
+                self.assertEqual(at.astimezone(UTC), expected)
+
+    def test_constant_schedule_has_no_transition_and_reads_only_boundaries(self):
+        for zone in ("America/New_York", "Australia/Lord_Howe", "Asia/Kathmandu"):
+            with (
+                self.subTest(zone=zone),
+                patch.object(
+                    self.coordinator,
+                    "_schedule_ref",
+                    wraps=self.coordinator._schedule_ref,
+                ) as read,
+            ):
+                self.assertEqual(
+                    self.coordinator._next_schedule_transition(
+                        [["home"] * 48 for _ in range(7)],
+                        datetime(2026, 11, 1, 5, 15, tzinfo=UTC).astimezone(
+                            ZoneInfo(zone)
+                        ),
+                        "home",
+                    ),
+                    (None, None),
+                )
+                self.assertLessEqual(read.call_count, 386)
+
     def test_cloud_stale_rounding_boundary_is_exact(self) -> None:
         data_end = datetime(2026, 7, 1, 12, tzinfo=UTC)
         threshold = timedelta(minutes=120, seconds=30)

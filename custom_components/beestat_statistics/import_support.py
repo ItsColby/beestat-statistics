@@ -27,15 +27,13 @@ from .const import (
     API_BASE,
     CONF_API_BASE,
     DETAILED_RUNTIME_FIELDS,
-    MAX_POINT_LOOKBACK_DAYS,
     MAX_WINDOW_DAYS,
     RUNTIME_FIELD_GROUPS,
     SUMMARY_MEAN_STATISTICS,
     SUMMARY_SUM_STATISTICS,
     THERMOSTAT_POINT_STATISTICS,
 )
-from .coordinator import BeestatRuntimeData, TemporalContext
-from .hourly_statistics import HourlySeries
+from .coordinator import BeestatRuntimeData
 from .import_evidence import SkippedWindowEvidence
 from .runtime import BeestatStatisticsConfigEntry
 from .statistics_builder import CumulativeStatisticSeed, StatisticsSeries
@@ -118,18 +116,6 @@ class ImportResult:
     hourly_imported_rows: int | None = 0
     hourly_blocked_reason: str | None = None
     coverage_incomplete: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedHourlyImport:
-    """Detached hourly source evidence prepared before durable Recorder effects."""
-
-    series: tuple[HourlySeries, ...]
-    identity: dict[str, Any]
-    source_rows: int
-    skipped_windows: SkippedWindowEvidence
-    ordinary_start: datetime | None
-    eligible_resources: dict[str, dict[str, Any]]
 
 
 def _combined_import_result(
@@ -342,93 +328,6 @@ def _point_window(
     return start, end
 
 
-def _hourly_utc_hour(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("Hourly bounds require an explicit UTC offset")
-    result = value.astimezone(UTC)
-    if result.minute or result.second or result.microsecond:
-        raise ValueError("Hourly bounds must be whole UTC hours")
-    return result
-
-
-def _validate_hourly_window(start: datetime, end: datetime) -> None:
-    if not timedelta(0) < end - start <= timedelta(days=MAX_POINT_LOOKBACK_DAYS):
-        raise ValueError(
-            "Hourly bounds must span more than zero and at most 366 elapsed days"
-        )
-
-
-def _hourly_window(
-    context: TemporalContext,
-    *,
-    lookback_days: int,
-    rebuild_start: dt_date | None,
-    rebuild_end: dt_date | None,
-    epoch_start: datetime | None,
-    bootstrap_start: datetime | None = None,
-) -> tuple[datetime, datetime, datetime | None]:
-    end = context.evaluated_at.astimezone(UTC).replace(
-        minute=0, second=0, microsecond=0
-    )
-    if epoch_start is not None:
-        start = _hourly_utc_hour(epoch_start)
-    elif rebuild_start is not None:
-        start = _hourly_utc_hour(_local_midnight(rebuild_start, context.local_tz))
-    else:
-        start = end - timedelta(days=lookback_days)
-        if bootstrap_start is not None:
-            start = min(start, _hourly_utc_hour(bootstrap_start))
-    _validate_hourly_window(start, end)
-    measurement_end = None
-    if rebuild_end is not None:
-        measurement_end = min(
-            end,
-            _hourly_utc_hour(
-                _local_midnight(rebuild_end + timedelta(days=1), context.local_tz)
-            ),
-        )
-        _validate_hourly_window(start, measurement_end)
-    return start, end, measurement_end
-
-
-def _observed_hourly_horizons(
-    rows_by_id: Mapping[int, list[dict[str, Any]]], caps: Mapping[int, datetime]
-) -> dict[int, datetime]:
-    result: dict[int, datetime] = {}
-    for thermostat_id, rows in rows_by_id.items():
-        stamps = [
-            stamp
-            for row in rows
-            if row_resource_id(row, "thermostat_id") == thermostat_id
-            and isinstance(row.get("timestamp"), str)
-            and (stamp := _parse_beestat_time(row["timestamp"])) is not None
-            and not (stamp.minute % 5 or stamp.second or stamp.microsecond)
-            and (thermostat_id not in caps or stamp <= caps[thermostat_id])
-        ]
-        if stamps:
-            result[thermostat_id] = max(stamps)
-    return result
-
-
-def _hourly_retained_ids(
-    config: BeestatConfig, retained: tuple[str, ...]
-) -> tuple[str, ...]:
-    # Retain selected detailed quantities even after a display-derived slug changes.
-    quantities = {
-        key
-        for key, _label, _field in DETAILED_RUNTIME_FIELDS
-        if any(value.endswith(f"_{key}_runtime_hours_hourly_v2") for value in retained)
-    }
-    return (
-        *retained,
-        *(
-            f"beestat:{thermostat.slug}_{key}_runtime_hours_hourly_v2"
-            for thermostat in config.thermostats
-            for key in sorted(quantities)
-        ),
-    )
-
-
 def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, Any]]:
     quantities = {
         *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
@@ -466,13 +365,9 @@ def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, An
     return dict(candidates)
 
 
-def _hourly_identity(
+def _account_identity(
     entry: BeestatStatisticsConfigEntry,
     data: BeestatRuntimeData,
-    series: tuple[HourlySeries, ...],
-    *,
-    selected_thermostat_id: int | None = None,
-    require_account: bool = True,
 ) -> dict[str, Any]:
     anchors = sorted(
         {
@@ -481,8 +376,6 @@ def _hourly_identity(
             if (resource_id := row_resource_id(row, "thermostat_id", "id")) is not None
         }
     )
-    if not anchors and require_account:
-        raise ValueError("Hourly account identity is unavailable")
     parsed = urlsplit(normalize_api_base(entry.data.get(CONF_API_BASE, API_BASE)))
     host = parsed.hostname or ""
     if ":" in host:
@@ -490,14 +383,10 @@ def _hourly_identity(
     origin = f"https://{host.lower()}" + (
         f":{parsed.port}" if parsed.port not in (None, 443) else ""
     )
-    resources = _hourly_resource_identities(data.config)
-    selected = {item.statistic_id: resources[item.statistic_id] for item in series}
     return {
         "entry_id": entry.entry_id,
         "api_base": origin,
         "account_anchors": anchors,
-        "resources": selected,
-        "selected_thermostat_id": selected_thermostat_id,
     }
 
 
@@ -506,7 +395,7 @@ def _writer_identity(
 ) -> dict[str, Any]:
     """Map eligible quantities separately from stable cached sensor topology."""
 
-    identity = _hourly_identity(entry, data, (), require_account=False)
+    identity = _account_identity(entry, data)
     identity["resources"] = _hourly_resource_identities(data.config)
     parents: dict[int, int | None] = {}
     for row in data.sensor_rows:

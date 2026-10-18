@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
+import probatio
 import pytest
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.config_entries import ConfigEntryState
@@ -30,7 +31,7 @@ from custom_components.beestat_statistics.hourly_history_contract import (
     MAX_SOURCE_BYTES,
 )
 from custom_components.beestat_statistics.hourly_import import MARKER
-from custom_components.beestat_statistics.hourly_import_plan import RecorderSnapshot
+from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.test_runtime_ha import _coordinator_data
 
 NOW = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
@@ -777,7 +778,7 @@ async def test_cancelled_apply_caller_does_not_cancel_durable_acceptance_or_work
     await runtime.entry._async_process_on_unload(hass)
 
 
-async def test_coverage_without_contract_version_preserves_v2_response(
+async def test_retired_coverage_and_selection_routes_fail_before_effects(
     hass, freezer, monkeypatch, tmp_path
 ):
     runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
@@ -786,10 +787,10 @@ async def test_coverage_without_contract_version_preserves_v2_response(
         "start": START.isoformat(),
         "end": END.isoformat(),
     }
-    expected = runtime.importer.hourly.coverage(start=START, end=END)
-    response = await _call(runtime, "get_hourly_coverage", request, Context())
-    assert response == expected
-    assert response.get("contract_version") != 3
+    with pytest.raises(probatio.Invalid):
+        await _call(runtime, "get_hourly_coverage", request, Context())
+    assert not hass.services.has_service(DOMAIN, "select_hourly_statistics")
+    assert runtime.importer.hourly.status()["mode"] == "unloaded"
     runtime.snapshots.assert_not_called()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
