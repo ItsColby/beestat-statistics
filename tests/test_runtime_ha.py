@@ -7,6 +7,7 @@ import logging
 import types
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
@@ -33,6 +34,7 @@ from custom_components.beestat_statistics.config_model import (
     ConfiguredSensor,
     ConfiguredThermostat,
 )
+from custom_components.beestat_statistics.config_rows import finite_float_or_none
 from custom_components.beestat_statistics.const import (
     API_BASE,
     CONF_API_BASE,
@@ -45,14 +47,13 @@ from custom_components.beestat_statistics.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
+from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
 from custom_components.beestat_statistics.hourly_import import WriterPartition
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
 from custom_components.beestat_statistics.import_support import (
     PreparedImport,
     SummaryImportPlan,
     _dedupe_rows,
-    _parse_beestat_time,
-    _row_float,
     _row_start_datetime,
     _sensor_thermostat_map,
     _thermostat_data_end_map,
@@ -81,9 +82,9 @@ from tests.test_api_response import _FakeResponse, _FakeSession
 async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
     """Malformed Recorder seeds must not poison cumulative imports."""
 
-    assert _row_float(42.5) == 42.5
-    assert _row_float("NaN") is None
-    assert _row_float("Infinity") is None
+    assert finite_float_or_none(42.5) == 42.5
+    assert finite_float_or_none("NaN") is None
+    assert finite_float_or_none("Infinity") is None
 
 
 async def test_import_writer_status_is_detached_projected_and_cleared(
@@ -253,7 +254,7 @@ async def test_malformed_point_ids_cannot_shadow_a_valid_source_row(
     ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"],
 )
 async def test_source_data_end_rejects_unrepresentable_utc_instants(value: str) -> None:
-    assert _parse_beestat_time(value) is None
+    assert parse_source_datetime(value) is None
 
 
 async def test_point_acquisition_maps_prefer_the_normalized_resource_identity() -> None:
@@ -457,7 +458,7 @@ async def test_point_window_permanent_http_failure_is_not_bisected(
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
-    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    read_window = partial(importer._async_read_runtime_window, f"runtime_{resource}")
     skipped_windows = SkippedWindowEvidence()
     with pytest.raises(BeestatPermanentError):
         await read_window(1, now - timedelta(days=30), now, skipped_windows)
@@ -493,7 +494,7 @@ async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
-    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    read_window = partial(importer._async_read_runtime_window, f"runtime_{resource}")
     skipped_windows = SkippedWindowEvidence()
     rows = await read_window(1, now - timedelta(days=2), now, skipped_windows)
     assert rows == [{"id": 1}, {"id": 2}]

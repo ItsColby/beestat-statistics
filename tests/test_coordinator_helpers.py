@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from custom_components.beestat_statistics import config_model, coordinator
+from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
 
 
 class CoordinatorHelpersTest(unittest.TestCase):
@@ -699,7 +700,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             "9999-12-31T23:59:59-01:00",
         ):
             with self.subTest(value=value):
-                self.assertIsNone(self.coordinator._parse_datetime(value))
+                self.assertIsNone(parse_source_datetime(value))
 
     def test_invalid_timezone_keys_use_configured_fallback(self) -> None:
         fallback = ZoneInfo("America/New_York")

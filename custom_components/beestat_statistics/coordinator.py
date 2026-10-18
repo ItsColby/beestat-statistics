@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later, async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .api import (
     BeestatApiError,
@@ -57,6 +58,7 @@ from .filter_runtime import (
     local_day_bounds,
     next_filter_uncertainty_deadline,
     observed_threshold_date,
+    parse_source_datetime,
 )
 from .profile import ProfileSensorReference, ScheduleProfile, schedule_profiles_by_ref
 from .temperature import absolute_temperature_value
@@ -359,10 +361,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             changed_at = thermostat.filter_changed_at
             reconciled_at = thermostat.filter_change_boundary_reconciled_at
             if current_override is not None:
-                changed_at = _parse_datetime(
+                changed_at = parse_source_datetime(
                     current_override.get(CONF_FILTER_CHANGED_AT)
                 )
-                reconciled_at = _parse_datetime(
+                reconciled_at = parse_source_datetime(
                     current_override.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT)
                 )
             if reconciled_at is None and _filter_boundary_fast_retry_due(
@@ -903,7 +905,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             and _parse_date(row.get("date")) == local_date
         )
         source = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
-        source_end = _parse_datetime(source.get("data_end"))
+        source_end = parse_source_datetime(source.get("data_end"))
         # A periodic bounded reread also catches point corrections whose daily
         # sum/count are unchanged. Retain only this filter's one raw local day.
         key = (
@@ -947,7 +949,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         )
         if current_override is None:
             return False
-        current_changed_at = _parse_datetime(
+        current_changed_at = parse_source_datetime(
             current_override.get(CONF_FILTER_CHANGED_AT)
         )
         if current_changed_at != changed_at:
@@ -1039,7 +1041,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 thermostat,
                 thermostat_row_by_id.get(thermostat.thermostat_id, {}),
             )
-            source_end = _parse_datetime(
+            source_end = parse_source_datetime(
                 thermostat_row_by_id.get(thermostat.thermostat_id, {}).get("data_end")
             )
             cached = getattr(self, "_filter_day_cache", {}).get(
@@ -1346,8 +1348,8 @@ def _build_thermostat_metadata(
     metadata: dict[int, ThermostatMetadata] = {}
     for thermostat in thermostats:
         row = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
-        data_begin = _parse_datetime(row.get("data_begin"))
-        data_end = _parse_datetime(row.get("data_end"))
+        data_begin = parse_source_datetime(row.get("data_begin"))
+        data_end = parse_source_datetime(row.get("data_end"))
         eligible_sensors = tuple(
             item
             for item in sensor_metadata.values()
@@ -1538,19 +1540,7 @@ def _temperature_state_value(
 def _convert_temperature(value: float, source: str, target: str) -> float | None:
     if source == target:
         return value
-    if source == "°F" and target == "°C":
-        return (value - 32) * 5 / 9
-    if source == "°C" and target == "°F":
-        return value * 9 / 5 + 32
-    if source == "°C" and target == "K":
-        return value + 273.15
-    if source == "K" and target == "°C":
-        return value - 273.15
-    if source == "°F" and target == "K":
-        return (value - 32) * 5 / 9 + 273.15
-    if source == "K" and target == "°F":
-        return (value - 273.15) * 9 / 5 + 32
-    return None
+    return TemperatureConverter.convert(value, source, target)
 
 
 def _canonical_temperature_unit(value: Any) -> str | None:
@@ -1868,27 +1858,6 @@ def _parse_date(value: Any) -> date | None:
     try:
         return date.fromisoformat(value[:10])
     except ValueError:
-        return None
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    try:
-        return parsed.astimezone(UTC)
-    except OverflowError:
         return None
 
 

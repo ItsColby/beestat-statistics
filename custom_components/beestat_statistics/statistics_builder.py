@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .config_model import BeestatConfig
 from .config_model import build_sensor_statistics as build_sensor_specs
-from .config_rows import positive_resource_id
+from .config_rows import finite_float_or_none, positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
     RUNTIME_FIELD_GROUPS,
@@ -112,8 +112,8 @@ def apply_cumulative_seeds(
         stats: list[dict[str, Any]] = []
         for row in item.statistics:
             updated = dict(row)
-            state = _as_float(updated.get("state"))
-            sum_value = _as_float(updated.get("sum"))
+            state = finite_float_or_none(updated.get("state"))
+            sum_value = finite_float_or_none(updated.get("sum"))
             seeded_state = _finite_add(seed.state, state)
             seeded_sum = _finite_add(seed.sum, sum_value)
             if seeded_state is None or seeded_sum is None:
@@ -204,7 +204,9 @@ def _runtime_fields(
             if (
                 f"{STATISTIC_SOURCE}:{thermostat_slug}_{slug}_runtime_hours"
                 in existing_statistic_ids
-                or any((_as_float(row.get(field)) or 0.0) > 0 for _, row in rows)
+                or any(
+                    (finite_float_or_none(row.get(field)) or 0.0) > 0 for _, row in rows
+                )
             )
         ),
     )
@@ -324,7 +326,9 @@ def build_summary_mean_statistics(
             stats: list[dict[str, Any]] = []
             for local_day, row in rows:
                 value = _measurement_value(
-                    _as_float(row.get(spec.field)), spec.unit_class, spec.unit
+                    finite_float_or_none(row.get(spec.field)),
+                    spec.unit_class,
+                    spec.unit,
                 )
                 if value is None:
                     continue
@@ -336,7 +340,7 @@ def build_summary_mean_statistics(
                     spec.min_field is not None
                     and (
                         min_value := _measurement_value(
-                            _as_float(row.get(spec.min_field)),
+                            finite_float_or_none(row.get(spec.min_field)),
                             spec.unit_class,
                             spec.unit,
                         )
@@ -348,7 +352,7 @@ def build_summary_mean_statistics(
                     spec.max_field is not None
                     and (
                         max_value := _measurement_value(
-                            _as_float(row.get(spec.max_field)),
+                            finite_float_or_none(row.get(spec.max_field)),
                             spec.unit_class,
                             spec.unit,
                         )
@@ -394,7 +398,9 @@ def build_thermostat_point_statistics(
             source_count = 0
             for row in rows:
                 value = _measurement_value(
-                    _as_float(row.get(spec.field)), spec.unit_class, spec.unit
+                    finite_float_or_none(row.get(spec.field)),
+                    spec.unit_class,
+                    spec.unit,
                 )
                 local_day = _parse_timestamp_day(row.get("timestamp"), local_tz)
                 if value is None or local_day is None:
@@ -510,7 +516,7 @@ def _sensor_statistic_value(value: Any, scale: float) -> float | None:
         if value is False or value == 0:
             return 0.0
         return None
-    parsed = _as_float(value)
+    parsed = finite_float_or_none(value)
     if parsed is None:
         return None
     scaled = parsed * scale
@@ -593,7 +599,7 @@ def _cumulative_value(row: dict[str, Any], field: str) -> float | None:
 
     if field not in row:
         return 0.0
-    value = _as_float(row[field])
+    value = finite_float_or_none(row[field])
     return value if value is not None and value >= 0 else None
 
 
@@ -610,13 +616,3 @@ def _finite_add(left: float, right: float | None) -> float | None:
         return None
     total = left + right
     return total if isfinite(total) else None
-
-
-def _as_float(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, "", "unknown", "unavailable"):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None

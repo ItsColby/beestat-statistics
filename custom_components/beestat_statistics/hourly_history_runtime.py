@@ -15,6 +15,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from .const import MAX_WINDOW_DAYS
 from .hourly_history_contract import MAX_SOURCE_BYTES, utc
 from .hourly_history_delta import prepare_history_delta
 from .hourly_sources import _row_stamp, async_stage_source
@@ -129,7 +130,7 @@ async def _capture(
         resource_chunks: list[dict[str, Any]] = []
         first = start
         while first < end:
-            stop = min(end, first + timedelta(days=30))
+            stop = min(end, first + timedelta(days=MAX_WINDOW_DAYS))
             request = parse_raw_point_request(resource, resource_id, first, stop)
             runtime = importer._coordinator.beestat_config_entry.runtime_data
             identity = importer._raw_point_identity(request, runtime)

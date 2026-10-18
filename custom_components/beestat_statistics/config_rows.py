@@ -95,7 +95,7 @@ def safe_mapping(value: Any, keys: tuple[str, ...]) -> dict[str, Any]:
 
 
 def finite_float_or_none(value: Any) -> float | None:
-    if isinstance(value, bool) or value in (None, ""):
+    if isinstance(value, bool):
         return None
     try:
         parsed = float(value)

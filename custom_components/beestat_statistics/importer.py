@@ -550,7 +550,6 @@ class BeestatStatisticsImporter:
                 )
             result = _combined_import_result(
                 legacy_result,
-                None,
                 has_hourly=partition.has_hourly,
                 hourly_blocked_reason=blocked,
             )
@@ -982,7 +981,8 @@ class BeestatStatisticsImporter:
                 continue
             for window_start, window_end in _iter_windows(start, cap_end):
                 rows.extend(
-                    await self._async_read_runtime_thermostat_window(
+                    await self._async_read_runtime_window(
+                        "runtime_thermostat",
                         current_thermostat_id,
                         window_start,
                         window_end,
@@ -993,17 +993,6 @@ class BeestatStatisticsImporter:
                 rows, id_field="thermostat_id"
             )
         return rows_by_id
-
-    async def _async_read_runtime_thermostat_window(
-        self,
-        thermostat_id: int,
-        start: datetime,
-        end: datetime,
-        skipped_windows: SkippedWindowEvidence,
-    ) -> list[dict[str, Any]]:
-        return await self._async_read_runtime_window(
-            "runtime_thermostat", thermostat_id, start, end, skipped_windows
-        )
 
     async def _async_fetch_sensor_rows(
         self,
@@ -1059,7 +1048,8 @@ class BeestatStatisticsImporter:
                 continue
             for window_start, window_end in _iter_windows(start, cap_end):
                 rows.extend(
-                    await self._async_read_runtime_sensor_window(
+                    await self._async_read_runtime_window(
+                        "runtime_sensor",
                         sensor_id,
                         window_start,
                         window_end,
@@ -1068,17 +1058,6 @@ class BeestatStatisticsImporter:
                 )
             rows_by_id[sensor_id] = _dedupe_rows(rows, id_field="sensor_id")
         return rows_by_id
-
-    async def _async_read_runtime_sensor_window(
-        self,
-        sensor_id: int,
-        start: datetime,
-        end: datetime,
-        skipped_windows: SkippedWindowEvidence,
-    ) -> list[dict[str, Any]]:
-        return await self._async_read_runtime_window(
-            "runtime_sensor", sensor_id, start, end, skipped_windows
-        )
 
     async def _async_read_runtime_window(
         self,
