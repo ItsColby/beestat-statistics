@@ -21,8 +21,8 @@ from custom_components.beestat_statistics import raw_points
 from custom_components.beestat_statistics.api import BeestatClient
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.const import DOMAIN
-from tests.test_api_response import _FakeContent, _FakeResponse, _FakeSession
-from tests.test_runtime_ha import _coordinator_data
+from tests.api_support import _FakeContent, _FakeResponse, _FakeSession
+from tests.runtime_support import _coordinator_data
 
 NOW = datetime(2026, 9, 10, 18, tzinfo=UTC)
 

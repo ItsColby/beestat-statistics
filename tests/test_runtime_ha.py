@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -36,8 +35,6 @@ from custom_components.beestat_statistics.config_model import (
 )
 from custom_components.beestat_statistics.config_rows import finite_float_or_none
 from custom_components.beestat_statistics.const import (
-    API_BASE,
-    CONF_API_BASE,
     DOMAIN,
 )
 from custom_components.beestat_statistics.coordinator import (
@@ -76,7 +73,8 @@ from custom_components.beestat_statistics.tracking import (
     _async_track_time_zone_updates,
     _filter_changed_entity_ids,
 )
-from tests.test_api_response import _FakeResponse, _FakeSession
+from tests.api_support import _FakeResponse, _FakeSession
+from tests.runtime_support import _coordinator_data
 
 
 async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
@@ -756,72 +754,6 @@ async def test_repeated_unmapped_updates_preserve_only_the_own_resource_fallback
         assert devices.async_get(sensor_fallback.id) is not None
     assert client.calls == []
     await entry._async_process_on_unload(hass)
-
-
-def _entry(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_API_KEY: "test-key", CONF_API_BASE: API_BASE},
-        options={},
-    )
-    entry.add_to_hass(hass)
-    return entry
-
-
-def _coordinator_data(
-    hass: HomeAssistant,
-    *,
-    evaluated_at: datetime,
-    data_end: datetime | None = None,
-    latest_date: date | None = None,
-    schedule: list[list[str]] | None = None,
-) -> tuple[MockConfigEntry, BeestatRuntimeDataCoordinator, Any]:
-    entry = _entry(hass)
-    client = types.SimpleNamespace(calls=[])
-    coordinator = BeestatRuntimeDataCoordinator(
-        hass,
-        entry,
-        client,
-        local_tz=ZoneInfo("America/New_York"),
-    )
-    thermostat_row: dict[str, Any] = {"id": 1, "name": "Zone A"}
-    if data_end is not None:
-        thermostat_row["data_end"] = data_end.isoformat()
-    if schedule is not None:
-        thermostat_row["timezone"] = "America/New_York"
-        thermostat_row["program"] = {
-            "currentClimateRef": "hold",
-            "climates": [
-                {"climateRef": "hold", "name": "Hold"},
-                {"climateRef": "sleep", "name": "Sleep"},
-                {"climateRef": "home", "name": "Home"},
-            ],
-            "schedule": schedule,
-        }
-    summary_rows = (
-        [
-            {
-                "thermostat_id": 1,
-                "date": latest_date.isoformat(),
-                "sum_fan": 3600,
-            }
-        ]
-        if latest_date is not None
-        else []
-    )
-    coordinator.data = coordinator._build_runtime_data(
-        summary_rows,
-        [thermostat_row],
-        [],
-        evaluated_at,
-        evaluated_at,
-        True,
-        None,
-        None,
-        evaluated_at=evaluated_at,
-        fetched_at=evaluated_at,
-    )
-    return entry, coordinator, client
 
 
 def _filter_uncertainty_data(

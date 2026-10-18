@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
@@ -10,6 +11,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
 
 from custom_components.beestat_statistics.hourly_recorder import HourlyRecorder
+
+RECORDER_NOW = datetime(2026, 9, 13, tzinfo=UTC)
 
 
 def hourly_metadata(statistic_id: str, *, measurement: bool = False) -> dict[str, Any]:

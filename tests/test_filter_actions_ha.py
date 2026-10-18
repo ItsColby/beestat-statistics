@@ -40,7 +40,7 @@ from custom_components.beestat_statistics.importer import BeestatStatisticsImpor
 from custom_components.beestat_statistics.statistics_builder import (
     detailed_runtime_statistic_ids,
 )
-from tests.test_runtime_ha import _coordinator_data
+from tests.runtime_support import _coordinator_data
 
 
 async def test_timestamped_action_persists_completion_time_and_safe_replay(

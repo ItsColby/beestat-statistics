@@ -16,7 +16,7 @@ from custom_components.beestat_statistics.hourly_import import (
 )
 from custom_components.beestat_statistics.hourly_recorder import HourlyRecorder
 from custom_components.beestat_statistics.hourly_sources import async_stage_source
-from tests.test_hourly_history_service_ha import (
+from tests.hourly_history_support import (
     END,
     START,
     _content,
@@ -25,9 +25,8 @@ from tests.test_hourly_history_service_ha import (
     _runtime,
     _stage,
 )
-from tests.test_hourly_recorder_ha import (
-    _started_recorder,  # noqa: F401 - native SQLite fixture
-)
+
+pytestmark = pytest.mark.usefixtures("started_recorder")
 
 NATIVE = "beestat:zone_a_fan_runtime_rate_hourly_v3"
 
