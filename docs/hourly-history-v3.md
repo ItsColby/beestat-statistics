@@ -109,11 +109,10 @@ view, but cannot silently substitute guessed/native-only values.
 
 ### Exact response types and eligibility
 
-The authoritative response structures are `HistoryIdentity`,
-`HistoryRepresentation`, `QuantityDescriptor`, `HistoryOperation`, `HistoryBucket`,
-`HistorySummary`, `HistoryPagination`, `HistorySeriesResponse`, and
-`HistoryResponse` in [the public contract](../custom_components/beestat_statistics/hourly_history_contract.py).
-`NotRequired` keys are absent when inapplicable; nullable keys are present with
+The response is built by
+[`history_response`](../custom_components/beestat_statistics/hourly_history_query.py)
+and its page builders, which are authoritative for its keys.
+Optional keys are absent when inapplicable; nullable keys are present with
 JSON null. Timestamps are offset-qualified ISO strings; counters/revisions are
 integers; numeric observations are finite numbers. No numeric string or boolean
 is an observation. One `ready` hourly runtime bucket (fan ran 30 of 60 minutes):
