@@ -10,9 +10,10 @@ import re
 import sys
 import tempfile
 from datetime import UTC, datetime
+from email.message import Message
 from http.client import HTTPException
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -31,7 +32,15 @@ DEFAULT_SNAPSHOT = (
 class _NoRedirectHandler(HTTPRedirectHandler):
     """Reject redirects so an optional GitHub token stays on approved hosts."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> None:
         """Refuse every redirect instead of forwarding request headers."""
 
         return
@@ -444,7 +453,7 @@ def _request_text(url: str) -> str:
         headers["Authorization"] = f"Bearer {token}"
     request = Request(validated_url, headers=headers)  # noqa: S310 - validated HTTPS host
     with _URL_OPENER.open(request, timeout=30) as response:
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
+        raw: bytes = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError("Upstream response exceeds the size limit")
         return raw.decode("utf-8")
