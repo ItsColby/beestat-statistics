@@ -109,11 +109,9 @@ USER_INPUT = {
 }
 ACCOUNT_A = {
     "thermostat_id_hashes": ["account-a"],
-    "signature": "account-a",
 }
 ACCOUNT_B = {
     "thermostat_id_hashes": ["account-b"],
-    "signature": "account-b",
 }
 
 

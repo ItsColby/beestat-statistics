@@ -259,7 +259,6 @@
       "account_identity_unavailable": "Beestat returned no usable thermostat identity. Confirm that the account contains a thermostat, then try again.",
       "invalid_auth": "Beestat rejected this API key. Check the key and try again.",
       "invalid_api_base": "Enter an HTTPS URL with no username, password, query string, or fragment.",
-      "mapping_source_unavailable": "A selected entity has no usable registry identity. Select an entity currently registered in Home Assistant.",
       "cannot_connect": "The Beestat request failed. Check the API URL and Home Assistant's connection, then try again.",
       "unknown": "Setup could not finish. Check the Home Assistant logs for Beestat Statistics, then try again."
     },

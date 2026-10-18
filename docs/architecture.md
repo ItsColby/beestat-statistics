@@ -90,8 +90,9 @@ importer's existing lock. There is no second scheduled writer.
 
 Contract 3 is the supported hourly floor. Earlier cumulative hourly selection,
 segment recovery and cached coverage actions are retired. Older hourly journals
-and roots retaining a v2 writer fail closed; use v2026.10.11 for an older
-cumulative-hourly journal; this release does not migrate it. Existing Recorder rows and statistic IDs are never removed or
+and roots retaining a v2 writer fail closed; the
+[older-journal path](hourly-history-v3.md) is documented with the contract.
+Existing Recorder rows and statistic IDs are never removed or
 rewritten by this retirement. Config-entry version 1.6 and ongoing registry
 reconciliation remain unchanged.
 

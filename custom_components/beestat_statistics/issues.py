@@ -11,17 +11,17 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from .config_model import (
-    build_beestat_config,
-    configured_mapping_device_conflicts,
     configured_override_entity_domain_errors,
     configured_override_entity_ids,
     configured_unresolved_entity_ids,
+    mapping_device_conflicts,
 )
 from .config_payload import entry_runtime_config_data
 from .const import DOMAIN
 from .entity_reference import (
     configured_entity_references,
     entity_registry_event_matches_references,
+    event_entity_ids,
 )
 from .runtime import BeestatStatisticsConfigEntry
 
@@ -85,11 +85,7 @@ def _async_track_override_issue_updates(
 
     @callback
     def handle_registry_update(event: Event[Any]) -> None:
-        changed_entity_ids = {
-            str(value)
-            for key in ("entity_id", "old_entity_id")
-            if (value := event.data.get(key)) is not None
-        }
+        changed_entity_ids = event_entity_ids(event)
         if watched_entity_ids.isdisjoint(
             changed_entity_ids
         ) and not entity_registry_event_matches_references(
@@ -172,20 +168,9 @@ def _async_update_mapping_device_conflicts_issue(
     runtime = getattr(entry, "runtime_data", None)
     data = getattr(getattr(runtime, "coordinator", None), "data", None)
     config = entry_runtime_config_data(entry)
-    if (
-        data is not None
-        and hasattr(data, "thermostat_rows")
-        and hasattr(data, "sensor_rows")
-    ):
-        conflicts = build_beestat_config(
-            hass, data.thermostat_rows, data.sensor_rows, config
-        ).mapping_device_conflicts
-    else:
-        conflicts = configured_mapping_device_conflicts(
-            config,
-            er.async_get(hass),
-            dr.async_get(hass),
-        )
+    conflicts = mapping_device_conflicts(
+        hass, data, config, er.async_get(hass), dr.async_get(hass)
+    )
     if not conflicts:
         ir.async_delete_issue(hass, DOMAIN, _MAPPING_DEVICE_CONFLICTS_ISSUE_ID)
         return

@@ -40,8 +40,7 @@ from .api import (
 )
 from .config_model import (
     MappingDeviceConflict,
-    build_beestat_config,
-    configured_mapping_device_conflicts,
+    mapping_device_conflicts,
 )
 from .config_payload import (
     connection_data_from_user_input,
@@ -52,7 +51,12 @@ from .config_payload import (
     update_source_scope_options,
     update_thermostat_override_options,
 )
-from .config_rows import effective_override_items, override_id, positive_resource_id
+from .config_rows import (
+    as_bool,
+    effective_override_items,
+    override_id,
+    row_resource_id,
+)
 from .const import (
     API_BASE,
     CONF_ACCOUNT_FINGERPRINT,
@@ -180,13 +184,13 @@ OPTIONS_SCHEMA = probatio.Schema(
 )
 
 
-OPTIONS_MENU = {
-    "timing": "Import timing",
-    "source_scope": "Choose Beestat sources",
-    "confirm_automatic_mappings": "Confirm automatic mappings",
-    "thermostat_mapping": "Map a thermostat",
-    "sensor_mapping": "Map a room sensor",
-}
+OPTIONS_MENU = [
+    "timing",
+    "source_scope",
+    "confirm_automatic_mappings",
+    "thermostat_mapping",
+    "sensor_mapping",
+]
 
 _CONF_INCLUDED_THERMOSTAT_IDS = "included_thermostat_ids"
 _CONF_INCLUDED_SENSOR_IDS = "included_sensor_ids"
@@ -264,31 +268,18 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ),
                         errors=errors,
                     )
-                try:
-                    account_fingerprint = await _async_validate_input(
-                        self.hass,
-                        data,
-                    )
-                except BeestatAuthError:
-                    errors["base"] = "invalid_auth"
-                except BeestatApiError:
-                    errors["base"] = "cannot_connect"
-                except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
-                    _LOGGER.error(
-                        "Unexpected exception validating Beestat setup (%s)",
-                        exception_fingerprint(err),
-                    )
-                    errors["base"] = "unknown"
+                account_fingerprint = await _async_validated_fingerprint(
+                    self.hass, data
+                )
+                if isinstance(account_fingerprint, str):
+                    errors["base"] = account_fingerprint
                 else:
-                    if account_fingerprint is None:
-                        errors["base"] = "account_identity_unavailable"
-                    else:
-                        data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
-                        return self.async_create_entry(
-                            title=CONFIG_TITLE,
-                            data=data,
-                            options=options,
-                        )
+                    data[CONF_ACCOUNT_FINGERPRINT] = account_fingerprint
+                    return self.async_create_entry(
+                        title=CONFIG_TITLE,
+                        data=data,
+                        options=options,
+                    )
 
         return self.async_show_form(
             step_id="user",
@@ -409,32 +400,19 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         ),
                         errors=errors,
                     )
-                try:
-                    account_fingerprint = await _async_validate_input(
-                        self.hass,
-                        data_updates,
-                    )
-                except BeestatAuthError:
-                    errors["base"] = "invalid_auth"
-                except BeestatApiError:
-                    errors["base"] = "cannot_connect"
-                except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
-                    _LOGGER.error(
-                        "Unexpected exception validating Beestat setup (%s)",
-                        exception_fingerprint(err),
-                    )
-                    errors["base"] = "unknown"
+                account_fingerprint = await _async_validated_fingerprint(
+                    self.hass, data_updates
+                )
+                if isinstance(account_fingerprint, str):
+                    errors["base"] = account_fingerprint
                 else:
-                    if account_fingerprint is None:
-                        errors["base"] = "account_identity_unavailable"
-                    else:
-                        return await self._async_apply_validated_connection(
-                            entry,
-                            account_fingerprint=account_fingerprint,
-                            data_updates=data_updates,
-                            data_snapshot=data_snapshot,
-                            options_snapshot=options_snapshot,
-                        )
+                    return await self._async_apply_validated_connection(
+                        entry,
+                        account_fingerprint=account_fingerprint,
+                        data_updates=data_updates,
+                        data_snapshot=data_snapshot,
+                        options_snapshot=options_snapshot,
+                    )
 
         return self.async_show_form(
             step_id=step_id,
@@ -978,30 +956,43 @@ async def _async_validate_input(
     return _account_fingerprint(thermostat_rows)
 
 
+async def _async_validated_fingerprint(
+    hass: HomeAssistant,
+    user_input: dict[str, Any],
+) -> dict[str, Any] | str:
+    """Return the account fingerprint, or the flow error key for a failure."""
+
+    try:
+        account_fingerprint = await _async_validate_input(hass, user_input)
+    except BeestatAuthError:
+        return "invalid_auth"
+    except BeestatApiError:
+        return "cannot_connect"
+    except Exception as err:  # noqa: BLE001 - sanitize at the flow boundary
+        _LOGGER.error(
+            "Unexpected exception validating Beestat setup (%s)",
+            exception_fingerprint(err),
+        )
+        return "unknown"
+    return account_fingerprint or "account_identity_unavailable"
+
+
 def _account_fingerprint(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Return a non-reversible fingerprint for the discovered Beestat account."""
 
     row_ids = sorted(
         {
-            row_id
+            str(thermostat_id)
             for row in rows
-            if isinstance(row, Mapping) and (row_id := _row_identifier(row)) is not None
+            if isinstance(row, Mapping)
+            and (thermostat_id := row_resource_id(row, "thermostat_id", "id"))
+            is not None
         }
     )
     if not row_ids:
         return None
     thermostat_hashes = [_hash_text(row_id) for row_id in row_ids]
-    return {
-        "thermostat_id_hashes": thermostat_hashes,
-        "signature": _hash_text("\x1f".join(row_ids)),
-    }
-
-
-def _row_identifier(row: Mapping[str, Any]) -> str | None:
-    """Return the Beestat row identifier used for account fingerprinting."""
-
-    value = _resource_row_id(row, "thermostat_id")
-    return str(value) if value is not None else None
+    return {"thermostat_id_hashes": thermostat_hashes}
 
 
 def _same_connection_data(
@@ -1045,9 +1036,8 @@ def _wrong_account(
     if current_hashes and proposed_hashes:
         return current_hashes.isdisjoint(proposed_hashes)
 
-    return _fingerprint_signature(current_fingerprint) != _fingerprint_signature(
-        account_fingerprint
-    )
+    # Fingerprints without hashes on both sides cannot be compared: fail closed.
+    return True
 
 
 def _validated_connection_change_is_safe(
@@ -1072,14 +1062,6 @@ def _thermostat_hashes(fingerprint: Any) -> set[str]:
     if not isinstance(values, list):
         return set()
     return {str(value) for value in values if value not in (None, "")}
-
-
-def _fingerprint_signature(fingerprint: Any) -> str:
-    """Return a comparable fallback signature for older stored fingerprints."""
-
-    if isinstance(fingerprint, Mapping):
-        return str(fingerprint.get("signature") or "")
-    return str(fingerprint)
 
 
 def _hash_text(value: str) -> str:
@@ -1173,12 +1155,12 @@ def _resource_options(
         labels[item_id] = str(item.name)
     rows = getattr(data, rows_attribute, ()) if data is not None else ()
     for row in rows:
-        row_id = _resource_row_id(row, config_id_attribute)
+        row_id = row_resource_id(row, config_id_attribute, "id")
         if row_id is None:
             continue
         label = row.get("name") or f"{fallback_label} {row_id}"
         labels.setdefault(row_id, str(label))
-        if _source_flag_enabled(row.get("inactive")):
+        if as_bool(row.get("inactive")):
             inactive.add(row_id)
     config_data = entry_runtime_config_data(entry)
     for item in effective_override_items(config_data.get(override_key)):
@@ -1200,13 +1182,6 @@ def _resource_options(
         ),
         key=lambda option: str(option["label"]).casefold(),
     )
-
-
-def _resource_row_id(row: Mapping[str, Any], id_field: str) -> int | None:
-    for key in (id_field, "id"):
-        if (value := positive_resource_id(row.get(key))) is not None:
-            return value
-    return None
 
 
 def _option_ids(options: list[SelectOptionDict]) -> tuple[int, ...]:
@@ -1241,15 +1216,9 @@ def _inactive_resource_ids(
     return {
         item_id
         for row in rows
-        if (item_id := _resource_row_id(row, id_field)) is not None
-        and _source_flag_enabled(row.get("inactive"))
+        if (item_id := row_resource_id(row, id_field, "id")) is not None
+        and as_bool(row.get("inactive"))
     }
-
-
-def _source_flag_enabled(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.strip().casefold() in {"1", "true", "yes", "on"}
-    return bool(value)
 
 
 def _source_scope_defaults(
@@ -1327,21 +1296,9 @@ def _has_new_mapping_device_conflicts(
     data = getattr(getattr(runtime, "coordinator", None), "data", None)
 
     def conflicts(config: dict[str, Any]) -> set[MappingDeviceConflict]:
-        if (
-            hass is not None
-            and data is not None
-            and hasattr(data, "thermostat_rows")
-            and hasattr(data, "sensor_rows")
-        ):
-            return set(
-                build_beestat_config(
-                    hass, data.thermostat_rows, data.sensor_rows, config
-                ).mapping_device_conflicts
-            )
-        # Without source metadata, only explicit claims can be evaluated.
         return set(
-            configured_mapping_device_conflicts(
-                config, entity_registry, device_registry
+            mapping_device_conflicts(
+                hass, data, config, entity_registry, device_registry
             )
         )
 

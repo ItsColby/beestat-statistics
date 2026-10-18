@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later, async_track_point_in_utc_time
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .api import (
     BeestatApiError,
@@ -34,7 +35,13 @@ from .config_payload import (
     entry_runtime_config_data,
     update_thermostat_override_options,
 )
-from .config_rows import as_bool, finite_float_or_none, row_resource_id, string_or_none
+from .config_rows import (
+    as_bool,
+    finite_float_or_none,
+    optional_bool,
+    row_resource_id,
+    string_or_none,
+)
 from .const import (
     CLOUD_DATA_STALE_GRACE_MINUTES,
     CLOUD_DATA_STALE_MINIMUM_MINUTES,
@@ -57,6 +64,7 @@ from .filter_runtime import (
     local_day_bounds,
     next_filter_uncertainty_deadline,
     observed_threshold_date,
+    parse_source_datetime,
 )
 from .profile import ProfileSensorReference, ScheduleProfile, schedule_profiles_by_ref
 from .temperature import absolute_temperature_value
@@ -111,7 +119,6 @@ class ThermostatMetadata:
     next_scheduled_at: datetime | None
     schedule_profiles: tuple[ScheduleProfile, ...]
     active_sensor_count: int | None
-    active_sensor_names: tuple[str, ...]
     current_profile_sensor_names: tuple[str, ...]
     active_alert_count: int
     active_alerts: tuple[dict[str, Any], ...]
@@ -359,10 +366,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             changed_at = thermostat.filter_changed_at
             reconciled_at = thermostat.filter_change_boundary_reconciled_at
             if current_override is not None:
-                changed_at = _parse_datetime(
+                changed_at = parse_source_datetime(
                     current_override.get(CONF_FILTER_CHANGED_AT)
                 )
-                reconciled_at = _parse_datetime(
+                reconciled_at = parse_source_datetime(
                     current_override.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT)
                 )
             if reconciled_at is None and _filter_boundary_fast_retry_due(
@@ -903,7 +910,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             and _parse_date(row.get("date")) == local_date
         )
         source = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
-        source_end = _parse_datetime(source.get("data_end"))
+        source_end = parse_source_datetime(source.get("data_end"))
         # A periodic bounded reread also catches point corrections whose daily
         # sum/count are unchanged. Retain only this filter's one raw local day.
         key = (
@@ -947,7 +954,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         )
         if current_override is None:
             return False
-        current_changed_at = _parse_datetime(
+        current_changed_at = parse_source_datetime(
             current_override.get(CONF_FILTER_CHANGED_AT)
         )
         if current_changed_at != changed_at:
@@ -1039,7 +1046,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                 thermostat,
                 thermostat_row_by_id.get(thermostat.thermostat_id, {}),
             )
-            source_end = _parse_datetime(
+            source_end = parse_source_datetime(
                 thermostat_row_by_id.get(thermostat.thermostat_id, {}).get("data_end")
             )
             cached = getattr(self, "_filter_day_cache", {}).get(
@@ -1329,7 +1336,7 @@ def _build_sensor_metadata(
             name=string_or_none(row.get("name")),
             identifier=string_or_none(row.get("identifier")),
             sensor_type=string_or_none(row.get("type")),
-            in_use=_optional_bool(row.get("in_use")),
+            in_use=optional_bool(row.get("in_use")),
             inactive=as_bool(row.get("inactive")),
             deleted=as_bool(row.get("deleted")),
         )
@@ -1346,8 +1353,8 @@ def _build_thermostat_metadata(
     metadata: dict[int, ThermostatMetadata] = {}
     for thermostat in thermostats:
         row = _thermostat_row(thermostat_rows, thermostat.thermostat_id) or {}
-        data_begin = _parse_datetime(row.get("data_begin"))
-        data_end = _parse_datetime(row.get("data_end"))
+        data_begin = parse_source_datetime(row.get("data_begin"))
+        data_end = parse_source_datetime(row.get("data_end"))
         eligible_sensors = tuple(
             item
             for item in sensor_metadata.values()
@@ -1355,17 +1362,10 @@ def _build_thermostat_metadata(
             and not item.inactive
             and not item.deleted
         )
-        active_sensors = tuple(
-            sorted(
-                item.name or str(item.sensor_id)
-                for item in eligible_sensors
-                if item.in_use is True
-            )
-        )
         active_sensor_count = (
             None
             if any(item.in_use is None for item in eligible_sensors)
-            else len(active_sensors)
+            else sum(item.in_use is True for item in eligible_sensors)
         )
         profiles_by_ref = schedule_profiles_by_ref(row.get("program"))
         current_ref, current_name, current_profile_sensors = _current_profile(
@@ -1391,7 +1391,6 @@ def _build_thermostat_metadata(
             next_scheduled_at=schedule["next_at"],
             schedule_profiles=schedule["profiles"],
             active_sensor_count=active_sensor_count,
-            active_sensor_names=active_sensors,
             current_profile_sensor_names=tuple(
                 sensor.name or "Unnamed sensor" for sensor in current_profile_sensors
             ),
@@ -1527,30 +1526,12 @@ def _temperature_state_value(
     if value is None:
         return None
     destination = target_unit or source_unit
-    converted = _convert_temperature(value, source_unit, destination)
+    converted = TemperatureConverter.convert(value, source_unit, destination)
     return (
         (converted, destination)
         if converted is not None and isfinite(converted)
         else None
     )
-
-
-def _convert_temperature(value: float, source: str, target: str) -> float | None:
-    if source == target:
-        return value
-    if source == "°F" and target == "°C":
-        return (value - 32) * 5 / 9
-    if source == "°C" and target == "°F":
-        return value * 9 / 5 + 32
-    if source == "°C" and target == "K":
-        return value + 273.15
-    if source == "K" and target == "°C":
-        return value - 273.15
-    if source == "°F" and target == "K":
-        return (value - 32) * 5 / 9 + 273.15
-    if source == "K" and target == "°F":
-        return (value - 273.15) * 9 / 5 + 32
-    return None
 
 
 def _canonical_temperature_unit(value: Any) -> str | None:
@@ -1871,27 +1852,6 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
-def _parse_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        try:
-            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    try:
-        return parsed.astimezone(UTC)
-    except OverflowError:
-        return None
-
-
 def _effective_resource_rows(
     rows: list[dict[str, Any]],
     *id_fields: str,
@@ -1918,19 +1878,3 @@ def _effective_summary_rows(
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
     return tuple(row for row in effective.values() if not row.get("deleted"))
-
-
-def _optional_bool(value: Any) -> bool | None:
-    """Return an explicit source boolean without manufacturing false."""
-
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int) and value in (0, 1):
-        return bool(value)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "off"}:
-            return False
-    return None

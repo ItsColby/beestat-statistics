@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 from typing import TYPE_CHECKING
 
 from homeassistant.components.date import DateEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
 from .config_model import ConfiguredThermostat
-from .const import DOMAIN, thermostat_entity_unique_id
+from .const import thermostat_entity_unique_id
 from .coordinator import BeestatRuntimeDataCoordinator
 from .entity import (
     async_add_new_entities,
@@ -29,13 +26,16 @@ from .filter_forecast import (
     build_filter_forecast,
     filter_forecast_quality_attributes,
 )
-from .runtime import BeestatStatisticsConfigEntry, BeestatStatisticsRuntime
+from .runtime import (
+    BeestatStatisticsConfigEntry,
+    BeestatStatisticsRuntime,
+    beestat_error_boundary,
+)
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import DeviceInfo
 
 PARALLEL_UPDATES = 0
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -191,32 +191,10 @@ class BeestatFilterChangedDate(
     async def async_set_value(self, value: date) -> None:
         """Set the native filter-changed date."""
 
-        try:
+        with beestat_error_boundary(self.coordinator, "filter-date update failure"):
             await async_set_filter_changed_date(
                 self.coordinator, self._thermostat_id, value
             )
-        except BeestatAuthError:
-            self.coordinator.beestat_config_entry.async_start_reauth_if_available(
-                self.coordinator.hass
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_auth_failed",
-            ) from None
-        except BeestatApiError:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
-            _LOGGER.error(
-                "Unexpected filter-date update failure (%s)",
-                exception_fingerprint(err),
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
 
     @property
     def _thermostat(self) -> ConfiguredThermostat | None:

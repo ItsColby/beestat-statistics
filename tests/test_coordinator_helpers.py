@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from custom_components.beestat_statistics import config_model, coordinator
+from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
 
 
 class CoordinatorHelpersTest(unittest.TestCase):
@@ -699,7 +700,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             "9999-12-31T23:59:59-01:00",
         ):
             with self.subTest(value=value):
-                self.assertIsNone(self.coordinator._parse_datetime(value))
+                self.assertIsNone(parse_source_datetime(value))
 
     def test_invalid_timezone_keys_use_configured_fallback(self) -> None:
         fallback = ZoneInfo("America/New_York")
@@ -1285,7 +1286,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         )[1]
 
         self.assertEqual(metadata.active_sensor_count, 1)
-        self.assertEqual(metadata.active_sensor_names, ("Room Sensor B",))
         self.assertEqual(metadata.data_lag_minutes, 60)
         self.assertEqual(metadata.active_alert_count, 1)
         self.assertEqual(metadata.active_alerts[0]["code"], "filter")
@@ -1324,7 +1324,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
         self.assertIsNone(sensor_metadata[10].in_use)
         self.assertFalse(sensor_metadata[11].in_use)
         self.assertIsNone(metadata.active_sensor_count)
-        self.assertEqual((), metadata.active_sensor_names)
 
         empty_snapshot = self.coordinator._build_thermostat_metadata(
             ({"id": 1},),
@@ -1334,7 +1333,6 @@ class CoordinatorHelpersTest(unittest.TestCase):
             (thermostat,),
         )[1]
         self.assertEqual(0, empty_snapshot.active_sensor_count)
-        self.assertEqual((), empty_snapshot.active_sensor_names)
 
     def test_filter_alert_guids_selects_active_filter_alerts_only(self) -> None:
         row = {

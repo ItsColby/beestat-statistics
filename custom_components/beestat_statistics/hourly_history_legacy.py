@@ -8,19 +8,11 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .hourly_history_contract import bounds, utc
+from .hourly_history_contract import METADATA_FIELDS, bounds, utc
 from .hourly_rows import HourlyStatisticRow, RecorderSnapshot
 
 _DAY = timedelta(days=1)
 _READ_WINDOW = timedelta(days=20)
-_METADATA_FIELDS = (
-    "statistic_id",
-    "source",
-    "unit_of_measurement",
-    "unit_class",
-    "mean_type",
-    "has_sum",
-)
 
 
 async def async_read_legacy_days(
@@ -187,12 +179,12 @@ def _metadata(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
     if (
-        any(field not in value for field in _METADATA_FIELDS)
+        any(field not in value for field in METADATA_FIELDS)
         or isinstance(value["mean_type"], bool)
         or not isinstance(value["has_sum"], bool)
     ):
         raise ValueError("history_legacy_metadata_incomplete")
-    return {key: value[key] for key in _METADATA_FIELDS}
+    return {key: value[key] for key in METADATA_FIELDS}
 
 
 def _add_rows(

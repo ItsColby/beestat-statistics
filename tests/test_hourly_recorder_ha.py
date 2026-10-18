@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -17,9 +15,7 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.components.recorder.tasks import RecorderTask
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
-from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
 )
@@ -33,32 +29,16 @@ from custom_components.beestat_statistics.hourly_recorder import (
 from custom_components.beestat_statistics.hourly_rows import (
     HourlyStatisticRow,
 )
-from tests.hourly_support import hourly_metadata, known_beestat_ids
+from tests.hourly_support import RECORDER_NOW, hourly_metadata, known_beestat_ids
+
+pytestmark = pytest.mark.usefixtures("started_recorder")
 
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 16, tzinfo=UTC)  # New York noon.
 DAY_START = START - 12 * HOUR
-NOW = datetime(2026, 9, 13, tzinfo=UTC)
+NOW = RECORDER_NOW
 RUNTIME_ID = "beestat:contract_fan_runtime_hours_hourly_v2"
 RATE_ID = "beestat:contract_heat_runtime_rate_hourly_v3"
-
-
-@pytest.fixture(autouse=True)
-async def _started_recorder(recorder_mock: Any, freezer: Any) -> AsyncIterator[None]:
-    """Use the harness's disposable SQLite and restore both timezone owners."""
-
-    # recorder_mock must create the database before its own hass dependency.
-    hass: HomeAssistant = recorder_mock.hass
-    previous_zone = hass.config.time_zone
-    previous_default = dt_util.get_default_time_zone()
-    freezer.move_to(NOW)
-    await hass.config.async_set_time_zone("America/New_York")
-    try:
-        await hass.async_start()
-        yield
-    finally:
-        await hass.config.async_set_time_zone(previous_zone)
-        dt_util.set_default_time_zone(previous_default)
 
 
 def _counter_rows(start, totals):

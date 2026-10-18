@@ -34,14 +34,17 @@ from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
-from tests.test_hourly_history_runtime_ha import (
+from tests.hourly_history_support import (
+    END,
+    QUANTITY,
+    START,
     _adopted,
+    _content,
     _finish,
     _logical_hour,
     _objects,
     _provider,
 )
-from tests.test_hourly_history_service_ha import END, QUANTITY, START, _content
 
 _FENCE = canonical_json({"kind": "history_invalidated_root", "token": "0" * 64})
 

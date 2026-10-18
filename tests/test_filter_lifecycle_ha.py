@@ -16,7 +16,7 @@ from homeassistant.setup import async_setup_component
 
 from custom_components.beestat_statistics.const import thermostat_entity_unique_id
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
-from tests.test_runtime_ha import _coordinator_data
+from tests.runtime_support import _coordinator_data
 
 
 @pytest.mark.usefixtures("recorder_mock")

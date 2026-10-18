@@ -403,6 +403,29 @@ def configured_unresolved_entity_ids(
     return tuple(dict.fromkeys(unresolved))
 
 
+def mapping_device_conflicts(
+    hass: Any,
+    data: Any,
+    config_data: dict[str, Any],
+    entity_registry: Any,
+    device_registry: Any,
+) -> tuple[MappingDeviceConflict, ...]:
+    """Return conflicts using source rows when loaded, else explicit claims only."""
+
+    if (
+        hass is not None
+        and data is not None
+        and hasattr(data, "thermostat_rows")
+        and hasattr(data, "sensor_rows")
+    ):
+        return build_beestat_config(
+            hass, data.thermostat_rows, data.sensor_rows, config_data
+        ).mapping_device_conflicts
+    return configured_mapping_device_conflicts(
+        config_data, entity_registry, device_registry
+    )
+
+
 def configured_mapping_device_conflicts(
     config_data: Mapping[str, Any],
     entity_registry: Any,

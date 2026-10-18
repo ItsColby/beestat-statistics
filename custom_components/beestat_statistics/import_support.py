@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from datetime import date as dt_date
-from math import isfinite
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -22,18 +21,15 @@ from .config_model import BeestatConfig
 from .config_model import (
     build_sensor_statistics as build_sensor_specs,
 )
-from .config_rows import positive_resource_id, row_resource_id
+from .config_rows import finite_float_or_none, positive_resource_id, row_resource_id
 from .const import (
     API_BASE,
     CONF_API_BASE,
-    DETAILED_RUNTIME_FIELDS,
     MAX_WINDOW_DAYS,
-    RUNTIME_FIELD_GROUPS,
-    SUMMARY_MEAN_STATISTICS,
-    SUMMARY_SUM_STATISTICS,
-    THERMOSTAT_POINT_STATISTICS,
+    THERMOSTAT_QUANTITIES,
 )
 from .coordinator import BeestatRuntimeData
+from .filter_runtime import parse_source_datetime
 from .import_evidence import SkippedWindowEvidence
 from .runtime import BeestatStatisticsConfigEntry
 from .statistics_builder import CumulativeStatisticSeed, StatisticsSeries
@@ -120,14 +116,13 @@ class ImportResult:
 
 def _combined_import_result(
     legacy: ImportResult | None,
-    hourly: ImportResult | None,
     *,
     has_hourly: bool,
     hourly_blocked_reason: str | None,
 ) -> ImportResult:
     """Report acknowledged counts separately from uncertain hourly effects."""
 
-    parts = [result for result in (legacy, hourly) if result is not None]
+    parts = [legacy] if legacy is not None else []
     return ImportResult(
         imported_series=sum(result.imported_series for result in parts),
         imported_rows=sum(result.imported_rows for result in parts),
@@ -161,18 +156,13 @@ def _combined_import_result(
         summary_overlap_days=legacy.summary_overlap_days if legacy else None,
         summary_fallback_reason=(
             hourly_blocked_reason
-            or (hourly.summary_fallback_reason if hourly else None)
             or (legacy.summary_fallback_reason if legacy else None)
         ),
         cumulative_seed_count=legacy.cumulative_seed_count if legacy else 0,
         legacy_imported_series=legacy.imported_series if legacy else 0,
         legacy_imported_rows=legacy.imported_rows if legacy else 0,
-        hourly_imported_series=(
-            hourly.imported_series if hourly else None if hourly_blocked_reason else 0
-        ),
-        hourly_imported_rows=(
-            hourly.imported_rows if hourly else None if hourly_blocked_reason else 0
-        ),
+        hourly_imported_series=None if hourly_blocked_reason else 0,
+        hourly_imported_rows=None if hourly_blocked_reason else 0,
         hourly_blocked_reason=hourly_blocked_reason,
         coverage_incomplete=bool(hourly_blocked_reason)
         or any(result.coverage_incomplete for result in parts),
@@ -224,8 +214,8 @@ def _cumulative_seeds_during_period(
             continue
         row = rows[-1]
         start = _row_start_datetime(row)
-        state = _row_float(row.get("state"))
-        sum_value = _row_float(row.get("sum"))
+        state = finite_float_or_none(row.get("state"))
+        sum_value = finite_float_or_none(row.get("sum"))
         if start is None or state is None or sum_value is None:
             continue
         seeds[statistic_id] = CumulativeStatisticSeed(
@@ -329,13 +319,6 @@ def _point_window(
 
 
 def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, Any]]:
-    quantities = {
-        *(f"{key}_runtime_hours" for key, _label, _fields in RUNTIME_FIELD_GROUPS),
-        *(f"{key}_runtime_hours" for key, _label, _field in DETAILED_RUNTIME_FIELDS),
-        *(spec.statistic_suffix for spec in SUMMARY_MEAN_STATISTICS),
-        *(spec.statistic_suffix for spec in SUMMARY_SUM_STATISTICS),
-        *(spec.statistic_suffix for spec in THERMOSTAT_POINT_STATISTICS),
-    }
     candidates = [
         (
             f"beestat:{thermostat.slug}_{quantity}_hourly_v2",
@@ -346,7 +329,7 @@ def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, An
             },
         )
         for thermostat in config.thermostats
-        for quantity in quantities
+        for quantity in THERMOSTAT_QUANTITIES
     ]
     sensors = {sensor.sensor_id: sensor for sensor in config.sensors}
     candidates.extend(
@@ -441,7 +424,7 @@ def _row_start_datetime(row: Mapping[str, Any]) -> datetime | None:
     elif value is None:
         return None
     else:
-        timestamp = _row_float(value)
+        timestamp = finite_float_or_none(value)
         if timestamp is None:
             return None
         try:
@@ -454,16 +437,6 @@ def _row_start_datetime(row: Mapping[str, Any]) -> datetime | None:
         return parsed.astimezone(UTC)
     except OverflowError, OSError, ValueError:
         return None
-
-
-def _row_float(value: Any) -> float | None:
-    if value is None or value in ("", "unknown", "unavailable"):
-        return None
-    try:
-        parsed = float(value)
-    except OverflowError, TypeError, ValueError:
-        return None
-    return parsed if isfinite(parsed) else None
 
 
 def _format_day(value: dt_date | None) -> str | None:
@@ -500,29 +473,10 @@ def _thermostat_data_end_map(rows: list[dict[str, Any]]) -> dict[int, datetime]:
     mapping: dict[int, datetime] = {}
     for row in rows:
         thermostat_id = row_resource_id(row, "thermostat_id", "id")
-        data_end = _parse_beestat_time(row.get("data_end"))
+        data_end = parse_source_datetime(row.get("data_end"))
         if thermostat_id is not None and data_end is not None:
             mapping[thermostat_id] = data_end
     return mapping
-
-
-def _parse_beestat_time(value: Any) -> datetime | None:
-    if value in (None, ""):
-        return None
-    text = str(value)
-    try:
-        parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-    except ValueError:
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    try:
-        return parsed.astimezone(UTC)
-    except OverflowError, ValueError:
-        return None
 
 
 def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str, Any]]:
@@ -536,7 +490,7 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
         ) is not None:
             key = ("runtime_thermostat_id", runtime_thermostat_id)
         elif (resource_id := row_resource_id(row, id_field)) is not None and (
-            timestamp := _parse_beestat_time(row.get("timestamp"))
+            timestamp := parse_source_datetime(row.get("timestamp"))
         ) is not None:
             key = (id_field, resource_id, "timestamp", timestamp)
         else:

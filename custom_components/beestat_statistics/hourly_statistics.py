@@ -14,7 +14,7 @@ from math import fsum, isfinite
 from typing import Any
 
 from .config_model import BeestatConfig, build_sensor_statistics
-from .config_rows import positive_resource_id
+from .config_rows import as_bool, positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
     RUNTIME_FIELD_GROUPS,
@@ -252,12 +252,6 @@ def _timestamp(value: Any) -> datetime | None:
         return None
 
 
-def _deleted(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.lower() in {"true", "1", "yes", "on"}
-    return bool(value)
-
-
 def _points(
     rows: list[dict[str, Any]],
     id_field: str,
@@ -345,7 +339,7 @@ def _retain_quantity(
         or quantity.statistic_id in existing
         or quantity.statistic_id.removesuffix(_SUCCESSOR) in existing
         or any(
-            not _deleted(row.get("deleted"))
+            not as_bool(row.get("deleted"))
             and (_runtime_seconds(row, quantity.fields[0]) or 0) > 0
             for row in points.rows.values()
         )
@@ -402,7 +396,7 @@ def _exclusive_stage(row: dict[str, Any], prefix: str, stage: str) -> float | No
 
 
 def _value(row: dict[str, Any], quantity: _Quantity) -> float | None:
-    if _deleted(row.get("deleted")):
+    if as_bool(row.get("deleted")):
         return None
     if quantity.kind == "runtime":
         values = [_runtime_seconds(row, field) for field in quantity.fields]

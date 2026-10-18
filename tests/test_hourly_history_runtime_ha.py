@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from homeassistant.core import Context
 
 from custom_components.beestat_statistics import (
     hourly_history_runtime,
@@ -21,7 +20,6 @@ from custom_components.beestat_statistics import (
 )
 from custom_components.beestat_statistics.api import (
     BeestatRawReadError,
-    BeestatRawResponse,
     BeestatReadAttempt,
 )
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
@@ -33,109 +31,19 @@ from custom_components.beestat_statistics.hourly_import import (
     HourlyImportError,
     HourlyImportManager,
 )
-from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
-from tests.test_hourly_history_service_ha import (
+from tests.hourly_history_support import (
     END,
     NOW,
     QUANTITY,
     START,
+    _adopted,
     _content,
-    _plan_request,
-    _runtime,
-    _stage,
+    _finish,
+    _logical_hour,
+    _objects,
+    _provider,
+    _response,
 )
-
-
-async def _finish(runtime):
-    async with runtime.importer._lock:
-        while runtime.importer.hourly.has_pending_history:
-            result = await runtime.importer.hourly.async_advance_history(
-                context=runtime.importer._history_context()
-            )
-            assert result["status"] != "blocked", result
-    assert runtime.importer.hourly.history_status()["status"] == "completed"
-
-
-async def _adopted(
-    hass, admin, freezer, monkeypatch, tmp_path, *, finish=True, detailed=False
-):
-    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
-    data = runtime.coordinator.data
-    runtime.coordinator.data = replace(
-        data,
-        config=replace(
-            data.config,
-            sensors=(
-                ConfiguredSensor(
-                    10, "room", "Room", 1, "zone_a", True, False, False, True
-                ),
-            ),
-        ),
-        sensor_rows=({"id": 10, "thermostat_id": 1},),
-        summary_rows=(
-            ({"thermostat_id": 1, "date": "2026-09-10", "sum_humidifier": 900},)
-            if detailed
-            else data.summary_rows
-        ),
-    )
-    runtime.native = {}
-
-    async def snapshot(statistic_id, start, end):
-        metadata, rows = runtime.native.get(statistic_id, (None, {}))
-        return RecorderSnapshot(
-            tuple(rows[stamp] for stamp in sorted(rows) if start <= stamp < end),
-            deepcopy(metadata),
-            complete=True,
-        )
-
-    def submit(metadata, rows):
-        identifier = metadata["statistic_id"]
-        previous = runtime.native.get(identifier, (None, {}))[1]
-        runtime.native[identifier] = (
-            deepcopy(metadata),
-            {**previous, **{row.start: row for row in rows}},
-        )
-
-    monkeypatch.setattr(runtime.recorder, "async_snapshot_range", snapshot)
-    runtime.write = Mock(side_effect=submit)
-    monkeypatch.setattr(runtime.recorder, "submit", runtime.write)
-    receipt = await _stage(runtime, monkeypatch, tmp_path, Context(user_id=admin.id))
-    async with runtime.importer._lock:
-        context = runtime.importer._history_context()
-        request = _plan_request(runtime, receipt["source_id"])
-        if detailed:
-            request["quantity_ids"] = ["thermostat:1:humidifier_runtime_hours"]
-        plan = await runtime.importer.hourly.async_plan_history(
-            request, context=context
-        )
-        assert plan["status"] == "planned", plan
-        accepted = await runtime.importer.hourly.async_accept_history(
-            {**plan["request"], "plan_digest": plan["plan_digest"]}, context=context
-        )
-        assert accepted["status"] == "accepted"
-    if finish:
-        await _finish(runtime)
-    runtime.source_id = receipt["source_id"]
-    return runtime
-
-
-def _response(rows):
-    size = len(json.dumps(rows).encode())
-    return BeestatRawResponse(
-        rows,
-        (BeestatReadAttempt(1, 200, size, "success"),),
-        size,
-        False,
-    )
-
-
-def _provider(runtime, monkeypatch, *, rows=None, side_effect=None):
-    read = AsyncMock(
-        return_value=_response(json.loads(_content()) if rows is None else rows),
-        side_effect=side_effect,
-    )
-    monkeypatch.setattr(runtime.client, "async_read_runtime_thermostat", read)
-    return read
 
 
 async def _refresh(runtime, *, days=1):
@@ -145,28 +53,6 @@ async def _refresh(runtime, *, days=1):
             runtime.importer._history_context(),
             lookback_days=days,
         )
-
-
-def _objects(runtime):
-    root = Path(f"{runtime.store.path}.objects")
-    return {
-        str(path.relative_to(root)): sha256(path.read_bytes()).hexdigest()
-        for path in root.rglob("*")
-        if path.is_file()
-    }
-
-
-async def _logical_hour(runtime, *, start=START, end=END, quantity=QUANTITY):
-    response = await runtime.importer.async_get_hourly_history(
-        {
-            "config_entry_id": runtime.entry.entry_id,
-            "contract_version": 3,
-            "quantity_ids": [quantity],
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-        }
-    )
-    return response["series"][0]["buckets"][0]
 
 
 @pytest.mark.parametrize("provider_rows", ["identical", "shorter", "empty"])

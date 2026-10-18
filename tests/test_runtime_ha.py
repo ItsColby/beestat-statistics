@@ -7,12 +7,12 @@ import logging
 import types
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -33,9 +33,8 @@ from custom_components.beestat_statistics.config_model import (
     ConfiguredSensor,
     ConfiguredThermostat,
 )
+from custom_components.beestat_statistics.config_rows import finite_float_or_none
 from custom_components.beestat_statistics.const import (
-    API_BASE,
-    CONF_API_BASE,
     DOMAIN,
 )
 from custom_components.beestat_statistics.coordinator import (
@@ -45,14 +44,13 @@ from custom_components.beestat_statistics.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
+from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
 from custom_components.beestat_statistics.hourly_import import WriterPartition
 from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
 from custom_components.beestat_statistics.import_support import (
     PreparedImport,
     SummaryImportPlan,
     _dedupe_rows,
-    _parse_beestat_time,
-    _row_float,
     _row_start_datetime,
     _sensor_thermostat_map,
     _thermostat_data_end_map,
@@ -75,15 +73,16 @@ from custom_components.beestat_statistics.tracking import (
     _async_track_time_zone_updates,
     _filter_changed_entity_ids,
 )
-from tests.test_api_response import _FakeResponse, _FakeSession
+from tests.api_support import _FakeResponse, _FakeSession
+from tests.runtime_support import _coordinator_data
 
 
 async def test_recorder_seed_numbers_reject_nonfinite_values() -> None:
     """Malformed Recorder seeds must not poison cumulative imports."""
 
-    assert _row_float(42.5) == 42.5
-    assert _row_float("NaN") is None
-    assert _row_float("Infinity") is None
+    assert finite_float_or_none(42.5) == 42.5
+    assert finite_float_or_none("NaN") is None
+    assert finite_float_or_none("Infinity") is None
 
 
 async def test_import_writer_status_is_detached_projected_and_cleared(
@@ -253,7 +252,7 @@ async def test_malformed_point_ids_cannot_shadow_a_valid_source_row(
     ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"],
 )
 async def test_source_data_end_rejects_unrepresentable_utc_instants(value: str) -> None:
-    assert _parse_beestat_time(value) is None
+    assert parse_source_datetime(value) is None
 
 
 async def test_point_acquisition_maps_prefer_the_normalized_resource_identity() -> None:
@@ -457,7 +456,7 @@ async def test_point_window_permanent_http_failure_is_not_bisected(
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
-    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    read_window = partial(importer._async_read_runtime_window, f"runtime_{resource}")
     skipped_windows = SkippedWindowEvidence()
     with pytest.raises(BeestatPermanentError):
         await read_window(1, now - timedelta(days=30), now, skipped_windows)
@@ -493,7 +492,7 @@ async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
-    read_window = getattr(importer, f"_async_read_runtime_{resource}_window")
+    read_window = partial(importer._async_read_runtime_window, f"runtime_{resource}")
     skipped_windows = SkippedWindowEvidence()
     rows = await read_window(1, now - timedelta(days=2), now, skipped_windows)
     assert rows == [{"id": 1}, {"id": 2}]
@@ -755,72 +754,6 @@ async def test_repeated_unmapped_updates_preserve_only_the_own_resource_fallback
         assert devices.async_get(sensor_fallback.id) is not None
     assert client.calls == []
     await entry._async_process_on_unload(hass)
-
-
-def _entry(hass: HomeAssistant) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_API_KEY: "test-key", CONF_API_BASE: API_BASE},
-        options={},
-    )
-    entry.add_to_hass(hass)
-    return entry
-
-
-def _coordinator_data(
-    hass: HomeAssistant,
-    *,
-    evaluated_at: datetime,
-    data_end: datetime | None = None,
-    latest_date: date | None = None,
-    schedule: list[list[str]] | None = None,
-) -> tuple[MockConfigEntry, BeestatRuntimeDataCoordinator, Any]:
-    entry = _entry(hass)
-    client = types.SimpleNamespace(calls=[])
-    coordinator = BeestatRuntimeDataCoordinator(
-        hass,
-        entry,
-        client,
-        local_tz=ZoneInfo("America/New_York"),
-    )
-    thermostat_row: dict[str, Any] = {"id": 1, "name": "Zone A"}
-    if data_end is not None:
-        thermostat_row["data_end"] = data_end.isoformat()
-    if schedule is not None:
-        thermostat_row["timezone"] = "America/New_York"
-        thermostat_row["program"] = {
-            "currentClimateRef": "hold",
-            "climates": [
-                {"climateRef": "hold", "name": "Hold"},
-                {"climateRef": "sleep", "name": "Sleep"},
-                {"climateRef": "home", "name": "Home"},
-            ],
-            "schedule": schedule,
-        }
-    summary_rows = (
-        [
-            {
-                "thermostat_id": 1,
-                "date": latest_date.isoformat(),
-                "sum_fan": 3600,
-            }
-        ]
-        if latest_date is not None
-        else []
-    )
-    coordinator.data = coordinator._build_runtime_data(
-        summary_rows,
-        [thermostat_row],
-        [],
-        evaluated_at,
-        evaluated_at,
-        True,
-        None,
-        None,
-        evaluated_at=evaluated_at,
-        fetched_at=evaluated_at,
-    )
-    return entry, coordinator, client
 
 
 def _filter_uncertainty_data(

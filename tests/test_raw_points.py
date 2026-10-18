@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from custom_components.beestat_statistics import api, raw_points
 from custom_components.beestat_statistics import config_model as config
-from tests.test_api_response import _FakeResponse, _FakeSession
+from tests.api_support import _FakeResponse, _FakeSession
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
 END = START + timedelta(days=1)

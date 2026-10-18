@@ -41,15 +41,20 @@ unavailable, the displayed temperature does not replace it.
 | --- | --- | --- |
 | Point-history lookback | 45 days | 1–366 days |
 | Import interval | 21,600 seconds (6 hours) | 300–31,536,000 seconds |
+
+A shorter import interval cannot make Beestat publish sooner; a larger lookback
+increases import work. Legacy point imports use local-day windows; hourly
+imports use bounded UTC-hour windows with at most 366 elapsed days.
+
+**Filter limits** belong to each thermostat and are set under **Map a
+thermostat**. They are starting values for your maintenance policy, not
+manufacturer recommendations:
+
+| Option | Default | Allowed range |
+| --- | --- | --- |
 | Filter lifetime | 250 fan-runtime hours | 1–10,000 hours |
 | Filter maximum age | 90 days | 1–730 days |
 | Filter notice | 7 days | 0–365 days |
-
-Filter limits belong to each thermostat. They are starting values for your
-maintenance policy, not manufacturer recommendations. A shorter import interval
-cannot make Beestat publish sooner; a larger lookback increases import work.
-Legacy point imports use local-day windows; hourly imports use bounded UTC-hour
-windows with at most 366 elapsed days.
 
 ## Connection and configuration
 
@@ -248,8 +253,11 @@ reconciled; inspect current runtime quality for later gaps and source correction
 
 ## Call actions and handle their results
 
-Use **Developer tools → Actions** or an automation. The authoritative field
-reference is [services.yaml](../custom_components/beestat_statistics/services.yaml).
+Use **Developer tools → Actions** or an automation. Field descriptions appear in
+the Actions UI and live in
+[translations/en.json](../custom_components/beestat_statistics/translations/en.json);
+selectors, ranges and defaults are in
+[services.yaml](../custom_components/beestat_statistics/services.yaml).
 Replace illustrative IDs and dates before running examples.
 
 To inspect local configuration without network access or mutation:
@@ -315,10 +323,10 @@ An active administrator uses `stage_hourly_source` to retain bounded native
 uploads, `plan_hourly_history` to inspect an exact read-only proposal, and
 `apply_hourly_history` to accept that proposal for the entry's background worker.
 Admission preserves the selected quantity's writer reservation through failures.
-Contract 3 is the supported hourly floor. The former cumulative hourly selection
-and cached coverage routes are retired. Use v2026.10.11 for an older cumulative-hourly
-journal; this release does not migrate it. Retained Recorder history is preserved. Prepare
-compatible consumers and a consistent recovery set before admission.
+Contract 3 is the supported hourly floor; see
+[Qualified hourly history](hourly-history-v3.md) for the retired routes and the
+older-journal path. Prepare compatible consumers and a consistent recovery set
+before admission.
 
 See [the complete v3 contract](hourly-history-v3.md) for staging manifests,
 original-byte limits, request examples, hourly/daily eligibility, stable paging,

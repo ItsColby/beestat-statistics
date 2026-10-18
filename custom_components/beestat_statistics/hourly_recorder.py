@@ -24,19 +24,12 @@ from homeassistant.components.recorder.tasks import SynchronizeTask
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
 
+from .hourly_history_contract import METADATA_FIELDS
 from .hourly_rows import HourlyStatisticRow, RecorderSnapshot
 
 MAX_SNAPSHOT_ROWS = 366 * 24 + 1  # A maximum source window plus its exact predecessor.
 MAX_BOUNDED_SNAPSHOT_HOURS = 31 * 24
 _FIELDS = ("mean", "min", "max", "state", "sum")
-_METADATA_FIELDS = (
-    "statistic_id",
-    "source",
-    "unit_of_measurement",
-    "unit_class",
-    "mean_type",
-    "has_sum",
-)
 type _NativeStatisticType = Literal[
     "change", "last_reset", "mean", "min", "max", "state", "sum"
 ]
@@ -191,7 +184,7 @@ def _metadata_value(statistic_id: str, value: Any) -> dict[str, Any]:
 def _validated_metadata(statistic_id: Any, metadata: Any) -> dict[str, Any]:
     _validate_id(statistic_id)
     if not isinstance(metadata, Mapping) or any(
-        field not in metadata for field in _METADATA_FIELDS
+        field not in metadata for field in METADATA_FIELDS
     ):
         raise HourlyRecorderError("incomplete_metadata_projection")
     if metadata["statistic_id"] != statistic_id or metadata["source"] != "beestat":
