@@ -40,7 +40,11 @@ from custom_components.beestat_statistics.binary_sensor import (
     BeestatFilterDueProblemBinarySensor,
     BeestatFilterDueSoonProblemBinarySensor,
 )
-from custom_components.beestat_statistics.button import BeestatFilterChangedButton
+from custom_components.beestat_statistics.button import (
+    BUTTON_DESCRIPTIONS,
+    BeestatButton,
+    BeestatFilterChangedButton,
+)
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
@@ -713,3 +717,62 @@ async def test_filter_button_tracks_source_removal_recovery_and_cloud_failure(
         assert hass.states.get(entity.entity_id).state != STATE_UNAVAILABLE
 
     assert not coordinator._listeners
+
+
+# action key -> (generic failure key, whether failures are recorded as import errors)
+BUTTON_ERROR_MAPPING = {
+    "refresh_runtime": ("beestat_request_failed", False),
+    "import_statistics": ("statistics_import_failed", True),
+}
+
+
+def test_every_button_action_has_an_error_mapping_case() -> None:
+    assert {d.key for d in BUTTON_DESCRIPTIONS} == set(BUTTON_ERROR_MAPPING)
+
+
+@pytest.mark.parametrize("description", BUTTON_DESCRIPTIONS, ids=lambda d: d.key)
+@pytest.mark.parametrize(
+    ("error", "auth", "api"),
+    [
+        (RuntimeError("boom"), False, False),
+        (BeestatApiError("boom"), False, True),
+        (BeestatAuthError("boom"), True, True),
+    ],
+    ids=["unexpected", "api", "auth"],
+)
+async def test_button_press_maps_and_records_errors(
+    description: Any, error: Exception, auth: bool, api: bool
+) -> None:
+    generic_key, records = BUTTON_ERROR_MAPPING[description.key]
+    coordinator = Mock()
+    coordinator.async_refresh_runtime = AsyncMock()
+    importer = Mock()
+    importer.async_import_statistics = AsyncMock()
+    action = (
+        coordinator.async_refresh_runtime
+        if description.key == "refresh_runtime"
+        else importer.async_import_statistics
+    )
+    action.side_effect = error
+
+    with pytest.raises(HomeAssistantError) as raised:
+        await BeestatButton(coordinator, importer, description).async_press()
+
+    expected_key = (
+        "beestat_auth_failed"
+        if auth
+        else "beestat_request_failed"
+        if api
+        else generic_key
+    )
+    assert raised.value.translation_key == expected_key
+    action.assert_awaited_once()
+    if records:
+        coordinator.async_record_import_error.assert_called_once_with(error)
+    else:
+        coordinator.async_record_import_error.assert_not_called()
+    reauth = coordinator.beestat_config_entry.async_start_reauth_if_available
+    if auth:
+        reauth.assert_called_once_with(coordinator.hass)
+    else:
+        reauth.assert_not_called()
