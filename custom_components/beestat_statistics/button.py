@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .api import BeestatApiError, BeestatAuthError, exception_fingerprint
 from .config_model import ConfiguredThermostat
-from .const import DOMAIN, thermostat_entity_unique_id
+from .const import thermostat_entity_unique_id
 from .coordinator import BeestatRuntimeDataCoordinator
 from .entity import (
     async_add_new_entities,
@@ -36,7 +33,6 @@ if TYPE_CHECKING:
 
     from .importer import BeestatStatisticsImporter
 
-_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
 
@@ -112,44 +108,19 @@ class BeestatButton(ButtonEntity):
         """Handle the button press."""
 
         action = self.entity_description.key
-        try:
-            if action == "refresh_runtime":
+        refresh = action == "refresh_runtime"
+        with beestat_error_boundary(
+            self._coordinator,
+            f"Beestat button failure during {action}",
+            record_error=not refresh,
+            generic_key=(
+                "beestat_request_failed" if refresh else "statistics_import_failed"
+            ),
+        ):
+            if refresh:
                 await self._coordinator.async_refresh_runtime()
-                return
-            await self._importer.async_import_statistics()
-        except BeestatAuthError as err:
-            if action != "refresh_runtime":
-                self._coordinator.async_record_import_error(err)
-            self._coordinator.beestat_config_entry.async_start_reauth_if_available(
-                self._coordinator.hass
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_auth_failed",
-            ) from None
-        except BeestatApiError as err:
-            if action != "refresh_runtime":
-                self._coordinator.async_record_import_error(err)
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="beestat_request_failed",
-            ) from None
-        except Exception as err:  # noqa: BLE001 - sanitize at the HA entity boundary
-            if action != "refresh_runtime":
-                self._coordinator.async_record_import_error(err)
-            _LOGGER.error(
-                "Unexpected Beestat button failure during %s (%s)",
-                action,
-                exception_fingerprint(err),
-            )
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key=(
-                    "beestat_request_failed"
-                    if action == "refresh_runtime"
-                    else "statistics_import_failed"
-                ),
-            ) from None
+            else:
+                await self._importer.async_import_statistics()
 
     @property
     def device_info(self) -> DeviceInfo:
