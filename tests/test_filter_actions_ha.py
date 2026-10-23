@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import types
+from contextlib import nullcontext
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Any
@@ -36,6 +37,10 @@ from custom_components.beestat_statistics.const import (
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
 from custom_components.beestat_statistics.entry_options import async_mark_filter_changed
+from custom_components.beestat_statistics.hourly_import import (
+    HourlyImportManager,
+    WriterPartition,
+)
 from custom_components.beestat_statistics.importer import BeestatStatisticsImporter
 from custom_components.beestat_statistics.statistics_builder import (
     detailed_runtime_statistic_ids,
@@ -275,8 +280,12 @@ async def test_bounded_rebuild_updates_real_recorder_tail_and_next_window_seed(
 
 @pytest.mark.usefixtures("recorder_mock")
 @pytest.mark.parametrize("replace_importer", [False, True])
+@pytest.mark.parametrize("fan_only_blocked_hourly", [False, True])
 async def test_queued_rebuild_is_visible_before_next_import_seed_read(
-    hass: HomeAssistant, freezer: Any, replace_importer: bool
+    hass: HomeAssistant,
+    freezer: Any,
+    replace_importer: bool,
+    fan_only_blocked_hourly: bool,
 ) -> None:
     """A busy Recorder cannot let the next importer overwrite a corrected tail."""
 
@@ -321,6 +330,14 @@ async def test_queued_rebuild_is_visible_before_next_import_seed_read(
         hass, client, coordinator, point_lookback_days=1
     )
     fan_id = "beestat:zone_a_fan_runtime_hours"
+    partition = WriterPartition(
+        legacy_statistic_ids=frozenset({fan_id}),
+        has_hourly=True,
+        hourly_blocked_reason="history_operation_blocked",
+    )
+    assert not partition.legacy_statistic_ids.intersection(
+        detailed_runtime_statistic_ids(coordinator.data.config)
+    )
     paused = asyncio.Event()
     release = threading.Event()
     followup_started = False
@@ -352,7 +369,21 @@ async def test_queued_rebuild_is_visible_before_next_import_seed_read(
         ):
             release.set()
 
-    with patch.object(coordinator, "async_refresh_runtime", new=refresh):
+    with (
+        patch.object(coordinator, "async_refresh_runtime", new=refresh),
+        patch.object(
+            HourlyImportManager,
+            "async_writer_partition",
+            new=AsyncMock(return_value=partition),
+        )
+        if fan_only_blocked_hourly
+        else nullcontext(),
+        patch.object(
+            HourlyImportManager, "history_status", return_value={"status": "blocked"}
+        )
+        if fan_only_blocked_hourly
+        else nullcontext(),
+    ):
         await importer.async_import_statistics(skip_sync=True, force_full_summary=True)
         await async_wait_recording_done(hass)
         rows[1]["sum_fan"] = 10800
@@ -388,7 +419,12 @@ async def test_queued_rebuild_is_visible_before_next_import_seed_read(
                     importer, "_async_prepare_import", new=prepare_import
                 ):
                     result = await next_importer.async_import_statistics(skip_sync=True)
-                assert result.summary_mode == "windowed"
+                assert result.summary_mode == (
+                    "mixed" if fan_only_blocked_hourly else "windowed"
+                )
+                assert result.cumulative_seed_count > 0
+                if fan_only_blocked_hourly:
+                    assert result.hourly_blocked_reason == "history_operation_blocked"
         finally:
             release.set()
         await async_wait_recording_done(hass)

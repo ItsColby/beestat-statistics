@@ -898,15 +898,16 @@ class BeestatStatisticsImporter:
         statistic_ids = set(detailed_runtime_statistic_ids(runtime_data.config))
         if allowed_legacy_ids is not None:
             statistic_ids.intersection_update(allowed_legacy_ids)
-        if not statistic_ids:
-            return frozenset()
         recorder = get_recorder_instance(self._hass)
         # Reads use a different executor from imports. Queue an unconditional
         # marker so even the last running import, including an old entry's
         # queued work, is processed before inventory and cumulative seed reads.
+        # Aggregate-only daily partitions still need that cumulative seed fence.
         synchronized: asyncio.Future[None] = self._hass.loop.create_future()
         recorder.queue_task(SynchronizeTask(synchronized))
         await asyncio.shield(synchronized)
+        if not statistic_ids:
+            return frozenset()
         metadata = await recorder.async_add_executor_job(
             partial(get_metadata, self._hass, statistic_ids=statistic_ids)
         )
