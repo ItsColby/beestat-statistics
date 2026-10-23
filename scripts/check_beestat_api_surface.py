@@ -266,7 +266,6 @@ def fetch_surface() -> dict[str, Any]:
         "snapshot": {
             "commit_sha": commit_sha,
             "commit_date": commit["commit"]["committer"]["date"],
-            "commit_message": commit["commit"]["message"],
             "captured_at": datetime.now(UTC).isoformat(),
         },
         "watch_paths": list(WATCH_PATHS),
