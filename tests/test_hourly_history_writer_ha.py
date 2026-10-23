@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from homeassistant.core import Context
 
+from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import import (
     HourlyImportError,
     HourlyImportManager,
@@ -18,6 +19,7 @@ from custom_components.beestat_statistics.hourly_recorder import HourlyRecorder
 from custom_components.beestat_statistics.hourly_sources import async_stage_source
 from tests.hourly_history_support import (
     END,
+    QUANTITY,
     START,
     _content,
     _manifest,
@@ -111,6 +113,83 @@ async def test_native_effect_with_failed_proof_readback_restarts_without_resubmi
     assert result["status"] == "completed"
     submit.assert_not_called()
     assert (await runtime.store.async_load())["pending"] is None
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("blocked_before_pending", [False, True])
+async def test_accepted_replacement_hides_old_native_proof_before_pending(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, blocked_before_pending
+):
+    runtime, _apply = await _accepted(
+        hass, hass_admin_user, freezer, monkeypatch, tmp_path
+    )
+    manager = runtime.importer.hourly
+    context = runtime.importer._history_context()
+    await manager.async_advance_history(context=context)
+    rows = json.loads(_content())
+    for row in rows:
+        row["fan"] = 150
+    content = json.dumps(rows).encode()
+    checksum = sha256(content).hexdigest()
+    receipt = await async_stage_source(
+        runtime.store,
+        content,
+        {
+            **_manifest(runtime),
+            "acquisition_id": "reviewed-conflicting-source",
+            "original_sha256": checksum,
+            "original_byte_count": len(content),
+        },
+        checksum,
+        context["identity"],
+    )
+    plan = await manager.async_plan_history(
+        {
+            **_plan_request(runtime, receipt["source_id"]),
+            "operation_id": "reviewed-replacement",
+            "expected_revision": (await runtime.store.async_load())["revision"],
+        },
+        context=context,
+    )
+    assert plan["status"] == "planned"
+    await manager.async_accept_history(
+        {**plan["request"], "plan_digest": plan["plan_digest"]}, context=context
+    )
+    if blocked_before_pending:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(
+                runtime.recorder,
+                "async_snapshot_range",
+                AsyncMock(side_effect=OSError("snapshot unavailable")),
+            )
+            with pytest.raises(OSError, match="snapshot unavailable"):
+                await manager.async_advance_history(context=context)
+    saved = await runtime.store.async_load()
+    assert saved["pending"] is None
+    assert saved["operation"]["status"] == (
+        "blocked" if blocked_before_pending else "accepted"
+    )
+    recovered = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=runtime.recorder
+    )
+    request = {
+        "contract_version": 3,
+        "quantity_ids": [QUANTITY],
+        "start": START.isoformat(),
+        "end": END.isoformat(),
+    }
+    material = await recovered.async_history_material(request, context=context)
+    response = history_response(request, material, context)
+    bucket = response["series"][0]["buckets"][0]
+    assert bucket["value"] is None and bucket["eligible_intervals"] == []
+    assert response["series"][0]["summary"]["eligible_hours"] == 0
+    # The old native value and committed proof still exist; sealed replacement
+    # intent, rather than native absence, must make the query ineligible.
+    assert material["hours"][QUANTITY][0]["status"] == "ready"
+    assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
+        0
+    ].mean == pytest.approx(25)
+    assert await runtime.store.async_load() == saved
     await runtime.entry._async_process_on_unload(hass)
 
 

@@ -123,8 +123,9 @@ async def test_collection_rejects_partial_scope_and_linked_namespace(
     assert list(external.iterdir()) == [external / ("a" * 64)]
 
 
+@pytest.mark.parametrize("cancel_caller", [False, True])
 async def test_backup_pause_waits_for_a_running_sweep_and_blocks_new_ones(
-    hass, object_store
+    hass, object_store, cancel_caller
 ):
     (old,) = await _write(object_store, "proof", b"superseded")
     started, release = threading.Event(), threading.Event()
@@ -139,20 +140,28 @@ async def test_backup_pause_waits_for_a_running_sweep_and_blocks_new_ones(
     with patch.object(object_store, "_collect_objects", slow):
         sweep = asyncio.ensure_future(_collect(object_store, keep))
         await hass.async_add_executor_job(started.wait, 5)
+        if cancel_caller:
+            sweep.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await sweep
         pause = asyncio.ensure_future(backup.async_pre_backup(hass))
         await asyncio.sleep(0.05)
         assert not pause.done()
         release.set()
         await pause
         # The sweep saw the pause before deleting anything.
-        assert await sweep == 0
+        if not cancel_caller:
+            assert await sweep == 0
     assert _kind(object_store, "proof") == [old]
     assert await _collect(object_store, keep) == 0
     await backup.async_post_backup(hass)
     assert await _collect(object_store, keep) == 1
 
 
-async def test_replaced_writer_waits_for_and_closes_a_running_sweep(hass, object_store):
+@pytest.mark.parametrize("cancel_caller", [False, True])
+async def test_replaced_writer_waits_for_and_closes_a_running_sweep(
+    hass, object_store, cancel_caller
+):
     (old,) = await _write(object_store, "proof", b"superseded")
     replacement = HourlyStore(hass, "retention-contract")
     started, release = threading.Event(), threading.Event()
@@ -173,6 +182,10 @@ async def test_replaced_writer_waits_for_and_closes_a_running_sweep(hass, object
             _collect(object_store, keep, closed=lambda: closed)
         )
         await hass.async_add_executor_job(started.wait, 5)
+        if cancel_caller:
+            sweep.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await sweep
         # The reloaded writer's new generation waits out the stale keep set.
         write = asyncio.ensure_future(
             replacement.async_write_object("proof", b"current")
@@ -180,7 +193,8 @@ async def test_replaced_writer_waits_for_and_closes_a_running_sweep(hass, object
         await asyncio.sleep(0.05)
         assert not write.done()
         release.set()
-        assert await sweep == 1
+        if not cancel_caller:
+            assert await sweep == 1
         current = await write
         assert _kind(object_store, "proof") == [current]
         # An unloaded writer's running sweep stops, and it starts no new one.

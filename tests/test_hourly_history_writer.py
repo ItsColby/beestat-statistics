@@ -18,6 +18,7 @@ from custom_components.beestat_statistics import (
 from custom_components.beestat_statistics import hourly_history_writer as writer
 from custom_components.beestat_statistics import hourly_import as manager
 from custom_components.beestat_statistics import hourly_sources as sources
+from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.history_support import Recorder as FixtureRecorder
 from tests.history_support import Store as FixtureStore
@@ -433,10 +434,101 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             material["pending_affected"][KEY],
-            [[START.isoformat(), (START + HOUR).isoformat()]],
+            [
+                [START.isoformat(), (START + HOUR).isoformat()],
+                [(START + HOUR).isoformat(), (START + 2 * HOUR).isoformat()],
+            ],
         )
         self.assertEqual(material["hours"][KEY], [])
         self.assertEqual((self.store.calls, len(self.recorder.submissions)), before)
+
+    async def test_accepted_correction_suppresses_all_unfinished_months(self):
+        await self.accept()
+        await self.complete()
+        correction = await self.delta_request()
+        accepted = await self.writer.async_refresh_history(
+            correction, context=self.context
+        )
+        self.assertEqual((accepted["status"], accepted["batch_count"]), ("accepted", 2))
+        request = {**correction, "contract_version": 3, "quantity_ids": [KEY]}
+        for cursor in range(3):
+            with self.subTest(cursor=cursor):
+                # A cold reader must derive the fence from durable intent, even
+                # before any batch has a pending record or between commits.
+                self.writer = self.fresh()
+                self.assertIsNone(self.store.value["pending"])
+                before = (self.store.calls, len(self.recorder.submissions))
+                material = await self.writer.async_history_material(
+                    request, context=self.context
+                )
+                response = history_response(request, material, self.context)
+                buckets = response["series"][0]["buckets"]
+                self.assertEqual(
+                    [bucket["value"] for bucket in buckets],
+                    [1.0] * cursor + [None] * (2 - cursor),
+                )
+                self.assertEqual(
+                    [bool(bucket["eligible_intervals"]) for bucket in buckets],
+                    [True] * cursor + [False] * (2 - cursor),
+                )
+                self.assertEqual(
+                    len(material["pending_affected"].get(KEY, [])), 2 - cursor
+                )
+                self.assertEqual(
+                    (self.store.calls, len(self.recorder.submissions)), before
+                )
+                if cursor < 2:
+                    await self.writer.async_advance_history(context=self.context)
+
+    async def test_blocked_before_pending_suppresses_old_proof_until_recovery(self):
+        await self.accept()
+        await self.complete()
+        correction = await self.delta_request()
+        await self.writer.async_refresh_history(correction, context=self.context)
+        original = self.recorder.on_read
+
+        def failed_read():
+            raise OSError("snapshot unavailable before pending intent")
+
+        self.recorder.on_read = failed_read
+        with self.assertRaisesRegex(OSError, "snapshot unavailable"):
+            await self.writer.async_advance_history(context=self.context)
+        self.recorder.on_read = original
+        self.assertIsNone(self.store.value["pending"])
+        self.assertEqual(self.store.value["operation"]["status"], "blocked")
+        self.writer = self.fresh()
+        request = {**correction, "contract_version": 3, "quantity_ids": [KEY]}
+        material = await self.writer.async_history_material(
+            request, context=self.context
+        )
+        response = history_response(request, material, self.context)
+        self.assertTrue(
+            all(bucket["value"] is None for bucket in response["series"][0]["buckets"])
+        )
+        self.assertEqual(response["series"][0]["summary"]["eligible_hours"], 0)
+        self.assertEqual(
+            [row.mean for row in self.recorder.rows[NATIVE].values()], [50, 50]
+        )
+        operation = json.loads(
+            await self.store.async_read_object(
+                "operation", self.store.value["operation"]["object"]
+            )
+        )
+        await self.writer.async_accept_history(
+            {
+                **operation["request"],
+                "plan_digest": self.store.value["operation"]["plan_digest"],
+            },
+            context=self.context,
+        )
+        await self.complete()
+        material = await self.writer.async_history_material(
+            request, context=self.context
+        )
+        response = history_response(request, material, self.context)
+        self.assertEqual(
+            [bucket["value"] for bucket in response["series"][0]["buckets"]], [1.0, 1.0]
+        )
 
     async def test_only_daily_queries_read_the_legacy_source(self):
         await self.accept()

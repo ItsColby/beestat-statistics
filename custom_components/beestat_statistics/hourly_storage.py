@@ -179,7 +179,7 @@ class HourlyStore:
         # An executor job outlives a cancelled caller; backups and writes wait for it.
         control.running[self.path] = future
         future.add_done_callback(lambda _: control.running.pop(self.path, None))
-        return await future
+        return await asyncio.shield(future)
 
     async def async_process_source_job[T](
         self, function: Callable[..., T], *args: Any
