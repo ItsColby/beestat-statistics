@@ -43,10 +43,9 @@
   ],
   "schema_version": 1,
   "snapshot": {
-    "captured_at": "2026-09-09T01:21:33.411650+00:00",
-    "commit_date": "2026-08-27T12:04:53Z",
-    "commit_message": "Increased Songstead promo percentage",
-    "commit_sha": "42c3b775cbb2e8a6893ac1346a8b42e3c0bd17e1"
+    "captured_at": "2026-10-23T08:03:11.650409+00:00",
+    "commit_date": "2026-10-23T03:26:33Z",
+    "commit_sha": "53b9464256017bbb9bd39144c723bcb6261edd7a"
   },
   "source": {
     "api_docs_url": "https://api.beestat.io/doc",
@@ -68,7 +67,7 @@
   ],
   "watched_files": {
     "api/cora/api.php": {
-      "blob_sha": "cf3ec545cde707031bd356a4746dd48c673a1d03",
+      "blob_sha": "d53eb4186ac57c90028cf21df9cf00d879728cb2",
       "checks": {},
       "exposed": null
     },
@@ -80,7 +79,7 @@
       "exposed": null
     },
     "api/ecobee_thermostat.php": {
-      "blob_sha": "5e31527718a2893081a20ffeb534d6736ce2e0a9",
+      "blob_sha": "7c365a8ef5655a0c04e179485642548ebe709961",
       "checks": {},
       "exposed": {
         "private": [
@@ -98,7 +97,7 @@
       "exposed": null
     },
     "api/runtime.php": {
-      "blob_sha": "b3fc9f61491db9c1d84d1b1070df9b7a17ba3353",
+      "blob_sha": "11451607123c946ac2ddea10d2c4c84aaba0bbe4",
       "checks": {},
       "exposed": {
         "private": [

@@ -154,6 +154,8 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
 
     def test_fetch_pins_tree_and_content_to_one_commit(self) -> None:
         commit, tree, content = self._upstream_fixture()
+        commit["commit"]["message"] = "Upstream prose with author@example.com"
+        commit["commit"]["committer"]["email"] = "committer@example.com"
         with (
             patch.object(
                 self.checker, "_request_json", side_effect=[commit, tree]
@@ -162,6 +164,11 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
         ):
             surface = self.checker.fetch_surface()
         self.checker.validate_surface(surface)
+        self.assertEqual(
+            set(surface["snapshot"]), {"commit_sha", "commit_date", "captured_at"}
+        )
+        self.assertEqual(surface["snapshot"]["commit_sha"], commit["sha"])
+        self.assertNotIn("example.com", json.dumps(surface))
         self.assertEqual(
             req.call_args.args[0],
             f"{self.checker.GITHUB_API_ROOT}/git/trees/{'b' * 40}?recursive=1",

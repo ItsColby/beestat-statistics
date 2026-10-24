@@ -2078,14 +2078,34 @@ class HistoryWriter:
                 result["legacy_days"][key] = await self.legacy_days(
                     selection, first, end, context
                 )
-        pending = (state or {}).get("pending")
-        if pending and pending.get("generation") == 3:
-            batch = pending.get("batch", pending)
-            result["pending_affected"][batch["quantity_id"]] = [
-                [batch["start"], batch["end"]]
-            ]
+        result["pending_affected"] = await self.unfinished_windows(state, context)
         await self.check_material(result, context)
         return result
+
+    async def unfinished_windows(
+        self, state: dict[str, Any] | None, context: dict[str, Any]
+    ) -> dict[str, list[list[str]]]:
+        """Suppress replaced proof until each accepted batch commits its successor."""
+        if not state or state.get("version") != 3:
+            return {}
+        operation = state["operation"]
+        if operation["cursor"] == operation["batch_count"]:
+            return {}
+        manifest = await self.read_object("operation", operation["object"], context)
+        if (
+            digest(manifest) != operation["plan_digest"]
+            or len(manifest["batches"]) != operation["batch_count"]
+        ):
+            raise HourlyImportError("history_operation_context_changed")
+        windows: dict[str, list[list[str]]] = {}
+        # Acceptance already changes source_revision. The current pending intent
+        # covers only one batch and may not exist yet (or between batches).
+        # The sealed manifest owns every remaining half-open replacement window.
+        for batch in manifest["batches"][operation["cursor"] :]:
+            windows.setdefault(batch["quantity_id"], []).append(
+                [batch["start"], batch["end"]]
+            )
+        return windows
 
     async def check_material(
         self, material: dict[str, Any], context: dict[str, Any]

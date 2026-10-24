@@ -405,7 +405,9 @@ Retention below removes the generations a pass replaces.
 Twelve samples and elapsed time do not replace the required source horizon:
 insufficient evidence remains provisional. Exact durable intent, native
 readback and durable proof are required before coverage advances, including
-after interruption; pending or failed work remains suppressed. Queries perform
+after interruption. Every unfinished accepted batch's window remains suppressed,
+including before its pending intent is saved, between batches and while blocked;
+completed batches expose their newly verified proof. Queries perform
 none of these effects.
 
 Changed observations use `integration_delta_v1` with evaluation version
