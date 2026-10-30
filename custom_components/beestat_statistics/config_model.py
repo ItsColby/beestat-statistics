@@ -1290,8 +1290,7 @@ def _filter_changed_entity_id(
     if entity_id:
         return entity_id
     candidate = f"input_datetime.{slug}_hvac_filter_changed"
-    states = getattr(hass, "states", None)
-    if states is not None and states.get(candidate) is not None:
+    if hass.states.get(candidate) is not None:
         return candidate
     return None
 

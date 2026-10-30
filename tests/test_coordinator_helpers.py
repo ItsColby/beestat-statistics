@@ -1584,7 +1584,10 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
     ):
         entry = types.SimpleNamespace(data={}, options={})
         hass = types.SimpleNamespace(
-            states=types.SimpleNamespace(get=lambda _entity_id: None)
+            states=types.SimpleNamespace(get=lambda _entity_id: None),
+            config=types.SimpleNamespace(
+                units=types.SimpleNamespace(temperature_unit="°F")
+            ),
         )
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
         coordinator._filter_day_cache = {}

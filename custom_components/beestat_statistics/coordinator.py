@@ -1490,9 +1490,7 @@ def _build_room_temperature_spreads(
 
 
 def _configured_temperature_unit(hass: HomeAssistant) -> str | None:
-    config = getattr(hass, "config", None)
-    units = getattr(config, "units", None)
-    return _canonical_temperature_unit(getattr(units, "temperature_unit", None))
+    return _canonical_temperature_unit(hass.config.units.temperature_unit)
 
 
 def _temperature_state_value(
