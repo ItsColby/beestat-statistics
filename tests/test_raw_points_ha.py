@@ -113,6 +113,7 @@ async def _call(hass, entry, context, **changes):
     )
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_action_uses_existing_client_for_both_kinds_without_writes(
     hass, hass_admin_user, freezer, monkeypatch
 ):
@@ -141,9 +142,9 @@ async def test_native_action_uses_existing_client_for_both_kinds_without_writes(
     assert all(request["method"] == "read" for request in session.requests)
     for spy in forbidden:
         spy.assert_not_called()
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_admin_context_and_invalid_identity_make_no_transport_call(
     hass, hass_admin_user, freezer, monkeypatch
 ):
@@ -171,9 +172,9 @@ async def test_native_admin_context_and_invalid_identity_make_no_transport_call(
     assert session.call_count == 0
     for spy in forbidden:
         spy.assert_not_called()
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_provider_auth_failure_returns_receipt_without_reauth_or_writes(
     hass, hass_admin_user, freezer, monkeypatch
 ):
@@ -191,7 +192,6 @@ async def test_native_provider_auth_failure_returns_receipt_without_reauth_or_wr
     assert session.call_count == 1
     for spy in forbidden:
         spy.assert_not_called()
-    await entry._async_process_on_unload(hass)
 
 
 class _PausedContent(_FakeContent):
@@ -224,6 +224,7 @@ def _paused_response(monkeypatch, started, proceed, phase):
     return response
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("changed_owner", ["metadata", "runtime"])
 @pytest.mark.parametrize("phase", ["transport", "receipt"])
 async def test_native_runtime_change_discards_inflight_response(
@@ -252,7 +253,6 @@ async def test_native_runtime_change_discards_inflight_response(
     assert session.call_count == 1
     for spy in forbidden:
         spy.assert_not_called()
-    await entry._async_process_on_unload(hass)
 
 
 @pytest.mark.parametrize("phase", ["transport", "receipt"])

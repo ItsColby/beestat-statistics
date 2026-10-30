@@ -279,6 +279,7 @@ async def test_point_acquisition_maps_prefer_the_normalized_resource_identity() 
     }
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("read_fails", [False, True])
 async def test_sensor_runtime_is_read_once_for_all_enabled_statistics(
     hass: HomeAssistant,
@@ -289,7 +290,7 @@ async def test_sensor_runtime_is_read_once_for_all_enabled_statistics(
 
     now = datetime(2026, 7, 1, 16, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     sensor = ConfiguredSensor(
         sensor_id=10,
         slug="room",
@@ -333,9 +334,9 @@ async def test_sensor_runtime_is_read_once_for_all_enabled_statistics(
     )
     assert rows == {10: [] if read_fails else [row]}
     assert skipped_windows.runtime_sensor_count == int(read_fails)
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize(
     ("selected", "thermostat_ids", "sensor_ids"),
     [
@@ -352,7 +353,7 @@ async def test_legacy_partition_filters_acquisition_without_changing_output(
     """Mixed ownership fetches only needed points and preserves the owned rows."""
     now = datetime(2026, 7, 1, 16, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     config = BeestatConfig(
         thermostats=(
             ConfiguredThermostat(thermostat_id=1, slug="zone_a", name="Zone A"),
@@ -441,9 +442,9 @@ async def test_legacy_partition_filters_acquisition_without_changing_output(
     assert scoped.series == expected
     if selected:
         assert {item.statistic_id for item in scoped.series} == selected
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("resource", ["thermostat", "sensor"])
 @pytest.mark.parametrize("status", [302, 400, 404])
 async def test_point_window_permanent_http_failure_is_not_bisected(
@@ -453,7 +454,7 @@ async def test_point_window_permanent_http_failure_is_not_bisected(
 
     now = datetime(2026, 7, 31, 16, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
     session = _FakeSession([_FakeResponse({}, status=status)])
     client = BeestatClient(session, "test-token", "https://api.test/", retries=3)
     importer = BeestatStatisticsImporter(
@@ -466,9 +467,9 @@ async def test_point_window_permanent_http_failure_is_not_bisected(
     assert session.call_count == 1
     assert session.allow_redirects == [False]
     assert skipped_windows.total_count == 0
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("resource", ["thermostat", "sensor"])
 @pytest.mark.parametrize("failure", ["oversize", "server_error"])
 async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
@@ -478,7 +479,7 @@ async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
 
     now = datetime(2026, 7, 31, 16, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
     failed = (
         _FakeResponse({"data": [{"value": "x" * 1024}]})
         if failure == "oversize"
@@ -501,9 +502,9 @@ async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
     assert rows == [{"id": 1}, {"id": 2}]
     assert session.call_count == 3
     assert skipped_windows.total_count == 0
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_point_window_outage_stops_bisecting_after_failure_budget(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -511,7 +512,7 @@ async def test_point_window_outage_stops_bisecting_after_failure_budget(
 
     now = datetime(2026, 7, 31, 16, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
     session = _FakeSession([_FakeResponse({}, status=500)] * 200)
     client = BeestatClient(session, "test-token", "https://api.test/", retries=1)
     importer = BeestatStatisticsImporter(
@@ -523,7 +524,6 @@ async def test_point_window_outage_stops_bisecting_after_failure_budget(
             "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
         )
     assert session.call_count == MAX_TRANSIENT_WINDOW_FAILURES + 1
-    await entry._async_process_on_unload(hass)
 
 
 async def test_unload_cancels_active_and_queued_service_imports_before_recorder_write(
@@ -617,6 +617,7 @@ async def test_filter_helper_listener_follows_sources_and_stops_on_unload(
     assert client.calls == []
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_device_reconciliation_includes_all_owned_resource_entity_suffixes(
     hass: HomeAssistant,
     freezer: Any,
@@ -684,9 +685,9 @@ async def test_device_reconciliation_includes_all_owned_resource_entity_suffixes
     assert device_registry.async_get(fallback.id) is None
     assert entity_registry.async_get(unrelated.entity_id).device_id is None
     assert entity_registry.async_get(other_resource.entity_id).device_id is None
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_repeated_unmapped_updates_preserve_only_the_own_resource_fallback(
     hass: HomeAssistant,
     freezer: Any,
@@ -778,7 +779,6 @@ async def test_repeated_unmapped_updates_preserve_only_the_own_resource_fallback
         assert devices.async_get(thermostat_fallback.id) is not None
         assert devices.async_get(sensor_fallback.id) is not None
     assert client.calls == []
-    await entry._async_process_on_unload(hass)
 
 
 def _filter_uncertainty_data(
@@ -970,6 +970,7 @@ async def test_unload_cancels_filter_uncertainty_timer(
     assert updates == []
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_source_refresh_replaces_real_stale_timer(
     hass: HomeAssistant,
     freezer: Any,
@@ -978,7 +979,7 @@ async def test_source_refresh_replaces_real_stale_timer(
     old_deadline = datetime(2026, 7, 1, 18, 30, 30, 1, tzinfo=UTC)
     new_deadline = datetime(2026, 7, 1, 19, 30, 30, 1, tzinfo=UTC)
     freezer.move_to(before)
-    entry, coordinator, client = _coordinator_data(
+    _entry, coordinator, client = _coordinator_data(
         hass,
         evaluated_at=before,
         data_end=datetime(2026, 7, 1, 11, 30, tzinfo=UTC),
@@ -1019,7 +1020,6 @@ async def test_source_refresh_replaces_real_stale_timer(
     assert coordinator.data.projected_at == new_deadline
     assert client.calls == []
     assert updates == ["updated"]
-    await entry._async_process_on_unload(hass)
 
 
 @pytest.mark.parametrize(
@@ -1182,6 +1182,7 @@ async def test_core_time_zone_update_reschedules_and_dispatches_changed_rate_win
     assert len(scheduled) == 2
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_import_restarts_before_recorder_write_after_timezone_change(
     hass: HomeAssistant,
     freezer: Any,
@@ -1292,16 +1293,16 @@ async def test_import_restarts_before_recorder_write_after_timezone_change(
     assert len({at for _name, _zone, at in attempts[4:7]}) == 1
     assert len(writes) == 1
     assert result.imported_rows == 1
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_import_timezone_restart_is_bounded_before_recorder_write(
     hass: HomeAssistant,
     freezer: Any,
 ) -> None:
     now = datetime(2026, 7, 1, 1, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     importer = BeestatStatisticsImporter(
         hass,
         client,
@@ -1359,9 +1360,9 @@ async def test_import_timezone_restart_is_bounded_before_recorder_write(
 
     assert attempts == 3
     assert writes == []
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("change", ["runtime_config", "timezone"])
 async def test_daily_reprepares_current_config_and_calendar_before_submission(
     hass, freezer, monkeypatch, change
@@ -1482,9 +1483,9 @@ async def test_daily_reprepares_current_config_and_calendar_before_submission(
         )
         assert first.statistics[0]["start"].astimezone(UTC).hour == 4
         assert final[0]["start"].astimezone(UTC).hour == 0
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_daily_summary_excludes_frozen_inventory_seeds_and_new_stages(
     recorder_mock, freezer, monkeypatch
 ):
@@ -1492,7 +1493,7 @@ async def test_daily_summary_excludes_frozen_inventory_seeds_and_new_stages(
     now = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
     freezer.move_to(now)
     await hass.async_start()
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     coordinator.data = replace(
         coordinator.data,
         summary_rows=(
@@ -1559,4 +1560,3 @@ async def test_daily_summary_excludes_frozen_inventory_seeds_and_new_stages(
     assert set(plan.seeds) == allowed
     assert plan.rows[0]["sum_compressor_cool_2"] == 3600
     full.assert_not_awaited()
-    await entry._async_process_on_unload(hass)

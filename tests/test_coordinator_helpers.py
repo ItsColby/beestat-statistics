@@ -600,6 +600,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         summary_calls: list[tuple[str, str]] = []
         built: list[tuple[date | None, ZoneInfo, datetime]] = []
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
+        coordinator._filter_day_cache = {}
         coordinator._refresh_lock = asyncio.Lock()
         coordinator._closed = False
         coordinator.data = None
@@ -1586,6 +1587,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             states=types.SimpleNamespace(get=lambda _entity_id: None)
         )
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
+        coordinator._filter_day_cache = {}
         coordinator.hass = hass
         coordinator._beestat_config_entry = entry
         coordinator._cloud_data_stale_threshold_minutes = 120
@@ -1999,6 +2001,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             return [dict(row) for row in raw_rows]
 
         coordinator = types.SimpleNamespace(
+            _filter_day_cache={},
             _client=types.SimpleNamespace(
                 async_read_runtime_thermostat=read_runtime,
                 redact_error=lambda err: str(err),
@@ -2172,6 +2175,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
 
             updates: list[dict[str, object]] = []
             coordinator = types.SimpleNamespace(
+                _filter_day_cache={},
                 _client=types.SimpleNamespace(
                     async_read_runtime_thermostat=read_runtime,
                     redact_error=lambda err: str(err),
@@ -2287,6 +2291,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
                 entry.options = options
 
             coordinator = types.SimpleNamespace(
+                _filter_day_cache={},
                 _client=types.SimpleNamespace(
                     async_read_runtime_thermostat=read_runtime,
                     redact_error=lambda err: str(err),

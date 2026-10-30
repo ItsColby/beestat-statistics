@@ -45,8 +45,9 @@ async def _loaded(hass: HomeAssistant, importer: AsyncMock | None = None) -> Any
     return entry, importer
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_import_action_forwards_arguments(hass: HomeAssistant) -> None:
-    entry, importer = await _loaded(hass)
+    _entry, importer = await _loaded(hass)
     await hass.services.async_call(
         DOMAIN,
         SERVICE_IMPORT_STATISTICS,
@@ -54,11 +55,11 @@ async def test_import_action_forwards_arguments(hass: HomeAssistant) -> None:
         blocking=True,
     )
     importer.assert_awaited_once_with(point_lookback_days=3, skip_sync=True)
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_rebuild_action_forwards_arguments(hass: HomeAssistant) -> None:
-    entry, importer = await _loaded(hass)
+    _entry, importer = await _loaded(hass)
     await hass.services.async_call(
         DOMAIN,
         SERVICE_REBUILD_STATISTICS,
@@ -72,11 +73,11 @@ async def test_rebuild_action_forwards_arguments(hass: HomeAssistant) -> None:
         rebuild_end=date(2026, 7, 3),
         thermostat_id=1,
     )
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_rebuild_action_rejects_reversed_dates(hass: HomeAssistant) -> None:
-    entry, importer = await _loaded(hass)
+    _entry, importer = await _loaded(hass)
     with pytest.raises(ServiceValidationError) as raised:
         await hass.services.async_call(
             DOMAIN,
@@ -86,11 +87,11 @@ async def test_rebuild_action_rejects_reversed_dates(hass: HomeAssistant) -> Non
         )
     assert raised.value.translation_key == "invalid_rebuild_date_range"
     importer.assert_not_awaited()
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_rebuild_action_maps_unknown_thermostat(hass: HomeAssistant) -> None:
-    entry, _importer = await _loaded(
+    _entry, _importer = await _loaded(
         hass, AsyncMock(side_effect=UnknownThermostatError(99))
     )
     with pytest.raises(ServiceValidationError) as raised:
@@ -99,7 +100,6 @@ async def test_rebuild_action_maps_unknown_thermostat(hass: HomeAssistant) -> No
         )
     assert raised.value.translation_key == "unknown_thermostat_id"
     assert raised.value.translation_placeholders == {"thermostat_id": "99"}
-    await entry._async_process_on_unload(hass)
 
 
 @pytest.mark.parametrize(
@@ -114,17 +114,17 @@ async def test_actions_require_a_loaded_entry(
     assert raised.value.translation_key == "no_loaded_entry"
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("value", [0, -1, 1.9, True, "1.5"])
 async def test_rebuild_action_rejects_non_positive_integer_thermostat_id(
     hass: HomeAssistant, value: Any
 ) -> None:
-    entry, importer = await _loaded(hass)
+    _entry, importer = await _loaded(hass)
     with pytest.raises(vol.Invalid):
         await hass.services.async_call(
             DOMAIN, SERVICE_REBUILD_STATISTICS, {"thermostat_id": value}, blocking=True
         )
     importer.assert_not_awaited()
-    await entry._async_process_on_unload(hass)
 
 
 def test_stale_runtime_blueprint_loads_with_expected_inputs() -> None:

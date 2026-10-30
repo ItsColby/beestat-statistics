@@ -864,9 +864,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
         temporal_context = self.capture_temporal_context()
         self.last_filter_boundary_reconcile_attempt_at = temporal_context.evaluated_at
-        cache = getattr(self, "_filter_day_cache", None)
-        if cache is None:
-            cache = self._filter_day_cache = {}
+        cache = self._filter_day_cache
         active_ids = {item.thermostat_id for item in pending}
         for thermostat_id in tuple(cache):
             if thermostat_id not in active_ids:
@@ -1050,9 +1048,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             source_end = parse_source_datetime(
                 thermostat_row_by_id.get(thermostat.thermostat_id, {}).get("data_end")
             )
-            cached = getattr(self, "_filter_day_cache", {}).get(
-                thermostat.thermostat_id
-            )
+            cached = self._filter_day_cache.get(thermostat.thermostat_id)
             change_day: ChangeDayObservation | None = None
             if (
                 cached is not None
@@ -1410,9 +1406,6 @@ def _build_room_temperature_spreads(
 ) -> dict[int, RoomTemperatureSpread]:
     """Build profile-aware spreads from identity-proven mapped local sources."""
 
-    states = getattr(hass, "states", None)
-    if states is None or not callable(getattr(states, "get", None)):
-        return {}
     target_unit = _configured_temperature_unit(hass)
     metadata_by_identifier: dict[str, list[SensorMetadata]] = {}
     for beestat_sensor in sensor_metadata.values():
@@ -1466,7 +1459,7 @@ def _build_room_temperature_spreads(
             ):
                 unavailable.append(display_name)
                 continue
-            state = states.get(source.temperature_entity_id)
+            state = hass.states.get(source.temperature_entity_id)
             reading = _temperature_state_value(state, resolved_unit)
             if reading is None:
                 unavailable.append(display_name)

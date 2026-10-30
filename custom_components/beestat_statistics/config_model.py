@@ -1154,10 +1154,7 @@ def _local_ecobee_devices(hass: Any) -> tuple[LocalEcobeeDevice, ...]:
 
 
 def _registry_entries(entity_registry: Any) -> list[Any]:
-    entities = getattr(entity_registry, "entities", {})
-    if hasattr(entities, "values"):
-        return list(entities.values())
-    return list(entities)
+    return list(entity_registry.entities.values())
 
 
 def _has_ecobee_signal(device: Any, entries: list[Any]) -> bool:

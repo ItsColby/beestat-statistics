@@ -349,6 +349,7 @@ async def _accepted_pass(runtime, monkeypatch, *, rows):
     return _objects(runtime)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_repeated_changed_and_unchanged_passes_keep_storage_bounded(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -392,9 +393,9 @@ async def test_repeated_changed_and_unchanged_passes_keep_storage_bounded(
     freezer.move_to(END + timedelta(hours=4, minutes=59))
     _horizon(runtime, END + timedelta(hours=4, minutes=55))
     await _accepted_pass(runtime, monkeypatch, rows=_rows(5))
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_same_horizon_corrections_retire_deltas_and_recover_after_restart(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -419,9 +420,9 @@ async def test_same_horizon_corrections_retire_deltas_and_recover_after_restart(
     await runtime.importer.hourly._load()
     bucket = await _logical_hour(runtime, start=END, end=END + timedelta(hours=1))
     assert (bucket["reason"], bucket["value"]) == ("ready", 0.5)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_collection_waits_for_pending_operations_and_backups(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -448,9 +449,9 @@ async def test_collection_waits_for_pending_operations_and_backups(
     _horizon(runtime, END + timedelta(minutes=55))
     objects = await _accepted_pass(runtime, monkeypatch, rows=_rows(1))
     assert f"proof/{garbage}" not in objects
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_interrupted_collection_is_inert_and_finishes_on_the_next_pass(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -484,7 +485,6 @@ async def test_interrupted_collection_is_inert_and_finishes_on_the_next_pass(
     assert not {f"proof/{name}" for name in garbage} & set(objects)
     bucket = await _logical_hour(runtime, start=END, end=END + timedelta(hours=1))
     assert (bucket["reason"], bucket["value"]) == ("ready", 0.25)
-    await runtime.entry._async_process_on_unload(hass)
 
 
 async def _routine(runtime, monkeypatch, rows, *, days=12):
@@ -515,6 +515,7 @@ def _proofs(root):
     return dict(root["history"]["selections"][QUANTITY]["proofs"])
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_routine_pass_rewrites_only_touched_months_and_hours(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -546,9 +547,9 @@ async def test_routine_pass_rewrites_only_touched_months_and_hours(
         second["revision"]
     )
     assert _objects(runtime) == objects
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_past_hour_correction_reproves_only_its_hours(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -570,9 +571,9 @@ async def test_past_hour_correction_reproves_only_its_hours(
     assert _proofs(root)["2026-08"] == _proofs(first)["2026-08"]
     bucket = await _logical_hour(runtime)
     assert (bucket["reason"], bucket["value"]) == ("ready", 0.5)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("embedded", [True, False])
 async def test_saved_intent_of_either_form_resumes(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, embedded
@@ -606,7 +607,6 @@ async def test_saved_intent_of_either_form_resumes(
     await runtime.importer.hourly._load()
     await _finish(runtime)
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)
 
 
 def _batches(runtime, root):
@@ -617,6 +617,7 @@ def _batches(runtime, root):
     ]
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_each_proof_is_stored_once_and_named_by_its_batch(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -639,9 +640,9 @@ async def test_each_proof_is_stored_once_and_named_by_its_batch(
     assert batches and not any("proof" in batch for batch in batches)
     for batch in batches:
         assert _proofs(root)[batch["month"]] == batch["proof_object"]
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("interrupted", [False, True])
 async def test_batches_that_embed_their_proof_still_replay(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, interrupted
@@ -690,9 +691,9 @@ async def test_batches_that_embed_their_proof_still_replay(
         _objects(runtime)
     )
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_proofs_from_earlier_releases_are_reproved_once(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -729,7 +730,6 @@ async def test_proofs_from_earlier_releases_are_reproved_once(
     root = await _routine(runtime, monkeypatch, _rows(3))
     assert _proofs(root)["2026-08"] == current["2026-08"]
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)
 
 
 def test_supersession_keeps_only_nearest_predecessors_with_the_same_closure():
@@ -770,6 +770,7 @@ def _series(since, until):
     ]
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_daily_compaction_bounds_selected_and_retained_sources(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -796,9 +797,9 @@ async def test_daily_compaction_bounds_selected_and_retained_sources(
             runtime, start=start, end=start + timedelta(hours=1)
         )
         assert (bucket["reason"], bucket["value"]) == ("ready", 0.25)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_refused_retirement_keeps_every_source_until_a_later_pass_retires(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, caplog
 ):
@@ -827,7 +828,6 @@ async def test_refused_retirement_keeps_every_source_until_a_later_pass_retires(
     assert selected[-2] > lookback + passes >= selected[-1]
     assert "would change resolved history" in caplog.text
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)
 
 
 async def _sealed(runtime, *, revision=None, original=None):
@@ -851,6 +851,7 @@ async def _sealed(runtime, *, revision=None, original=None):
     )
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_collection_deletes_only_unreachable_deltas_on_superseded_baselines(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -882,9 +883,9 @@ async def test_collection_deletes_only_unreachable_deltas_on_superseded_baseline
     for source_id in root["history"]["source_ids"]:
         assert f"manifest/{source_id}" in objects
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_conflict_hold_sources_stay_reachable_during_delta_collection(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -907,4 +908,3 @@ async def test_conflict_hold_sources_stay_reachable_during_delta_collection(
     assert ("source", stale_held[0]) not in retired
     assert ("manifest", stale_free[1]) in retired
     assert ("manifest", stale_held[1]) in unheld
-    await runtime.entry._async_process_on_unload(hass)
