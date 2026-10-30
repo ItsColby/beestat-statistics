@@ -1362,6 +1362,29 @@ class CoordinatorHelpersTest(unittest.TestCase):
 
         self.assertEqual(self.coordinator._filter_alert_guids(row), ("reminder",))
 
+    def test_filter_alert_aliases_preserve_unknown_codes(self) -> None:
+        for field in ("code", "alertNumber"):
+            for type_field in ("type", "notificationType", "source"):
+                with self.subTest(field=field, type_field=type_field):
+                    row = {
+                        "alerts": [
+                            {
+                                "guid": "unknown",
+                                field: 9999,
+                                type_field: "Filter sensor fault",
+                            },
+                            {"guid": "known", field: 3137, type_field: "Reminder"},
+                            {"guid": "legacy", type_field: "Replace filter"},
+                        ]
+                    }
+                    self.assertEqual(
+                        self.coordinator._filter_alert_guids(row), ("known", "legacy")
+                    )
+                    self.assertEqual(
+                        self.coordinator._active_alerts(row)[0]["type"],
+                        "Filter sensor fault",
+                    )
+
     def test_summary_window_start_covers_recent_runtime_and_filter_change(self) -> None:
         config = self.config_model.BeestatConfig(
             thermostats=(

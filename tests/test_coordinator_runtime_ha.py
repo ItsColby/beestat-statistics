@@ -121,6 +121,49 @@ async def test_entry_unload_cancels_alert_dismissal_before_next_alert(
         await coordinator.async_dismiss_filter_alerts(1)
 
 
+@pytest.mark.parametrize("code_field", ["code", "alertNumber"])
+@pytest.mark.parametrize("type_field", ["type", "notificationType", "source"])
+async def test_filter_dismissal_preserves_unknown_alert_aliases(
+    hass: HomeAssistant,
+    freezer: Any,
+    code_field: str,
+    type_field: str,
+) -> None:
+    """Only recognized filter reminders can reach the upstream writer."""
+
+    now = datetime(2026, 7, 1, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator(hass)
+    coordinator.data = coordinator._build_runtime_data(
+        [],
+        [
+            {
+                "id": 1,
+                "name": "Zone",
+                "alerts": [
+                    {
+                        "guid": "unknown",
+                        code_field: 9999,
+                        type_field: "Filter sensor fault",
+                    },
+                    {"guid": "known", code_field: 3137, type_field: "Reminder"},
+                ],
+            }
+        ],
+        [],
+        now,
+        now,
+        True,
+        None,
+        None,
+    )
+    client.async_dismiss_alert = AsyncMock()
+
+    assert await coordinator.async_dismiss_filter_alerts(1) == 1
+    client.async_dismiss_alert.assert_awaited_once_with(1, "known")
+    await entry._async_process_on_unload(hass)
+
+
 async def test_framework_refresh_starts_cached_projection_scheduler(
     hass: HomeAssistant,
     freezer: Any,

@@ -125,7 +125,7 @@ GET_RAW_POINTS_SERVICE_SCHEMA = probatio.Schema(
 REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = probatio.Schema(
     {
         probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        probatio.Required(CONF_THERMOSTAT_ID): probatio.Coerce(int),
+        probatio.Required(CONF_THERMOSTAT_ID): _positive_thermostat_id,
         probatio.Required(ATTR_CHANGED_AT): cv.datetime,
     }
 )

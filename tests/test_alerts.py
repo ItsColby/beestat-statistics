@@ -39,6 +39,20 @@ class AlertClassificationTest(unittest.TestCase):
                     "unknown",
                 )
 
+    def test_source_aliases_share_the_canonical_classification(self) -> None:
+        for field in ("code", "alertNumber"):
+            for type_field in ("type", "notificationType", "source"):
+                for code, expected in ((9999, "unknown"), (3137, "maintenance")):
+                    with self.subTest(field=field, type_field=type_field, code=code):
+                        alert = {field: code, type_field: "Filter sensor fault"}
+                        self.assertEqual(
+                            alerts.classify_active_alerts((alert,)), expected
+                        )
+                        example = alerts.active_alert_examples((alert,))[0]
+                        self.assertEqual(example["category"], expected)
+                        self.assertEqual(example["code"], str(code))
+                        self.assertEqual(example["type"], "Filter sensor fault")
+
     def test_fault_with_maintenance_words_stays_equipment(self) -> None:
         self.assertEqual(
             alerts.classify_active_alerts(

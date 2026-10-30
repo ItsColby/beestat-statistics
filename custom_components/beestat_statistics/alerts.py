@@ -14,13 +14,25 @@ _MAINTENANCE_ALERT_CODES = frozenset(
 )
 
 
+def normalize_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Resolve source aliases consistently for display and action eligibility."""
+
+    return {
+        **alert,
+        "code": alert.get("code") or alert.get("alertNumber"),
+        "type": alert.get("notificationType")
+        or alert.get("type")
+        or alert.get("source"),
+    }
+
+
 def active_alert_examples(
     alerts: tuple[dict[str, Any], ...],
 ) -> list[dict[str, str]]:
     """Return bounded, identifier-free alert examples for entity state."""
 
     examples: list[dict[str, str]] = []
-    for alert in alerts[:MAX_STATE_ALERT_EXAMPLES]:
+    for alert in map(normalize_alert, alerts[:MAX_STATE_ALERT_EXAMPLES]):
         example = {"category": _classify_alert(alert)}
         for field in _STATE_ALERT_FIELDS:
             if (value := _bounded_scalar(alert.get(field))) is not None:
@@ -55,6 +67,7 @@ def classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
 def _classify_alert(alert: dict[str, Any]) -> str:
     """Classify one alert so a routine reminder cannot hide an unknown problem."""
 
+    alert = normalize_alert(alert)
     code = _bounded_scalar(alert.get("code"))
     if code in _MAINTENANCE_ALERT_CODES:
         return "maintenance"
