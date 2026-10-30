@@ -64,6 +64,12 @@ _FIELDS = ("entry_id", "api_base", "account_anchors")
 _LOGGER = logging.getLogger(__name__)
 
 
+def _stable_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    # Records sealed before the binding dropped the process-local timezone
+    # revision still carry it; it is never compared.
+    return {key: value for key, value in binding.items() if key != "timezone_revision"}
+
+
 def sealed(value: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(value)
     result.pop("integrity", None)
@@ -608,7 +614,6 @@ class HistoryWriter:
             "identity": {key: deepcopy(context["identity"][key]) for key in _FIELDS},
             "config_revision": context["config_revision"],
             "timezone": context["timezone"],
-            "timezone_revision": context["timezone_revision"],
             "method_version": METHOD_VERSION,
         }
 
@@ -1528,7 +1533,7 @@ class HistoryWriter:
             if (
                 digest(manifest) != plan_digest
                 or manifest["request"] != self.request(request, context)
-                or manifest["binding"] != self.binding(context)
+                or _stable_binding(manifest["binding"]) != self.binding(context)
             ):
                 raise HourlyImportError("history_operation_replay_changed")
             self.manager._state, self.manager._loaded = state, True
@@ -1589,9 +1594,6 @@ class HistoryWriter:
                 "proofs": prior.get("proofs", {}),
                 "adopted_at": prior.get("adopted_at", context["evaluated_at"]),
                 "timezone": prior.get("timezone", context["timezone"]),
-                "timezone_revision": prior.get(
-                    "timezone_revision", context["timezone_revision"]
-                ),
             }
         root["history"]["source_ids"] = manifest["source_ids"]
         root["history"]["source_revision"] = manifest["source_revision"]
@@ -1664,7 +1666,7 @@ class HistoryWriter:
         binding = self.binding(context)
         if any(
             prior["binding"][key] != binding[key]
-            for key in ("identity", "timezone", "timezone_revision", "method_version")
+            for key in ("identity", "timezone", "method_version")
         ):
             raise HourlyImportError("history_routine_context_changed")
         policy = root["history"]["routine_policy"]
@@ -1882,9 +1884,9 @@ class HistoryWriter:
         ):
             return status(root)
         manifest = await self.read_object("operation", operation["object"], context)
-        if digest(manifest) != operation["plan_digest"] or manifest[
-            "binding"
-        ] != self.binding(context):
+        if digest(manifest) != operation["plan_digest"] or _stable_binding(
+            manifest["binding"]
+        ) != self.binding(context):
             raise HourlyImportError("history_operation_context_changed")
         if root["phase"] == "prepared":
             # A batchless accept is saved completed; only its marker step remains.

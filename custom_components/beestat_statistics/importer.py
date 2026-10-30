@@ -227,7 +227,6 @@ class BeestatStatisticsImporter:
             "config": deepcopy(data.config),
             "config_revision": revision,
             "timezone": temporal.local_tz.key,
-            "timezone_revision": temporal.timezone_revision,
             "evaluated_at": temporal.evaluated_at.isoformat(),
             "descriptors": [
                 item.descriptor for item in build_history_series(inventory, identity)
@@ -351,7 +350,6 @@ class BeestatStatisticsImporter:
                 "identity",
                 "config_revision",
                 "timezone",
-                "timezone_revision",
                 "evaluated_at",
             )
         }
