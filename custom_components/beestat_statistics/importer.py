@@ -42,6 +42,7 @@ from .configuration import configuration_response
 from .const import (
     DEFAULT_SUMMARY_OVERLAP_DAYS,
     DOMAIN,
+    HOURLY_V2_SUFFIX,
     STATISTIC_SOURCE,
     THERMOSTAT_POINT_STATISTICS,
 )
@@ -176,7 +177,7 @@ class BeestatStatisticsImporter:
             existing_statistic_ids=(
                 *cumulative_statistic_ids(data.config, list(data.summary_rows)),
                 *(
-                    base.removesuffix("_hourly_v2")
+                    base.removesuffix(HOURLY_V2_SUFFIX)
                     for base, resource in identity["resources"].items()
                     if not unmapped_sensor(resource)
                     and history_quantity_id(resource)
@@ -738,7 +739,7 @@ class BeestatStatisticsImporter:
         )
         if allowed_legacy_ids is not None:
             known_ids = {
-                key.removesuffix("_hourly_v2")
+                key.removesuffix(HOURLY_V2_SUFFIX)
                 for key in _hourly_resource_identities(runtime_data.config)
             }
             if any(item.statistic_id not in known_ids for item in series):

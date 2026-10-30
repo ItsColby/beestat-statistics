@@ -18,6 +18,7 @@ from functools import partial
 from hashlib import sha256
 from typing import Any, cast
 
+from .const import HOURLY_V2_SUFFIX
 from .hourly_history_contract import (
     DAILY_POLICY,
     MAX_BATCH_HOURS,
@@ -325,7 +326,7 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         for alias in item["descriptor"]["legacy_statistic_ids"]
     }
     for base, resource in identity["resources"].items():
-        alias_owner = alias_owners.get(base.removesuffix("_hourly_v2"))
+        alias_owner = alias_owners.get(base.removesuffix(HOURLY_V2_SUFFIX))
         if alias_owner is not None and (
             unmapped_sensor(resource) or alias_owner != quantity_id(resource)
         ):
@@ -338,7 +339,7 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
             raise HourlyImportError("history_sensor_parent_changed")
     return WriterPartition(
         frozenset(
-            base.removesuffix("_hourly_v2")
+            base.removesuffix(HOURLY_V2_SUFFIX)
             for base in identity["resources"]
             if unmapped_sensor(identity["resources"][base])
             or quantity_id(identity["resources"][base]) not in physical
@@ -759,7 +760,7 @@ class HistoryWriter:
             evaluated_at=utc(request["evaluated_at"]),
             source_end_by_thermostat=horizons,
             existing_statistic_ids=tuple(
-                base.removesuffix("_hourly_v2") for base in identity["resources"]
+                base.removesuffix(HOURLY_V2_SUFFIX) for base in identity["resources"]
             ),
             context=context,
         )

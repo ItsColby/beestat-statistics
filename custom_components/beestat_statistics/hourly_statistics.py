@@ -17,6 +17,7 @@ from .config_model import BeestatConfig, build_sensor_statistics
 from .config_rows import as_bool, positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
+    HOURLY_V2_SUFFIX,
     RUNTIME_FIELD_GROUPS,
     STATISTIC_MEAN_TYPE_ARITHMETIC,
     STATISTIC_MEAN_TYPE_NONE,
@@ -33,7 +34,6 @@ from .temperature import absolute_temperature_value
 
 _HOUR = timedelta(hours=1)
 _STEP = timedelta(minutes=5)
-_SUCCESSOR = "_hourly_v2"
 _ACCESSORIES = frozenset(
     {"off", "humidifier", "dehumidifier", "ventilator", "economizer"}
 )
@@ -85,7 +85,7 @@ class _Quantity:
 
     @property
     def statistic_id(self) -> str:
-        return f"{STATISTIC_SOURCE}:{self.suffix}{_SUCCESSOR}"
+        return f"{STATISTIC_SOURCE}:{self.suffix}{HOURLY_V2_SUFFIX}"
 
     @property
     def cumulative(self) -> bool:
@@ -337,7 +337,7 @@ def _retain_quantity(
     return (
         not quantity.optional_runtime
         or quantity.statistic_id in existing
-        or quantity.statistic_id.removesuffix(_SUCCESSOR) in existing
+        or quantity.statistic_id.removesuffix(HOURLY_V2_SUFFIX) in existing
         or any(
             not as_bool(row.get("deleted"))
             and (_runtime_seconds(row, quantity.fields[0]) or 0) > 0

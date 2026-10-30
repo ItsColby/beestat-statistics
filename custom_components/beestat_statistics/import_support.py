@@ -25,6 +25,7 @@ from .config_rows import finite_float_or_none, positive_resource_id, row_resourc
 from .const import (
     API_BASE,
     CONF_API_BASE,
+    HOURLY_V2_SUFFIX,
     MAX_WINDOW_DAYS,
     THERMOSTAT_QUANTITIES,
 )
@@ -321,7 +322,7 @@ def _point_window(
 def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, Any]]:
     candidates = [
         (
-            f"beestat:{thermostat.slug}_{quantity}_hourly_v2",
+            f"beestat:{thermostat.slug}_{quantity}{HOURLY_V2_SUFFIX}",
             {
                 "thermostat_id": thermostat.thermostat_id,
                 "sensor_id": None,
@@ -334,7 +335,7 @@ def _hourly_resource_identities(config: BeestatConfig) -> dict[str, dict[str, An
     sensors = {sensor.sensor_id: sensor for sensor in config.sensors}
     candidates.extend(
         (
-            f"beestat:{spec.statistic_suffix}_hourly_v2",
+            f"beestat:{spec.statistic_suffix}{HOURLY_V2_SUFFIX}",
             {
                 "thermostat_id": sensors[spec.sensor_id].thermostat_id,
                 "sensor_id": spec.sensor_id,
