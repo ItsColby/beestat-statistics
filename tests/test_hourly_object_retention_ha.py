@@ -883,3 +883,28 @@ async def test_collection_deletes_only_unreachable_deltas_on_superseded_baseline
         assert f"manifest/{source_id}" in objects
     assert (await _logical_hour(runtime))["value"] == 0.25
     await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_conflict_hold_sources_stay_reachable_during_delta_collection(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    root = await runtime.store.async_load()
+    history = root["history"]
+    stale_held = await _sealed(runtime, revision="0" * 64)
+    stale_free = await _sealed(runtime, revision="2" * 64)
+    hold = await runtime.store.async_write_object(
+        "operation",
+        canonical_json({"intervals": [{"source_ids": [stale_held[1]]}]}),
+    )
+    held_history = {**history, "source_holds": {QUANTITY: {"2026-01": hold}}}
+    writer = HistoryWriter(runtime.importer.hourly)
+    async with runtime.importer._lock:
+        context = runtime.importer._history_context()
+        retired = await writer.unreachable_deltas(held_history, {}, context)
+        unheld = await writer.unreachable_deltas(history, {}, context)
+    assert ("manifest", stale_held[1]) not in retired
+    assert ("source", stale_held[0]) not in retired
+    assert ("manifest", stale_free[1]) in retired
+    assert ("manifest", stale_held[1]) in unheld
+    await runtime.entry._async_process_on_unload(hass)

@@ -12,6 +12,7 @@ from homeassistant.core import Context
 
 from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import import (
+    _SAVES,
     HourlyImportError,
     HourlyImportManager,
 )
@@ -239,4 +240,101 @@ async def test_persisted_fence_blocks_cold_old_root_and_old_entry_marker(
     assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
         0
     ].mean == pytest.approx(25)
+    await runtime.entry._async_process_on_unload(hass)
+
+
+_TOKEN = "a" * 64
+
+
+async def _fence_manager(hass, freezer, monkeypatch, tmp_path):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    return runtime, runtime.importer.hourly
+
+
+@pytest.mark.parametrize("check", [True, False])
+async def test_fence_refuses_while_a_store_save_is_pending(
+    hass, freezer, monkeypatch, tmp_path, check
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    pending = hass.loop.create_future()
+    hass.data.setdefault(_SAVES, {})[runtime.entry.entry_id] = pending
+    try:
+        with pytest.raises(HourlyImportError, match="history_store_write_pending"):
+            if check:
+                await importer._check_history_root_fence(
+                    {"version": 3, "token": _TOKEN}
+                )
+            else:
+                await importer._invalidate_history_root(_TOKEN)
+    finally:
+        pending.cancel()
+        hass.data[_SAVES].pop(runtime.entry.entry_id)
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_fence_check_rejects_a_failed_predecessor_fence_task(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+
+    async def failed() -> None:
+        raise OSError("fence write failed")
+
+    task = hass.async_create_task(failed())
+    task._beestat_history_fence = _TOKEN
+    with pytest.raises(OSError, match="fence write failed"):
+        await task
+    hass.data.setdefault(_SAVES, {})[runtime.entry.entry_id] = task
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("mismatch", ["reference", "readback"])
+async def test_fence_write_rejects_reference_or_readback_mismatch(
+    hass, freezer, monkeypatch, tmp_path, mismatch
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    store = importer._store
+    if mismatch == "reference":
+        write = store.async_write_object
+
+        async def wrong_reference(kind, content):
+            await write(kind, content)
+            return "b" * 64
+
+        monkeypatch.setattr(store, "async_write_object", wrong_reference)
+    else:
+        monkeypatch.setattr(
+            store, "async_read_object", AsyncMock(return_value=b"other")
+        )
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._invalidate_history_root(_TOKEN)
+    assert importer._error == "history_invalidation_fence_unverified"
+    assert importer._loaded is False
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize(
+    ("raw", "error", "reason"),
+    [
+        (b"not the fence", None, "corrupt"),
+        (None, RuntimeError("unreadable"), "unreadable"),
+    ],
+)
+async def test_fence_check_rejects_corrupt_or_unreadable_fence(
+    hass, freezer, monkeypatch, tmp_path, raw, error, reason
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        importer._store,
+        "async_read_object",
+        AsyncMock(return_value=raw, side_effect=error),
+    )
+    with pytest.raises(HourlyImportError, match=f"history_invalidation_fence_{reason}"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
     await runtime.entry._async_process_on_unload(hass)

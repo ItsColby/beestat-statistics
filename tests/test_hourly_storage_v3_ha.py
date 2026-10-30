@@ -15,6 +15,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
 
+from custom_components.beestat_statistics import hourly_storage
 from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
@@ -233,3 +234,51 @@ async def test_readback_requires_json_type_identity(hass, disk_store):
     await hass.async_add_executor_job(path.write_text, json.dumps(envelope))
     with pytest.raises(HourlyStorageError, match="hourly_store_write_unverified"):
         await hass.async_add_executor_job(store._verify_data, {"revision": 1})
+
+
+async def test_write_rejects_oversize_non_bytes_and_unknown_kind(object_store):
+    limit = hourly_storage._MAX_OBJECT_BYTES
+    with pytest.raises(HourlyStorageError, match="size_invalid"):
+        await object_store.async_write_object("source", b"x" * (limit + 1))
+    with pytest.raises(HourlyStorageError, match="size_invalid"):
+        await object_store.async_write_object("source", "text")  # type: ignore[arg-type]
+    # The executor-side writer repeats the guard the async wrapper applies first.
+    with pytest.raises(HourlyStorageError, match="size_invalid"):
+        object_store.write_object("source", b"x" * (limit + 1))
+    with pytest.raises(HourlyStorageError, match="identity_invalid"):
+        await object_store.async_write_object("unowned", b"data")
+    with pytest.raises(HourlyStorageError, match="identity_invalid"):
+        await object_store.async_object_ids("unowned")
+    assert not Path(f"{object_store.path}.objects").exists()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+async def test_write_is_unverified_when_readback_differs(object_store, existing):
+    if existing:
+        await object_store.async_write_object("source", b"data")
+    with (
+        patch.object(HourlyStore, "_read_object", return_value=b"different"),
+        pytest.raises(HourlyStorageError, match="write_unverified"),
+    ):
+        await object_store.async_write_object("source", b"data")
+    assert not list(Path(f"{object_store.path}.objects").rglob(".pending-*"))
+
+
+@pytest.mark.parametrize("operation", ["write", "ids"])
+async def test_symlinked_kind_directory_is_not_followed(
+    object_store, tmp_path, operation
+):
+    external = tmp_path / "other-owner"
+    external.mkdir()
+    root = Path(f"{object_store.path}.objects")
+    root.mkdir()
+    try:
+        (root / "source").symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create symbolic links")
+    with pytest.raises(HourlyStorageError, match="path_invalid"):
+        if operation == "write":
+            await object_store.async_write_object("source", b"data")
+        else:
+            await object_store.async_object_ids("source")
+    assert list(external.iterdir()) == []
