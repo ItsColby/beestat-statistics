@@ -141,7 +141,7 @@ def quantity_id(resource: Mapping[str, Any]) -> str:
 
 
 def capabilities() -> dict[str, Any]:
-    """Return an additive contract descriptor, without claiming data admission."""
+    """Return the v3 contract descriptor, without claiming data admission."""
     return {
         "contract_version": CONTRACT_VERSION,
         "method_version": METHOD_VERSION,
