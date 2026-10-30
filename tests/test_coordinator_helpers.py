@@ -1351,6 +1351,17 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ("main", "code"),
         )
 
+    def test_filter_alert_guids_excludes_equipment_and_unknown_codes(self) -> None:
+        row = {
+            "alerts": [
+                {"guid": "equipment", "text": "Heating not working, check filter"},
+                {"guid": "unknown", "code": "9999", "text": "Filter sensor fault"},
+                {"guid": "reminder", "text": "Replace filter"},
+            ]
+        }
+
+        self.assertEqual(self.coordinator._filter_alert_guids(row), ("reminder",))
+
     def test_summary_window_start_covers_recent_runtime_and_filter_change(self) -> None:
         config = self.config_model.BeestatConfig(
             thermostats=(

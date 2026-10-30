@@ -46,7 +46,10 @@ from custom_components.beestat_statistics.diagnostics import (
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
 from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
 from custom_components.beestat_statistics.hourly_import import WriterPartition
-from custom_components.beestat_statistics.import_evidence import SkippedWindowEvidence
+from custom_components.beestat_statistics.import_evidence import (
+    MAX_TRANSIENT_WINDOW_FAILURES,
+    SkippedWindowEvidence,
+)
 from custom_components.beestat_statistics.import_support import (
     PreparedImport,
     SummaryImportPlan,
@@ -498,6 +501,28 @@ async def test_point_window_recoverable_failure_keeps_narrower_window_fallback(
     assert rows == [{"id": 1}, {"id": 2}]
     assert session.call_count == 3
     assert skipped_windows.total_count == 0
+    await entry._async_process_on_unload(hass)
+
+
+async def test_point_window_outage_stops_bisecting_after_failure_budget(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Repeated server failures abort the pass instead of fanning out per window."""
+
+    now = datetime(2026, 7, 31, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    session = _FakeSession([_FakeResponse({}, status=500)] * 200)
+    client = BeestatClient(session, "test-token", "https://api.test/", retries=1)
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    skipped_windows = SkippedWindowEvidence()
+    with pytest.raises(BeestatApiError):
+        await importer._async_read_runtime_window(
+            "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
+        )
+    assert session.call_count == MAX_TRANSIENT_WINDOW_FAILURES + 1
     await entry._async_process_on_unload(hass)
 
 

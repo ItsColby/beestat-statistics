@@ -32,6 +32,7 @@ from .api import (
     BeestatAuthError,
     BeestatClient,
     BeestatPermanentError,
+    BeestatResponseTooLargeError,
     exception_fingerprint,
 )
 from .config_model import (
@@ -62,7 +63,11 @@ from .hourly_history_values import build_history_series
 from .hourly_import import HourlyImportManager
 from .hourly_sources import stage_source
 from .hourly_statistics import build_hourly_statistics
-from .import_evidence import SkippedWindowEvidence, SkippedWindowResource
+from .import_evidence import (
+    MAX_TRANSIENT_WINDOW_FAILURES,
+    SkippedWindowEvidence,
+    SkippedWindowResource,
+)
 from .import_support import (
     ImportResult,
     PreparedImport,
@@ -1084,6 +1089,15 @@ class BeestatStatisticsImporter:
         except BeestatAuthError, BeestatPermanentError:
             raise
         except BeestatApiError as err:
+            if not isinstance(err, BeestatResponseTooLargeError):
+                # Timeouts and server errors already used the client's retries;
+                # a bounded budget keeps an outage from fanning out into one
+                # retried request per bisected window.
+                skipped_windows.transient_failure_count += 1
+                if skipped_windows.transient_failure_count > (
+                    MAX_TRANSIENT_WINDOW_FAILURES
+                ):
+                    raise
             if end - start > timedelta(days=1):
                 midpoint = start + ((end - start) / 2)
                 rows: list[dict[str, Any]] = []

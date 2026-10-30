@@ -7,3 +7,9 @@ __pycache__/
 .local/
 .venv/
 venv/
+.env
+.env.*
+*.pem
+*.key
+secrets.yaml
+*.kdbx

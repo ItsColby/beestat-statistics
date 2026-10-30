@@ -37,6 +37,10 @@ class BeestatPermanentError(_BeestatNonRetryableError):
     """Raised when retries or narrower history windows cannot correct the error."""
 
 
+class BeestatResponseTooLargeError(_BeestatNonRetryableError):
+    """Raised when a response exceeds the size cap; a narrower window can recover."""
+
+
 @dataclass(frozen=True, slots=True)
 class BeestatReadAttempt:
     """Safe evidence for one transport attempt, without URL or remote error text."""
@@ -422,7 +426,9 @@ class BeestatClient:
 
         content_length = response.content_length
         if content_length is not None and content_length > limit:
-            raise _BeestatNonRetryableError("Beestat response exceeded the size limit")
+            raise BeestatResponseTooLargeError(
+                "Beestat response exceeded the size limit"
+            )
 
         chunks: list[bytes] = []
         size = 0
@@ -431,7 +437,7 @@ class BeestatClient:
             if trace is not None:
                 trace.response_bytes = size
             if size > limit:
-                raise _BeestatNonRetryableError(
+                raise BeestatResponseTooLargeError(
                     "Beestat response exceeded the size limit"
                 )
             chunks.append(chunk)

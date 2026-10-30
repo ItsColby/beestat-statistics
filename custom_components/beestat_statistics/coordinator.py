@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_call_later, async_track_point_in_u
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.unit_conversion import TemperatureConverter
 
+from .alerts import classify_active_alerts
 from .api import (
     BeestatApiError,
     BeestatAuthError,
@@ -1786,7 +1787,7 @@ def _is_filter_alert(alert: dict[str, Any]) -> bool:
         str(alert.get(field) or "").lower()
         for field in ("notificationType", "type", "text")
     )
-    return "filter" in text
+    return "filter" in text and classify_active_alerts((alert,)) == "maintenance"
 
 
 def _active_alerts(row: dict[str, Any]) -> tuple[dict[str, Any], ...]:

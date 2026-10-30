@@ -25,3 +25,5 @@ jobs:
         with:
           python-version: "3.14"
       - run: python scripts/check_beestat_api_surface.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
