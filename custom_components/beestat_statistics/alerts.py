@@ -17,9 +17,12 @@ _MAINTENANCE_ALERT_CODES = frozenset(
 def normalize_alert(alert: dict[str, Any]) -> dict[str, Any]:
     """Resolve source aliases consistently for display and action eligibility."""
 
+    code = alert.get("code")
+    if code is None or code == "":
+        code = alert.get("alertNumber")
     return {
         **alert,
-        "code": alert.get("code") or alert.get("alertNumber"),
+        "code": code,
         "type": alert.get("notificationType")
         or alert.get("type")
         or alert.get("source"),

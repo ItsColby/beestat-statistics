@@ -42,7 +42,11 @@ class AlertClassificationTest(unittest.TestCase):
     def test_source_aliases_share_the_canonical_classification(self) -> None:
         for field in ("code", "alertNumber"):
             for type_field in ("type", "notificationType", "source"):
-                for code, expected in ((9999, "unknown"), (3137, "maintenance")):
+                for code, expected in (
+                    (0, "unknown"),
+                    (9999, "unknown"),
+                    (3137, "maintenance"),
+                ):
                     with self.subTest(field=field, type_field=type_field, code=code):
                         alert = {field: code, type_field: "Filter sensor fault"}
                         self.assertEqual(
@@ -60,6 +64,20 @@ class AlertClassificationTest(unittest.TestCase):
             ),
             "equipment",
         )
+
+    def test_only_an_absent_or_empty_code_uses_the_source_alias(self) -> None:
+        for code, expected in (
+            (0, "unknown"),
+            (None, "maintenance"),
+            ("", "maintenance"),
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    alerts.classify_active_alerts(
+                        ({"code": code, "alertNumber": 3137, "text": "Replace filter"},)
+                    ),
+                    expected,
+                )
 
     def test_separate_fault_and_unknown_alerts_outrank_reminders(self) -> None:
         maintenance = {"code": 3130, "text": "Furnace maintenance reminder"}
