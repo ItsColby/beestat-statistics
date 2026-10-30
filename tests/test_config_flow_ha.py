@@ -1894,9 +1894,11 @@ async def test_get_configuration_service_returns_exact_non_secret_response(
     assert "api_key" not in repr(response)
 
 
+@pytest.mark.parametrize("thermostat_id", [1001, "1001", 1001.0])
 async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
     hass: HomeAssistant,
     freezer: Any,
+    thermostat_id: Any,
 ) -> None:
     freezer.move_to(datetime(2026, 7, 6, 18, tzinfo=UTC))
     entry = _add_mock_entry(hass)
@@ -1938,7 +1940,7 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
             SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
             {
                 ATTR_CONFIG_ENTRY_ID: entry.entry_id,
-                "thermostat_id": 1001,
+                "thermostat_id": thermostat_id,
                 ATTR_CHANGED_AT: changed_at,
             },
             blocking=True,
@@ -1952,6 +1954,36 @@ async def test_repair_filter_change_boundary_service_uses_verified_timestamp(
         "source": "repair",
         "expected_boundary": (None, repair_at.date(), None),
     }
+
+
+@pytest.mark.parametrize("thermostat_id", [True, False, 1001.9, "1001.9", 0, -1, None])
+async def test_repair_filter_change_boundary_rejects_invalid_identity_without_effects(
+    hass: HomeAssistant,
+    thermostat_id: Any,
+) -> None:
+    assert await async_setup(hass, {})
+    with (
+        patch(
+            "custom_components.beestat_statistics.services._loaded_filter_coordinator"
+        ) as loaded,
+        patch(
+            "custom_components.beestat_statistics.services.async_mark_filter_changed",
+            new_callable=AsyncMock,
+        ) as mark_changed,
+        pytest.raises(probatio.Invalid),
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+            {
+                ATTR_CONFIG_ENTRY_ID: "example-entry",
+                "thermostat_id": thermostat_id,
+                ATTR_CHANGED_AT: "2026-07-05T12:00:00+00:00",
+            },
+            blocking=True,
+        )
+    loaded.assert_not_called()
+    mark_changed.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

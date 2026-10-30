@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 MAX_SKIPPED_WINDOW_EXAMPLES = 3
+MAX_TRANSIENT_WINDOW_FAILURES = 4
 
 type SkippedWindowResource = Literal["runtime_sensor", "runtime_thermostat"]
 
@@ -17,6 +18,7 @@ class SkippedWindowEvidence:
     total_count: int = 0
     runtime_sensor_count: int = 0
     runtime_thermostat_count: int = 0
+    transient_failure_count: int = 0
     _examples: list[dict[str, str]] = field(default_factory=list)
 
     @property

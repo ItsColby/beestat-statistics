@@ -15,6 +15,9 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.beestat_statistics.api import BeestatClient
+from custom_components.beestat_statistics.binary_sensor import (
+    BeestatEquipmentAlertProblemBinarySensor,
+)
 from custom_components.beestat_statistics.const import API_BASE, CONF_API_BASE, DOMAIN
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
@@ -119,6 +122,55 @@ async def test_entry_unload_cancels_alert_dismissal_before_next_alert(
     client.async_dismiss_alert.assert_awaited_once_with(1, "first")
     with pytest.raises(asyncio.CancelledError):
         await coordinator.async_dismiss_filter_alerts(1)
+
+
+@pytest.mark.parametrize("code_field", ["code", "alertNumber"])
+@pytest.mark.parametrize("type_field", ["type", "notificationType", "source"])
+@pytest.mark.parametrize("unknown_code", [0, 9999])
+async def test_filter_dismissal_preserves_unknown_alert_aliases(
+    hass: HomeAssistant,
+    freezer: Any,
+    code_field: str,
+    type_field: str,
+    unknown_code: int,
+) -> None:
+    """Only recognized filter reminders can reach the upstream writer."""
+
+    now = datetime(2026, 7, 1, 16, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, client = _coordinator(hass)
+    coordinator.data = coordinator._build_runtime_data(
+        [],
+        [
+            {
+                "id": 1,
+                "name": "Zone",
+                "alerts": [
+                    {
+                        "guid": "unknown",
+                        code_field: unknown_code,
+                        type_field: "Filter sensor fault",
+                    },
+                    {"guid": "known", code_field: 3137, type_field: "Reminder"},
+                ],
+            }
+        ],
+        [],
+        now,
+        now,
+        True,
+        None,
+        None,
+    )
+    client.async_dismiss_alert = AsyncMock()
+
+    equipment = BeestatEquipmentAlertProblemBinarySensor(
+        coordinator, coordinator.data.config.thermostats[0]
+    )
+    assert await coordinator.async_dismiss_filter_alerts(1) == 1
+    client.async_dismiss_alert.assert_awaited_once_with(1, "known")
+    assert equipment.is_on is True
+    await entry._async_process_on_unload(hass)
 
 
 async def test_framework_refresh_starts_cached_projection_scheduler(

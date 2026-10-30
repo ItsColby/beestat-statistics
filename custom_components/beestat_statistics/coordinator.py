@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_call_later, async_track_point_in_u
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.unit_conversion import TemperatureConverter
 
+from .alerts import classify_active_alerts, normalize_alert
 from .api import (
     BeestatApiError,
     BeestatAuthError,
@@ -1779,27 +1780,25 @@ def _filter_alert_guids(row: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _is_filter_alert(alert: dict[str, Any]) -> bool:
-    code = str(alert.get("code") or alert.get("alertNumber") or "").lower()
+    alert = normalize_alert(alert)
+    code = str(alert.get("code") or "").strip().lower()
     if code in {"3137", "3138", "filter"}:
         return True
-    text = " ".join(
-        str(alert.get(field) or "").lower()
-        for field in ("notificationType", "type", "text")
-    )
-    return "filter" in text
+    text = " ".join(str(alert.get(field) or "").lower() for field in ("type", "text"))
+    return "filter" in text and classify_active_alerts((alert,)) == "maintenance"
 
 
 def _active_alerts(row: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     return tuple(
         {
-            "code": alert.get("code") or alert.get("alertNumber"),
-            "type": alert.get("notificationType") or alert.get("source"),
+            "code": alert.get("code"),
+            "type": alert.get("type"),
             "severity": alert.get("severity"),
             "timestamp": alert.get("timestamp")
             or _join_date_time(alert.get("date"), alert.get("time")),
             "text": alert.get("text"),
         }
-        for alert in _active_alert_rows(row)
+        for alert in map(normalize_alert, _active_alert_rows(row))
     )
 
 

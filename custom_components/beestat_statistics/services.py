@@ -87,9 +87,16 @@ IMPORT_SERVICE_SCHEMA = probatio.Schema(
     }
 )
 
+
+def _positive_thermostat_id(value: Any) -> int:
+    if (thermostat_id := positive_resource_id(value)) is None:
+        raise probatio.Invalid("thermostat_id must be an exact positive integer")
+    return thermostat_id
+
+
 REBUILD_SERVICE_SCHEMA = probatio.Schema(
     {
-        probatio.Optional(CONF_THERMOSTAT_ID): probatio.Coerce(int),
+        probatio.Optional(CONF_THERMOSTAT_ID): _positive_thermostat_id,
         probatio.Optional(ATTR_START_DATE): cv.date,
         probatio.Optional(ATTR_END_DATE): cv.date,
         probatio.Optional(ATTR_SKIP_SYNC, default=False): cv.boolean,
@@ -118,16 +125,10 @@ GET_RAW_POINTS_SERVICE_SCHEMA = probatio.Schema(
 REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA = probatio.Schema(
     {
         probatio.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
-        probatio.Required(CONF_THERMOSTAT_ID): probatio.Coerce(int),
+        probatio.Required(CONF_THERMOSTAT_ID): _positive_thermostat_id,
         probatio.Required(ATTR_CHANGED_AT): cv.datetime,
     }
 )
-
-
-def _positive_thermostat_id(value: Any) -> int:
-    if (thermostat_id := positive_resource_id(value)) is None:
-        raise probatio.Invalid("thermostat_id must be an exact positive integer")
-    return thermostat_id
 
 
 RECORD_FILTER_CHANGE_SERVICE_SCHEMA = probatio.Schema(
@@ -452,6 +453,33 @@ async def _async_handle_rebuild_service(hass: HomeAssistant, call: ServiceCall) 
         ) from None
 
 
+async def _async_mark_filter_changed_or_raise(
+    coordinator: BeestatRuntimeDataCoordinator,
+    thermostat_id: int,
+    changed_at: datetime,
+    **kwargs: Any,
+) -> ServiceResponse:
+    """Run a filter-change write and map failures to Home Assistant errors."""
+
+    try:
+        return await async_mark_filter_changed(
+            coordinator, thermostat_id, changed_at, **kwargs
+        )
+    except FilterChangeConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=str(err),
+        ) from None
+    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
+        _LOGGER.error(
+            "Unexpected filter-change action failure (%s)", exception_fingerprint(err)
+        )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="beestat_request_failed",
+        ) from None
+
+
 async def _async_handle_repair_filter_change_boundary(
     hass: HomeAssistant, call: ServiceCall
 ) -> None:
@@ -467,7 +495,7 @@ async def _async_handle_repair_filter_change_boundary(
             changed_at,
             coordinator.local_tz,
         )
-    except ValueError:
+    except ValueError, OverflowError:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_local_time_invalid",
@@ -486,7 +514,7 @@ async def _async_handle_repair_filter_change_boundary(
             translation_domain=DOMAIN,
             translation_key="filter_change_boundary_date_mismatch",
         )
-    await async_mark_filter_changed(
+    await _async_mark_filter_changed_or_raise(
         coordinator,
         thermostat_id,
         changed_at,
@@ -519,33 +547,19 @@ async def _async_handle_record_filter_change(
             translation_key="filter_change_boundary_local_time_invalid",
         ) from None
     now = datetime.now(UTC)
-    try:
-        return await async_mark_filter_changed(
-            coordinator,
-            call.data[CONF_THERMOSTAT_ID],
-            changed_at,
-            source="service",
-            request_id=call.data[ATTR_REQUEST_ID],
-            expected_boundary=(
-                expected_at,
-                call.data[ATTR_EXPECTED_CHANGED_DATE],
-                call.data[ATTR_EXPECTED_REQUEST_ID],
-            ),
-            accepted_interval=(now - timedelta(days=31), now),
-        )
-    except FilterChangeConflictError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key=str(err),
-        ) from None
-    except Exception as err:  # noqa: BLE001 - sanitize at the HA service boundary
-        _LOGGER.error(
-            "Unexpected filter-change action failure (%s)", exception_fingerprint(err)
-        )
-        raise HomeAssistantError(
-            translation_domain=DOMAIN,
-            translation_key="beestat_request_failed",
-        ) from None
+    return await _async_mark_filter_changed_or_raise(
+        coordinator,
+        call.data[CONF_THERMOSTAT_ID],
+        changed_at,
+        source="service",
+        request_id=call.data[ATTR_REQUEST_ID],
+        expected_boundary=(
+            expected_at,
+            call.data[ATTR_EXPECTED_CHANGED_DATE],
+            call.data[ATTR_EXPECTED_REQUEST_ID],
+        ),
+        accepted_interval=(now - timedelta(days=31), now),
+    )
 
 
 def _loaded_filter_coordinator(

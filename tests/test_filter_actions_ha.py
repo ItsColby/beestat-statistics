@@ -23,7 +23,7 @@ from homeassistant.components.recorder.tasks import (
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.recorder import get_instance
 from pytest_homeassistant_custom_component.components.recorder.common import (
     async_wait_recording_done,
@@ -36,7 +36,10 @@ from custom_components.beestat_statistics.const import (
     SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
 from custom_components.beestat_statistics.date import BeestatFilterChangedDate
-from custom_components.beestat_statistics.entry_options import async_mark_filter_changed
+from custom_components.beestat_statistics.entry_options import (
+    FilterChangeConflictError,
+    async_mark_filter_changed,
+)
 from custom_components.beestat_statistics.hourly_import import (
     HourlyImportManager,
     WriterPartition,
@@ -824,4 +827,77 @@ async def test_native_date_correction_preserves_upstream_filter_alerts(
         assert entity.native_value == date(2026, 7, 4)
         refresh.assert_awaited_once_with(skip_sync=True)
         dismiss.assert_not_awaited()
+    await entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize(
+    ("failure", "error", "key"),
+    [
+        (
+            FilterChangeConflictError("filter_change_conflict"),
+            ServiceValidationError,
+            "filter_change_conflict",
+        ),
+        (RuntimeError("boom"), HomeAssistantError, "beestat_request_failed"),
+    ],
+)
+async def test_repair_action_maps_write_failures_like_record_action(
+    hass: HomeAssistant,
+    freezer: Any,
+    failure: Exception,
+    error: type[HomeAssistantError],
+    key: str,
+) -> None:
+    now = datetime(2026, 7, 6, 18, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    hass.config_entries.async_update_entry(
+        entry, options={"thermostats": [{"id": 1, "filter_changed_date": "2026-07-04"}]}
+    )
+    coordinator.async_rebuild_runtime_from_cached_rows()
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert await async_setup(hass, {})
+    with (
+        patch(
+            "custom_components.beestat_statistics.services.async_mark_filter_changed",
+            new=AsyncMock(side_effect=failure),
+        ),
+        pytest.raises(error) as raised,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+            {
+                "config_entry_id": entry.entry_id,
+                "thermostat_id": 1,
+                "changed_at": "2026-07-04T18:00:00+00:00",
+            },
+            blocking=True,
+        )
+    assert raised.value.translation_key == key
+    await entry._async_process_on_unload(hass)
+
+
+async def test_repair_action_rejects_overflowing_timestamp(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    now = datetime(2026, 7, 6, 18, tzinfo=UTC)
+    freezer.move_to(now)
+    entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    entry.runtime_data = types.SimpleNamespace(coordinator=coordinator)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert await async_setup(hass, {})
+    with pytest.raises(ServiceValidationError) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+            {
+                "config_entry_id": entry.entry_id,
+                "thermostat_id": 1,
+                "changed_at": "9999-12-31T23:59:59-05:00",
+            },
+            blocking=True,
+        )
+    assert raised.value.translation_key == "filter_change_boundary_local_time_invalid"
     await entry._async_process_on_unload(hass)

@@ -13,11 +13,11 @@ and the **Release gate** that requires them,
 [`.github/dependabot.yml`](../.github/dependabot.yml) the dependency update
 policy. The [Dependabot auto-merge workflow](../.github/workflows/dependabot-auto-merge.yaml)
 merges its Actions and pre-commit updates once required checks pass. Install
-pre-commit once as a [uv tool](https://docs.astral.sh/uv/guides/tools/) and
-run the static checks before pushing:
+the pinned pre-commit from the `dev` dependency group, as CI does, and run the
+static checks before pushing:
 
 ```bash
-uv tool install pre-commit
+python -m pip install --group dev
 pre-commit install
 pre-commit run --all-files
 ```
@@ -63,3 +63,12 @@ check without changing the integration's API scope.
 
 Releases are immutable [GitHub Releases](https://github.com/ItsColby/beestat-statistics/releases)
 whose tag matches the manifest version.
+
+1. Set `version` in
+   [`manifest.json`](../custom_components/beestat_statistics/manifest.json) in a
+   "Prepare vX" change and merge it once the Validate workflow's Release gate
+   passes on `main`.
+2. If the supported Home Assistant Core moved, update `homeassistant` in
+   [`hacs.json`](../hacs.json) with the `ha-current` pins.
+3. Tag the merged commit `v` plus the manifest version and publish the Release
+   from that tag.
