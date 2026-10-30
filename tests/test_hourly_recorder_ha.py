@@ -35,7 +35,6 @@ pytestmark = pytest.mark.usefixtures("started_recorder")
 
 HOUR = timedelta(hours=1)
 START = datetime(2026, 9, 10, 16, tzinfo=UTC)  # New York noon.
-DAY_START = START - 12 * HOUR
 NOW = RECORDER_NOW
 RUNTIME_ID = "beestat:contract_fan_runtime_hours_hourly_v2"
 RATE_ID = "beestat:contract_heat_runtime_rate_hourly_v3"
