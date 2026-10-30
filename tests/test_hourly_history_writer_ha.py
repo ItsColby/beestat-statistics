@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from hashlib import sha256
@@ -297,6 +298,7 @@ async def test_fence_write_rejects_reference_or_readback_mismatch(
     hass, freezer, monkeypatch, tmp_path, mismatch
 ):
     runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    importer._loaded = True  # the failed fence must discard the loaded root
     store = importer._store
     if mismatch == "reference":
         write = store.async_write_object
@@ -336,5 +338,92 @@ async def test_fence_check_rejects_corrupt_or_unreadable_fence(
         AsyncMock(return_value=raw, side_effect=error),
     )
     with pytest.raises(HourlyImportError, match=f"history_invalidation_fence_{reason}"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def _finished_task(hass, entry_id, token, *, outcome):
+    async def body() -> None:
+        if outcome == "failed":
+            raise OSError("fence write failed")
+        if outcome == "cancelled":
+            await asyncio.sleep(3600)
+
+    task = hass.async_create_task(body())
+    task._beestat_history_fence = token
+    if outcome == "cancelled":
+        await asyncio.sleep(0)
+        task.cancel()
+    expected = {"failed": OSError, "cancelled": asyncio.CancelledError}
+    if outcome in expected:
+        with pytest.raises(expected[outcome]):
+            await task
+    else:
+        await task
+    hass.data.setdefault(_SAVES, {})[entry_id] = task
+    return task
+
+
+def _fence_absent(importer, monkeypatch, *, during=None):
+    async def absent(kind, name):
+        if during is not None:
+            during()
+        raise FileNotFoundError
+
+    monkeypatch.setattr(importer._store, "async_read_object", absent)
+
+
+async def test_fence_check_rejects_a_cancelled_predecessor_fence_task(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    await _finished_task(hass, runtime.entry.entry_id, _TOKEN, outcome="cancelled")
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_fence_check_ignores_a_failed_task_for_another_root(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    await _finished_task(hass, runtime.entry.entry_id, "b" * 64, outcome="failed")
+    _fence_absent(importer, monkeypatch)
+    await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+    await runtime.entry._async_process_on_unload(hass)
+
+
+async def test_fence_check_rejects_a_save_task_replaced_during_the_read(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    done = hass.loop.create_future()
+    done.set_result(None)
+    _fence_absent(
+        importer,
+        monkeypatch,
+        during=lambda: hass.data.setdefault(_SAVES, {}).__setitem__(
+            runtime.entry.entry_id, done
+        ),
+    )
+    with pytest.raises(HourlyImportError, match="history_root_changed"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+    await runtime.entry._async_process_on_unload(hass)
+
+
+@pytest.mark.parametrize("source", ["invalidated_here", "matching_predecessor"])
+async def test_absent_fence_still_rejects_a_root_invalidated_in_process(
+    hass, freezer, monkeypatch, tmp_path, source
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    if source == "invalidated_here":
+        await importer._invalidate_history_root(_TOKEN)
+        hass.data[_SAVES].pop(runtime.entry.entry_id)
+    else:
+        await _finished_task(hass, runtime.entry.entry_id, _TOKEN, outcome="done")
+    _fence_absent(importer, monkeypatch)
+    with pytest.raises(HourlyImportError, match="history_root_invalidated"):
         await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
     await runtime.entry._async_process_on_unload(hass)
