@@ -263,7 +263,6 @@
       "unknown": "Setup could not finish. Check the Home Assistant logs for Beestat Statistics, then try again."
     },
     "abort": {
-      "already_configured": "Beestat Statistics is already configured.",
       "account_identity_unavailable": "The connection could not be saved because Beestat returned no usable thermostat identity.",
       "configuration_changed": "The saved configuration changed while this form was open. Reopen the form to review the current settings.",
       "reauth_successful": "Beestat authentication updated.",
