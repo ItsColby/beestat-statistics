@@ -6,7 +6,15 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 MAX_SKIPPED_WINDOW_EXAMPLES = 3
-MAX_TRANSIENT_WINDOW_FAILURES = 4
+# Consecutive non-size failures (no successful read in between) tolerated before
+# a pass aborts: eight are tolerated and the ninth aborts. One day-aligned bad
+# day inside a full MAX_WINDOW_DAYS window fails once per bisection level (30,
+# 15, 7.5, 3.75, 1.875 and 0.94 days: 6) plus 1 when the day spans two leaf
+# windows, so the budget must be at least 7 for that day to reach
+# skip-with-evidence (the abort is count > budget); 8 leaves one spare.
+# Shorter or misaligned windows can use more of the budget, and adjacent bad
+# days can exhaust it and abort the pass, depending on alignment.
+MAX_TRANSIENT_WINDOW_FAILURES = 8
 
 type SkippedWindowResource = Literal["runtime_sensor", "runtime_thermostat"]
 
@@ -18,7 +26,7 @@ class SkippedWindowEvidence:
     total_count: int = 0
     runtime_sensor_count: int = 0
     runtime_thermostat_count: int = 0
-    transient_failure_count: int = 0
+    transient_failure_count: int = 0  # consecutive; reset by a successful read
     _examples: list[dict[str, str]] = field(default_factory=list)
 
     @property

@@ -384,6 +384,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         restarted = {**self.context, "timezone_revision": 0}
         replay = await self.writer.async_accept_history(apply, context=restarted)
         self.assertEqual(replay["status"], "accepted")
+        self.assertEqual(replay["cursor"], 0)
         await self.writer.async_advance_history(context=restarted)
         await self.complete()
         self.assertEqual(self.writer.history_status()["status"], "completed")

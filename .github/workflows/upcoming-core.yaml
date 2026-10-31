@@ -1,9 +1,10 @@
 name: Upcoming Core
 
-# Advisory lane: tests the integration against the newest Home Assistant Core
-# and test-harness release pip resolves with pre-releases allowed, so Core betas
-# surface breakage before they become stable. It is a separate workflow and not
-# part of the Validate release gate, so a failure never blocks a pull request.
+# Advisory lane: tests the integration against the newest test-harness release
+# pip resolves, with the Home Assistant Core that release pins. A Core beta is
+# tested only once the harness publishes a build pinning it; --pre does not
+# select one by itself. It is a separate workflow and not part of the Validate
+# release gate, so a failure never blocks a pull request.
 
 on:
   schedule:
@@ -33,7 +34,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
-      - name: Install newest Core and harness, pre-releases allowed
+      - name: Install newest harness and the Core it pins
         run: |
           mypy_pin="$(python - <<'PY'
           import tomllib
@@ -43,6 +44,7 @@ jobs:
           print(next(d for d in group if d.startswith("mypy==")))
           PY
           )"
+          # --pre deliberately admits pre-release dependencies of the harness.
           python -m pip install --pre pytest-homeassistant-custom-component "$mypy_pin"
           python -m pip check
       - name: Report resolved Core against the pin
@@ -66,8 +68,8 @@ jobs:
               print(f"::notice::Testing newer Core {kind} {resolved}")
           else:
               print(
-                  "::notice::No Core release newer than the pin exists; "
-                  f"testing {resolved}"
+                  "::notice::The newest harness pins no Core newer than the "
+                  f"pin; testing {resolved}"
               )
           PY
       - run: python -m mypy
