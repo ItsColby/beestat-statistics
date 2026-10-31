@@ -14,7 +14,7 @@ from math import fsum, isfinite
 from typing import Any
 
 from .config_model import BeestatConfig, build_sensor_statistics
-from .config_rows import as_bool, positive_resource_id
+from .config_rows import as_bool, finite_float_or_none, positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
     HOURLY_V2_SUFFIX,
@@ -30,6 +30,7 @@ from .const import (
     SummaryMeanStatistic,
     ThermostatPointStatistic,
 )
+from .filter_runtime import parse_source_datetime
 from .temperature import absolute_temperature_value
 
 _HOUR = timedelta(hours=1)
@@ -240,18 +241,6 @@ def _aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-        return (
-            parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-        ).astimezone(UTC)
-    except ValueError, OverflowError:
-        return None
-
-
 def _points(
     rows: list[dict[str, Any]],
     id_field: str,
@@ -264,7 +253,7 @@ def _points(
     rejected = 0
     identity_invalid = False
     for row in rows:
-        stamp = _timestamp(row.get("timestamp"))
+        stamp = parse_source_datetime(row.get("timestamp"))
         if stamp is None:
             rejected += 1
             continue
@@ -346,18 +335,8 @@ def _retain_quantity(
     )
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        result = float(value)
-    except ValueError, TypeError, OverflowError:
-        return None
-    return result if isfinite(result) else None
-
-
 def _seconds(value: Any) -> float | None:
-    result = _number(value)
+    result = finite_float_or_none(value)
     return result if result is not None and 0 <= result <= 300 else None
 
 
@@ -410,7 +389,7 @@ def _value(row: dict[str, Any], quantity: _Quantity) -> float | None:
         if raw is True or raw == 1:
             return 100.0
         return 0.0 if raw is False or raw == 0 else None
-    value = _number(raw)
+    value = finite_float_or_none(raw)
     if quantity.kind in {"heating_degree_days", "cooling_degree_days"}:
         value = absolute_temperature_value(value, "°F", tenth_fahrenheit_source=True)
         if value is None:

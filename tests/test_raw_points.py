@@ -244,7 +244,3 @@ class RawPointsTest(unittest.IsolatedAsyncioTestCase):
                 proceed.set()
                 await asyncio.wait_for(finished.wait(), 2)
         self.assertEqual(session.call_count, 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

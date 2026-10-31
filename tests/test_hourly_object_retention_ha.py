@@ -25,9 +25,9 @@ from custom_components.beestat_statistics.hourly_history_contract import (
     utc,
 )
 from custom_components.beestat_statistics.hourly_history_writer import HistoryWriter
-from custom_components.beestat_statistics.hourly_import import (
+from custom_components.beestat_statistics.hourly_import import HourlyImportManager
+from custom_components.beestat_statistics.hourly_import_core import (
     HISTORY_FENCE_PREFIX,
-    HourlyImportManager,
 )
 from custom_components.beestat_statistics.hourly_sources import _provider_precedence
 from custom_components.beestat_statistics.hourly_storage import (

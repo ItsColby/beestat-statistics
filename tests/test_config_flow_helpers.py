@@ -230,7 +230,3 @@ class ConfigFlowHelpersTest(unittest.TestCase):
             entry.options,
             {"thermostats": [{"id": 1001, "climate_entity_id": first.entity_id}]},
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

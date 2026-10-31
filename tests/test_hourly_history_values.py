@@ -387,7 +387,3 @@ class HourlyHistoryValuesTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "statistic_identity_collision"):
             values.build_history_series(only_thermostats, changed_identity, saved=saved)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -821,7 +821,3 @@ class HourlyStatisticsTest(unittest.TestCase):
             "room_a_co2_concentration",
         )
         self.assertEqual("ready", high.hours[0].reason)
-
-
-if __name__ == "__main__":
-    unittest.main()

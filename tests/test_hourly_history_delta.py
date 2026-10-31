@@ -436,7 +436,3 @@ class HistoryDeltaTest(unittest.TestCase):
         self.assertGreater(len(result["chunks"]), 1)
         self.assertTrue(all(len(item["content"]) <= 3500 for item in result["chunks"]))
         self.assertEqual(self.rows(result), rows)
-
-
-if __name__ == "__main__":
-    unittest.main()

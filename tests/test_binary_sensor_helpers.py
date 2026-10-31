@@ -371,7 +371,3 @@ class _FakeCoordinator:
         self.last_import_skipped_window_examples = ()
         self.last_import_hourly_coverage_incomplete = False
         self.last_import_writers = None
-
-
-if __name__ == "__main__":
-    unittest.main()

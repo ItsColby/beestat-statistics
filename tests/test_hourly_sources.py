@@ -1082,7 +1082,3 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "delta_commitment"):
             await self.stage(value)
         self.assertFalse(self.store.objects)
-
-
-if __name__ == "__main__":
-    unittest.main()

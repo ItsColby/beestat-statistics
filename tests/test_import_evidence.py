@@ -57,7 +57,3 @@ class SkippedWindowEvidenceTest(unittest.TestCase):
             evidence.examples[-1]["resource"],
             "runtime_thermostat",
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

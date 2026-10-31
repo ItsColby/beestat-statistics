@@ -45,7 +45,7 @@ from custom_components.beestat_statistics.diagnostics import (
 )
 from custom_components.beestat_statistics.filter_forecast import build_filter_forecast
 from custom_components.beestat_statistics.filter_runtime import parse_source_datetime
-from custom_components.beestat_statistics.hourly_import import WriterPartition
+from custom_components.beestat_statistics.hourly_import_core import WriterPartition
 from custom_components.beestat_statistics.import_evidence import (
     MAX_TRANSIENT_WINDOW_FAILURES,
     SkippedWindowEvidence,
