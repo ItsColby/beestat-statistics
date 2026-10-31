@@ -7,9 +7,11 @@ from typing import Literal
 
 MAX_SKIPPED_WINDOW_EXAMPLES = 3
 # Consecutive non-size failures (no successful read in between) tolerated before
-# a pass aborts. A single failing day inside a MAX_WINDOW_DAYS window fails once
-# per bisection level (30, 15, 7.5, 3.75, 1.875 and 0.94 days), so the budget
-# must exceed that depth for the day to reach skip-with-evidence.
+# a pass aborts: eight are tolerated and the ninth aborts. One bad day inside a
+# MAX_WINDOW_DAYS window fails once per bisection level (30, 15, 7.5, 3.75,
+# 1.875 and 0.94 days: 6) plus 1 when the day spans two leaf windows, so the
+# budget must exceed 7 for that day to reach skip-with-evidence. Two or more
+# adjacent bad days still abort the pass.
 MAX_TRANSIENT_WINDOW_FAILURES = 8
 
 type SkippedWindowResource = Literal["runtime_sensor", "runtime_thermostat"]

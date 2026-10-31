@@ -580,6 +580,109 @@ async def test_point_window_persistent_bad_day_is_skipped_from_long_window(
 
 
 @pytest.mark.usefixtures("unload_entries")
+async def test_point_window_bad_day_at_window_start_needs_failure_budget(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """A bad first day fails six levels down plus its neighbour, seven in a row."""
+
+    now = datetime(2026, 7, 31, 0, tzinfo=UTC)
+    freezer.move_to(now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    first_day = (now - timedelta(days=30)).date()
+    read, _calls = _day_reader({first_day})
+    consecutive = 0
+    longest = 0
+
+    async def counting_read(*args: Any) -> list[dict[str, Any]]:
+        nonlocal consecutive, longest
+        try:
+            rows = await read(*args)
+        except BeestatApiError:
+            consecutive += 1
+            longest = max(longest, consecutive)
+            raise
+        consecutive = 0
+        return rows
+
+    skipped_windows = SkippedWindowEvidence()
+    with patch.object(client, "async_read_runtime_thermostat", new=counting_read):
+        rows = await importer._async_read_runtime_window(
+            "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
+        )
+    assert rows
+    assert longest == 7
+    assert skipped_windows.total_count == 2
+    # Four tolerated failures would abort this pass before the day is skipped.
+    assert longest > 4
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_point_window_ninth_consecutive_failure_aborts(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Eight consecutive failures are tolerated and the ninth aborts the pass."""
+
+    now = datetime(2026, 7, 31, 0, tzinfo=UTC)
+    freezer.move_to(now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    reads = 0
+
+    async def always_fail(*_args: Any) -> list[dict[str, Any]]:
+        nonlocal reads
+        reads += 1
+        raise BeestatApiError("down")
+
+    skipped_windows = SkippedWindowEvidence()
+    with (
+        patch.object(client, "async_read_runtime_thermostat", new=always_fail),
+        pytest.raises(BeestatApiError),
+    ):
+        await importer._async_read_runtime_window(
+            "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
+        )
+    assert reads == 9
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_point_window_intermittent_failures_stay_within_bisection_tree(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """Alternating success and failure never exceed the 63-node bisection tree."""
+
+    now = datetime(2026, 7, 31, 0, tzinfo=UTC)
+    freezer.move_to(now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    reads = 0
+
+    skipped_windows = SkippedWindowEvidence()
+
+    async def read(_resource_id: int, start: str, _end: str) -> list[dict[str, Any]]:
+        nonlocal reads
+        reads += 1
+        if reads % 2:
+            raise BeestatApiError("intermittent")
+        return [{"start": start}]
+
+    with patch.object(client, "async_read_runtime_thermostat", new=read):
+        await importer._async_read_runtime_window(
+            "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
+        )
+    assert 1 < reads <= 63
+
+
+@pytest.mark.usefixtures("unload_entries")
 async def test_point_window_recovered_failures_do_not_exhaust_budget(
     hass: HomeAssistant, freezer: Any
 ) -> None:

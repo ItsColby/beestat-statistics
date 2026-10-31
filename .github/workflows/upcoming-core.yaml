@@ -44,6 +44,7 @@ jobs:
           print(next(d for d in group if d.startswith("mypy==")))
           PY
           )"
+          # --pre deliberately admits pre-release dependencies of the harness.
           python -m pip install --pre pytest-homeassistant-custom-component "$mypy_pin"
           python -m pip check
       - name: Report resolved Core against the pin
