@@ -31,6 +31,15 @@ while iterating. Hassfest and HACS run only in CI.
 [Dependabot](../.github/dependabot.yml) does not update the coupled Python
 pins.
 
+The advisory [Upcoming Core workflow](../.github/workflows/upcoming-core.yaml)
+runs mypy and the Home Assistant tests weekly, on manual dispatch, and on pull
+requests that change `pyproject.toml`, against the newest Core and harness
+release that pip resolves with pre-releases allowed (a Core beta once one
+exists, otherwise the latest stable). It is not part of the Release gate, so it
+never blocks a pull request; read a failure as early warning of an upcoming Core
+change. Hassfest and HACS are not repeated there because they do not take a
+Core version.
+
 ## Keep source contracts verifiable
 
 Gitleaks uses its default credential rules plus the repository's
