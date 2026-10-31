@@ -6,12 +6,14 @@ import asyncio
 import json
 import types
 import unittest
+import unittest.mock
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from custom_components.beestat_statistics import config_model as model
 from custom_components.beestat_statistics import hourly_history_delta as delta_builder
+from custom_components.beestat_statistics import hourly_history_legacy as legacy_module
 from custom_components.beestat_statistics import (
     hourly_history_values as representation,
 )
@@ -101,7 +103,6 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             "identity": identity(),
             "config_revision": "c" * 64,
             "timezone": "America/New_York",
-            "timezone_revision": 1,
             "evaluated_at": (START + 4 * HOUR).isoformat(),
             "check_current": self.guard,
             "config": model.BeestatConfig(
@@ -318,6 +319,81 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.store.value["pending"])
         self.assertEqual(
             len(self.store.value["history"]["selections"][KEY]["proofs"]), 2
+        )
+
+    async def test_restart_at_lower_revision_keeps_operation_refresh_and_ownership(
+        self,
+    ):
+        # The process-local revision is not part of the persisted binding.
+        await self.accept()
+        self.writer = self.fresh()
+        restarted = {**self.context, "timezone_revision": 0}
+        self.assertNotIn(
+            "timezone_revision", writer.HistoryWriter(self.writer).binding(restarted)
+        )
+        await self.writer.async_advance_history(context=restarted)
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+        selection = self.store.value["history"]["selections"][KEY]
+        self.assertNotIn("timezone_revision", selection)
+        self.assertTrue(legacy_module._calendar_owned(selection, restarted))
+        refresh = await self.delta_request()
+        accepted = await self.writer.async_refresh_history(refresh, context=restarted)
+        self.assertEqual(accepted["status"], "accepted")
+
+    async def test_real_zone_change_still_rejects_advance(self):
+        await self.accept()
+        changed = {**self.context, "timezone": "America/Chicago"}
+        with self.assertRaisesRegex(
+            manager.HourlyImportError, "history_operation_context_changed"
+        ):
+            await self.writer.async_advance_history(context=changed)
+
+    async def test_real_zone_change_still_rejects_refresh_and_ownership(self):
+        await self.accept()
+        await self.complete()
+        refresh = await self.delta_request()
+        changed = {**self.context, "timezone": "America/Chicago"}
+        with self.assertRaisesRegex(
+            manager.HourlyImportError, "history_routine_context_changed"
+        ):
+            await self.writer.async_refresh_history(refresh, context=changed)
+        self.assertFalse(
+            legacy_module._calendar_owned(
+                self.store.value["history"]["selections"][KEY], changed
+            )
+        )
+
+    async def test_records_persisted_with_old_revision_field_are_still_accepted(self):
+        original = writer.HistoryWriter.binding
+
+        def old_binding(owner, context):
+            return {**original(owner, context), "timezone_revision": 1}
+
+        with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
+            _, apply = await self.accept()
+        manifest = next(
+            json.loads(content)
+            for (kind, _), content in self.store.objects.items()
+            if kind == "operation" and b"timezone_revision" in content
+        )
+        self.assertEqual(manifest["binding"]["timezone_revision"], 1)
+        self.store.value["history"]["selections"][KEY]["timezone_revision"] = 1
+        self.store.value = writer.sealed(self.store.value)
+        self.writer = self.fresh()
+        restarted = {**self.context, "timezone_revision": 0}
+        replay = await self.writer.async_accept_history(apply, context=restarted)
+        self.assertEqual(replay["status"], "accepted")
+        await self.writer.async_advance_history(context=restarted)
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+        self.assertTrue(
+            legacy_module._calendar_owned(
+                self.store.value["history"]["selections"][KEY], restarted
+            )
+        )
+        await self.writer.async_refresh_history(
+            await self.delta_request(), context=restarted
         )
 
     async def test_replay_observes_progress_and_conflicting_digest_is_rejected(self):

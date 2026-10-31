@@ -70,7 +70,7 @@ UTC hours. No prorating occurs. The response returns at most `page_size` buckets
 across all quantities (1–4096), with no silent truncation.
 
 The response contains `contract_version: 3`, `identity`, `method_version`,
-`daily_policy`, `start`, `end`, `period`, `timezone`, `timezone_revision`,
+`daily_policy`, `start`, `end`, `period`, `timezone`,
 `evaluated_at`, `config_revision`, `root_revision`, `source_revision`, `coverage_revision`, `view_token`,
 `native_verification: bounded_readback`, `pagination`, `operation`, and `series`. Each series contains `descriptor`,
 `buckets`, and `summary`. `pagination` contains `offset`, `next_offset`,

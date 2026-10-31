@@ -2,7 +2,8 @@
 
 Recorder identifiers describe storage representation. Consumers select explicit
 physical quantity identities from configuration and never derive an identifier.
-This module defines the additive v3 contract; v2 calls remain unchanged.
+This module defines the current v3 contract (docs/hourly-history-v3.md); the v2
+routes are retired.
 """
 
 from __future__ import annotations
@@ -140,7 +141,7 @@ def quantity_id(resource: Mapping[str, Any]) -> str:
 
 
 def capabilities() -> dict[str, Any]:
-    """Return an additive contract descriptor, without claiming data admission."""
+    """Return the v3 contract descriptor, without claiming data admission."""
     return {
         "contract_version": CONTRACT_VERSION,
         "method_version": METHOD_VERSION,

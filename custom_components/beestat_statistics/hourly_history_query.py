@@ -68,7 +68,6 @@ class _Query:
     end: datetime
     period: str
     timezone: str
-    timezone_revision: Any
     evaluated_at: datetime
     page_size: int
     offset: int
@@ -119,7 +118,6 @@ def history_response(
         "end": query.end.isoformat(),
         "evaluated_at": query.evaluated_at.isoformat(),
         "timezone": query.timezone,
-        "timezone_revision": query.timezone_revision,
         "native_verification": material.get("native_verification", "bounded_readback"),
         "operation": material.get("operation"),
         "view_token": view_token,
@@ -165,7 +163,6 @@ def _query(request: Mapping[str, Any], context: Mapping[str, Any]) -> _Query:
         end,
         period,
         timezone,
-        context["timezone_revision"],
         evaluated_at,
         page_size,
         offset,
@@ -224,7 +221,6 @@ def _view_token(
             "period": query.period,
             "evaluated_at": query.evaluated_at.isoformat(),
             "timezone": query.timezone,
-            "timezone_revision": query.timezone_revision,
             "config_revision": context["config_revision"],
             "identity": context.get("identity", {}),
             "material": material,
@@ -603,7 +599,6 @@ def _day(
 def _legacy_reason(query: _Query, legacy: Mapping[str, Any]) -> str:
     if (
         legacy.get("timezone") != query.timezone
-        or legacy.get("timezone_revision") != query.timezone_revision
         or legacy.get("calendar_verified") is not True
     ):
         return "legacy_calendar_mismatch"
@@ -730,7 +725,6 @@ def _legacy_qualified(
 ) -> bool:
     expected = {
         "timezone": query.timezone,
-        "timezone_revision": query.timezone_revision,
         "calendar_verified": True,
         "complete": True,
         "closed": True,

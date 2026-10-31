@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
-from .const import THERMOSTAT_QUANTITIES
+from .const import HOURLY_V2_SUFFIX, THERMOSTAT_QUANTITIES
 from .hourly_history_contract import METADATA_FIELDS, canonical_json, digest
 from .hourly_rows import (
     HourlyStatisticRow,
@@ -39,7 +39,6 @@ HISTORY_FENCE_PREFIX = (
     .encode()
     .removesuffix(b'""}')
 )
-_SUCCESSOR = "_hourly_v2"
 _SENSOR_QUANTITIES = frozenset(
     {
         "temperature",
@@ -132,7 +131,7 @@ def _partition_resources(
         thermostat_id, sensor_id, _quantity = resource
         if (
             not isinstance(base, str)
-            or not base.endswith(_SUCCESSOR)
+            or not base.endswith(HOURLY_V2_SUFFIX)
             or resource in current
         ):
             raise ValueError("Ambiguous current quantity identity")
@@ -445,7 +444,8 @@ class HourlyImportManager:
             _partition_resources(identity)
             return WriterPartition(
                 frozenset(
-                    base.removesuffix(_SUCCESSOR) for base in identity["resources"]
+                    base.removesuffix(HOURLY_V2_SUFFIX)
+                    for base in identity["resources"]
                 ),
                 False,
             )

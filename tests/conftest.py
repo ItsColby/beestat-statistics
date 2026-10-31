@@ -20,6 +20,20 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
+async def unload_entries(hass: HomeAssistant) -> AsyncIterator[None]:
+    """Run every config entry's unload callbacks when the test ends.
+
+    Opt in with ``@pytest.mark.usefixtures("unload_entries")`` so
+    tests need no trailing unload call. Callbacks run once, so a test that
+    already unloaded an entry mid-test is unaffected.
+    """
+
+    yield
+    for entry in hass.config_entries.async_entries():
+        await entry._async_process_on_unload(hass)
+
+
+@pytest.fixture
 def mock_recorder_before_hass(recorder_db_url: str) -> None:
     """Resolve the recorder database before auto-enabled integrations use HA."""
 

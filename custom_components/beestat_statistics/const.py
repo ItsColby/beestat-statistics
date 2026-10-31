@@ -13,6 +13,8 @@ CONFIG_ENTRY_UNIQUE_ID = "beestat_statistics"
 CONFIG_ENTRY_VERSION = 1
 CONFIG_TITLE = "Beestat Statistics"
 STATISTIC_SOURCE = "beestat"
+# Persisted statistic-ID suffix; the stored IDs are frozen, so never change it.
+HOURLY_V2_SUFFIX = "_hourly_v2"
 STATISTIC_MEAN_TYPE_NONE = 0
 STATISTIC_MEAN_TYPE_ARITHMETIC = 1
 

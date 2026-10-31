@@ -51,6 +51,7 @@ from custom_components.beestat_statistics.statistics_builder import (
 from tests.runtime_support import _coordinator_data
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_timestamped_action_persists_completion_time_and_safe_replay(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -131,9 +132,9 @@ async def test_timestamped_action_persists_completion_time_and_safe_replay(
             )
         assert raised.value.translation_key == "filter_change_boundary_conflict"
         assert entry.options["thermostats"][0] == persisted
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize(
     "changes",
     [
@@ -170,9 +171,9 @@ async def test_timestamped_action_rejects_invalid_or_stale_request_without_write
             return_response=True,
         )
     assert entry.options == {}
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.usefixtures("recorder_mock")
 async def test_bounded_rebuild_updates_real_recorder_tail_and_next_window_seed(
     hass: HomeAssistant, freezer: Any
@@ -181,7 +182,7 @@ async def test_bounded_rebuild_updates_real_recorder_tail_and_next_window_seed(
 
     now = datetime(2026, 7, 31, 18, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     await hass.async_start()
     start_day = date(2026, 6, 21)
     rows = [
@@ -278,9 +279,9 @@ async def test_bounded_rebuild_updates_real_recorder_tail_and_next_window_seed(
         final = await read()
         assert result.summary_mode == "windowed"
         assert final[fan_id][-1]["sum"] == 43
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.usefixtures("recorder_mock")
 @pytest.mark.parametrize("replace_importer", [False, True])
 @pytest.mark.parametrize("fan_only_blocked_hourly", [False, True])
@@ -294,7 +295,7 @@ async def test_queued_rebuild_is_visible_before_next_import_seed_read(
 
     now = datetime(2026, 7, 31, 18, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     await hass.async_start()
     recorder = get_instance(hass)
     start_day = date(2026, 6, 21)
@@ -447,9 +448,9 @@ async def test_queued_rebuild_is_visible_before_next_import_seed_read(
         assert statistics[fan_id][1]["sum"] == 4
         assert statistics[fan_id][-1]["sum"] == 43
         assert statistics[fan_id][-1]["state"] == 43
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.usefixtures("recorder_mock")
 @pytest.mark.parametrize("window_change", ["stale_recorder", "source_correction"])
 async def test_summary_window_reconciles_existing_and_new_detailed_stages(
@@ -459,7 +460,7 @@ async def test_summary_window_reconciles_existing_and_new_detailed_stages(
 
     now = datetime(2026, 7, 31, 18, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     await hass.async_start()
     start_day = date(2026, 6, 21)
     rows = [
@@ -559,9 +560,9 @@ async def test_summary_window_reconciles_existing_and_new_detailed_stages(
         client.async_read_runtime_thermostat_summary.assert_awaited_once_with(
             "2026-07-23", rows[-1]["date"]
         )
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.usefixtures("recorder_mock")
 @pytest.mark.parametrize(
     ("force_full_summary", "prior_hours", "corrected_value"),
@@ -584,7 +585,7 @@ async def test_detailed_runtime_corrections_update_real_recorder(
 
     now = datetime(2026, 7, 31, 18, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     await hass.async_start()
     start_day = date(2026, 6, 21)
     rows = [
@@ -670,9 +671,9 @@ async def test_detailed_runtime_corrections_update_real_recorder(
             )
         )
         assert set(metadata) == {stage_id}
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.usefixtures("recorder_mock")
 async def test_all_zero_source_does_not_create_unobserved_detailed_recorder_series(
     hass: HomeAssistant, freezer: Any
@@ -681,7 +682,7 @@ async def test_all_zero_source_does_not_create_unobserved_detailed_recorder_seri
 
     now = datetime(2026, 7, 31, 18, tzinfo=UTC)
     freezer.move_to(now)
-    entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
     await hass.async_start()
     coordinator.data = coordinator._build_runtime_data(
         [{"thermostat_id": 1, "date": "2026-07-30", "sum_compressor_cool_2": 0}],
@@ -718,9 +719,9 @@ async def test_all_zero_source_does_not_create_unobserved_detailed_recorder_seri
             )
         )
         assert metadata == {}
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_repair_rejects_stale_projection_after_new_replacement_is_saved(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -775,9 +776,9 @@ async def test_repair_rejects_stale_projection_after_new_replacement_is_saved(
             )
         assert raised.value.translation_key == "filter_change_boundary_date_mismatch"
         assert entry.options is saved
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_date_correction_preserves_upstream_filter_alerts(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -827,9 +828,9 @@ async def test_native_date_correction_preserves_upstream_filter_alerts(
         assert entity.native_value == date(2026, 7, 4)
         refresh.assert_awaited_once_with(skip_sync=True)
         dismiss.assert_not_awaited()
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize(
     ("failure", "error", "key"),
     [
@@ -876,9 +877,9 @@ async def test_repair_action_maps_write_failures_like_record_action(
             blocking=True,
         )
     assert raised.value.translation_key == key
-    await entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_repair_action_rejects_overflowing_timestamp(
     hass: HomeAssistant, freezer: Any
 ) -> None:
@@ -900,4 +901,3 @@ async def test_repair_action_rejects_overflowing_timestamp(
             blocking=True,
         )
     assert raised.value.translation_key == "filter_change_boundary_local_time_invalid"
-    await entry._async_process_on_unload(hass)
