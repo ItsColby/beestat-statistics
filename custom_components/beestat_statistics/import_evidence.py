@@ -10,8 +10,8 @@ MAX_SKIPPED_WINDOW_EXAMPLES = 3
 # a pass aborts: eight are tolerated and the ninth aborts. One bad day inside a
 # MAX_WINDOW_DAYS window fails once per bisection level (30, 15, 7.5, 3.75,
 # 1.875 and 0.94 days: 6) plus 1 when the day spans two leaf windows, so the
-# budget must exceed 7 for that day to reach skip-with-evidence. Two or more
-# adjacent bad days still abort the pass.
+# budget must exceed 7 for that day to reach skip-with-evidence. Adjacent bad
+# days can exhaust the budget and abort the pass, depending on alignment.
 MAX_TRANSIENT_WINDOW_FAILURES = 8
 
 type SkippedWindowResource = Literal["runtime_sensor", "runtime_thermostat"]

@@ -621,6 +621,45 @@ async def test_point_window_bad_day_at_window_start_needs_failure_budget(
 
 
 @pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize(
+    ("offset", "aborts"),
+    [(0, True), (14, True), (28, False)],
+    ids=["window-start", "window-middle", "window-end"],
+)
+async def test_point_window_adjacent_bad_days_outcome_depends_on_alignment(
+    hass: HomeAssistant, freezer: Any, offset: int, aborts: bool
+) -> None:
+    """Two adjacent bad days abort or are skipped depending on bisection alignment."""
+
+    now = datetime(2026, 7, 31, 0, tzinfo=UTC)
+    freezer.move_to(now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
+    importer = BeestatStatisticsImporter(
+        hass, client, coordinator, point_lookback_days=1
+    )
+    first_day = (now - timedelta(days=30)).date() + timedelta(days=offset)
+    read, _calls = _day_reader({first_day, first_day + timedelta(days=1)})
+    skipped_windows = SkippedWindowEvidence()
+    with patch.object(client, "async_read_runtime_thermostat", new=read):
+        if aborts:
+            with pytest.raises(BeestatApiError):
+                await importer._async_read_runtime_window(
+                    "runtime_thermostat",
+                    1,
+                    now - timedelta(days=30),
+                    now,
+                    skipped_windows,
+                )
+        else:
+            rows = await importer._async_read_runtime_window(
+                "runtime_thermostat", 1, now - timedelta(days=30), now, skipped_windows
+            )
+            assert rows
+            assert skipped_windows.total_count >= 1
+
+
+@pytest.mark.usefixtures("unload_entries")
 async def test_point_window_ninth_consecutive_failure_aborts(
     hass: HomeAssistant, freezer: Any
 ) -> None:
