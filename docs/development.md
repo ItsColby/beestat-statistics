@@ -33,7 +33,8 @@ pins.
 
 The advisory [Upcoming Core workflow](../.github/workflows/upcoming-core.yaml)
 runs mypy and the Home Assistant tests weekly, on manual dispatch, and on pull
-requests that change `pyproject.toml`, against the newest Core and harness
+requests that change `pyproject.toml` or the workflow itself, against the newest
+Core and harness
 release that pip resolves. A Core beta is tested only once
 pytest-homeassistant-custom-component publishes a build that pins it; `--pre`
 does not select a beta by itself, and until then the lane tests the latest

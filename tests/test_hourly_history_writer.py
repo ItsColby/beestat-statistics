@@ -412,6 +412,34 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 {**apply, "plan_digest": "a" * 64}, context=self.context
             )
 
+    async def test_operation_sealed_with_timezone_revision_replays_and_resumes(self):
+        # Operations sealed before the binding dropped its process-local
+        # timezone revision still carry it in the stored manifest.
+        original = writer.HistoryWriter.binding
+
+        def legacy_binding(this, context):
+            return {**original(this, context), "timezone_revision": 7}
+
+        with unittest.mock.patch.object(
+            writer.HistoryWriter, "binding", legacy_binding
+        ):
+            _, apply = await self.accept()
+        reference = self.store.value["operation"]["object"]
+        sealed = json.loads(self.store.objects["operation", reference])
+        self.assertEqual(sealed["binding"]["timezone_revision"], 7)
+        self.assertNotIn(
+            "timezone_revision", original(self.writer._history_writer(), self.context)
+        )
+        self.assertTrue(self.writer.has_pending_history)
+        self.writer = self.fresh()
+        replayed = await self.writer.async_accept_history(apply, context=self.context)
+        self.assertEqual(replayed["cursor"], 0)
+        self.writer = self.fresh()
+        result = await self.writer.async_advance_history(context=self.context)
+        self.assertNotEqual(result["status"], "blocked")
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+
     async def test_pending_mixture_restarts_exact_saved_intent(self):
         request = await self.request(
             start=(START - HOUR).isoformat(), end=START.isoformat()
