@@ -1,0 +1,74 @@
+name: Upcoming Core
+
+# Advisory lane: tests the integration against the newest Home Assistant Core
+# and test-harness release pip resolves with pre-releases allowed, so Core betas
+# surface breakage before they become stable. It is a separate workflow and not
+# part of the Validate release gate, so a failure never blocks a pull request.
+
+on:
+  schedule:
+    - cron: "43 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - .github/workflows/upcoming-core.yaml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upcoming-core-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upcoming_core:
+    name: Home Assistant upcoming Core tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install newest Core and harness, pre-releases allowed
+        run: |
+          mypy_pin="$(python - <<'PY'
+          import tomllib
+
+          with open("pyproject.toml", "rb") as f:
+              group = tomllib.load(f)["dependency-groups"]["ha-current"]
+          print(next(d for d in group if d.startswith("mypy==")))
+          PY
+          )"
+          python -m pip install --pre pytest-homeassistant-custom-component "$mypy_pin"
+          python -m pip check
+      - name: Report resolved Core against the pin
+        run: |
+          python - <<'PY'
+          import tomllib
+          from importlib.metadata import version
+
+          from packaging.version import Version
+
+          with open("pyproject.toml", "rb") as f:
+              group = tomllib.load(f)["dependency-groups"]["ha-current"]
+          pin = Version(
+              next(d for d in group if d.startswith("homeassistant==")).split("==")[1]
+          )
+          resolved = Version(version("homeassistant"))
+          harness = version("pytest-homeassistant-custom-component")
+          print(f"Pinned Core {pin}; resolved Core {resolved}; harness {harness}")
+          if resolved > pin:
+              kind = "pre-release" if resolved.is_prerelease else "stable release"
+              print(f"::notice::Testing newer Core {kind} {resolved}")
+          else:
+              print(
+                  "::notice::No Core release newer than the pin exists; "
+                  f"testing {resolved}"
+              )
+          PY
+      - run: python -m mypy
+      - run: python -m pytest tests
