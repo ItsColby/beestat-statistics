@@ -25,6 +25,7 @@ from .hourly_history_contract import (
     MAX_QUANTITIES,
     MAX_SOURCE_CHUNKS,
     METHOD_VERSION,
+    ROUTINE_LOOKBACK_DAYS,
     bounds,
     canonical_json,
     capabilities,
@@ -36,7 +37,7 @@ from .hourly_history_contract import (
 )
 from .hourly_history_legacy import async_read_legacy_days
 from .hourly_history_values import build_history_series
-from .hourly_import import (
+from .hourly_import_core import (
     HISTORY_FENCE_PREFIX,
     MARKER,
     HourlyImportError,
@@ -1408,7 +1409,7 @@ class HistoryWriter:
             ),
             "provider_supersedes": deepcopy(merged["provider_supersedes"]),
             "routine_policy": {
-                "lookback_days": 45,
+                "lookback_days": ROUTINE_LOOKBACK_DAYS,
                 "cadence_hours": 6,
                 "provider_corrections": True,
             },

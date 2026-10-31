@@ -19,9 +19,13 @@ from custom_components.beestat_statistics import (
 )
 from custom_components.beestat_statistics import hourly_history_writer as writer
 from custom_components.beestat_statistics import hourly_import as manager
+from custom_components.beestat_statistics import hourly_import_core as core
 from custom_components.beestat_statistics import hourly_sources as sources
 from custom_components.beestat_statistics.hourly_history_query import history_response
-from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
+from custom_components.beestat_statistics.hourly_rows import (
+    HourlyStatisticRow,
+    RecorderSnapshot,
+)
 from tests.history_support import Recorder as FixtureRecorder
 from tests.history_support import Store as FixtureStore
 from tests.history_support import identity, source
@@ -128,7 +132,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
 
     def guard(self):
         if not self.current:
-            raise manager.HourlyImportError("context changed")
+            raise core.HourlyImportError("context changed")
 
     async def asyncTearDown(self):
         if self.store.gate is not None:
@@ -307,7 +311,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         accepted, _ = await self.accept()
         self.assertEqual(accepted["status"], "accepted")
         self.assertEqual(self.recorder.submissions, [])
-        self.assertEqual(self.entry.data[manager.MARKER]["version"], 3)
+        self.assertEqual(self.entry.data[core.MARKER]["version"], 3)
         first = await self.writer.async_advance_history(context=self.context)
         self.assertEqual((first["status"], first["cursor"]), ("in_progress", 1))
         await self.complete()
@@ -345,7 +349,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.accept()
         changed = {**self.context, "timezone": "America/Chicago"}
         with self.assertRaisesRegex(
-            manager.HourlyImportError, "history_operation_context_changed"
+            core.HourlyImportError, "history_operation_context_changed"
         ):
             await self.writer.async_advance_history(context=changed)
 
@@ -355,7 +359,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         refresh = await self.delta_request()
         changed = {**self.context, "timezone": "America/Chicago"}
         with self.assertRaisesRegex(
-            manager.HourlyImportError, "history_routine_context_changed"
+            core.HourlyImportError, "history_routine_context_changed"
         ):
             await self.writer.async_refresh_history(refresh, context=changed)
         self.assertFalse(
@@ -408,7 +412,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             1,
         )
         self.assertEqual(len(self.recorder.submissions), before)
-        with self.assertRaisesRegex(manager.HourlyImportError, "operation_id_conflict"):
+        with self.assertRaisesRegex(core.HourlyImportError, "operation_id_conflict"):
             await self.writer.async_accept_history(
                 {**apply, "plan_digest": "a" * 64}, context=self.context
             )
@@ -440,10 +444,10 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             await self.writer.async_advance_history(context=self.context)
         pending = deepcopy(self.store.value["pending"])
         self.store.fail_read_kind = None
-        self.recorder.rows[NATIVE][START] = manager.HourlyStatisticRow(START, mean=99)
+        self.recorder.rows[NATIVE][START] = HourlyStatisticRow(START, mean=99)
         before = len(self.recorder.submissions)
         await self.writer.async_accept_history(apply, context=self.context)
-        with self.assertRaisesRegex(manager.HourlyReconciliationError, "third_state"):
+        with self.assertRaisesRegex(core.HourlyReconciliationError, "third_state"):
             await self.writer.async_advance_history(context=self.context)
         self.assertEqual(len(self.recorder.submissions), before)
         self.assertEqual(self.store.value["pending"], pending)
@@ -490,7 +494,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             ("blocked", 0, False),
         )
         self.assertEqual(other.history_configuration(self.context)["quantities"], [])
-        with self.assertRaises(manager.HourlyImportError):
+        with self.assertRaises(core.HourlyImportError):
             await other.async_writer_partition(identity())
         self.assertEqual(other.history_status()["status"], "blocked")
         self.assertEqual(self.recorder.submissions, [])
@@ -643,7 +647,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await cold.async_check_history_material(material, context=self.context)
         await self.writer.async_advance_history(context=self.context)
         with self.assertRaisesRegex(
-            manager.HourlyImportError, "history_query_root_changed"
+            core.HourlyImportError, "history_query_root_changed"
         ):
             await cold.async_check_history_material(material, context=self.context)
 
@@ -677,7 +681,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
         with self.assertRaisesRegex(
-            manager.HourlyImportError, "history_query_root_changed"
+            core.HourlyImportError, "history_query_root_changed"
         ):
             await task
 
@@ -722,7 +726,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(cold._state)
         finally:
             release.set()
-        with self.assertRaisesRegex(manager.HourlyImportError, "root_changed"):
+        with self.assertRaisesRegex(core.HourlyImportError, "root_changed"):
             await asyncio.wait_for(task, 3)
 
     async def test_initial_native_identity_collision_blocks_without_saves(self):
@@ -853,13 +857,13 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OSError):
             await self.writer.async_refresh_history(request, context=self.context)
         self.assertEqual(self.store.value["token"], old_token)
-        self.assertNotEqual(self.entry.data[manager.MARKER]["token"], old_token)
+        self.assertNotEqual(self.entry.data[core.MARKER]["token"], old_token)
         # A Core crash may lose the delayed config-entry marker update.
         self.entry.data = old_entry
         self.writer = self.fresh()
-        with self.assertRaisesRegex(manager.HourlyImportError, "root_invalidated"):
+        with self.assertRaisesRegex(core.HourlyImportError, "root_invalidated"):
             await self.writer.async_history_material(request, context=self.context)
-        with self.assertRaises(manager.HourlyImportError):
+        with self.assertRaises(core.HourlyImportError):
             await self.writer.async_writer_partition(identity())
 
     async def test_cancelled_fence_write_blocks_concurrent_admission_until_same_write_settles(
@@ -894,7 +898,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertTrue(self.writer.has_pending_store_save())
         other = self.fresh()
-        with self.assertRaisesRegex(manager.HourlyImportError, "write_pending"):
+        with self.assertRaisesRegex(core.HourlyImportError, "write_pending"):
             await other.async_history_material(request, context=self.context)
         takeover = self.create_task(other.async_writer_partition(identity()))
         await asyncio.sleep(0)
@@ -907,9 +911,9 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 if not pending.cancelled() and pending is not takeover
             )
         )
-        with self.assertRaises(manager.HourlyImportError):
+        with self.assertRaises(core.HourlyImportError):
             await takeover
-        with self.assertRaisesRegex(manager.HourlyImportError, "root_invalidated"):
+        with self.assertRaisesRegex(core.HourlyImportError, "root_invalidated"):
             await other.async_history_material(request, context=self.context)
 
     async def test_fence_is_idempotent_and_corrupt_or_unreadable_is_never_absence(self):
@@ -928,7 +932,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             "start": START.isoformat(),
             "end": (START + HOUR).isoformat(),
         }
-        with self.assertRaisesRegex(manager.HourlyImportError, "fence_corrupt"):
+        with self.assertRaisesRegex(core.HourlyImportError, "fence_corrupt"):
             await other.async_history_material(request, context=self.context)
         original = self.store.async_read_object
 
@@ -938,7 +942,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             return await original(kind, digest)
 
         self.store.async_read_object = unreadable
-        with self.assertRaisesRegex(manager.HourlyImportError, "fence_unreadable"):
+        with self.assertRaisesRegex(core.HourlyImportError, "fence_unreadable"):
             await self.fresh().async_history_material(request, context=self.context)
 
     async def test_root_only_rollback_remains_fenced_but_consistent_restore_matches(
@@ -966,7 +970,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.store.value["history"]["invalidation_fences"])
         self.store.value, self.entry.data = old_root, old_entry
         self.hass.data.clear()
-        with self.assertRaisesRegex(manager.HourlyImportError, "root_invalidated"):
+        with self.assertRaisesRegex(core.HourlyImportError, "root_invalidated"):
             await self.fresh().async_history_material(request, context=self.context)
         self.store.objects = old_objects
         restored = await self.fresh().async_history_material(
@@ -1123,7 +1127,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         operation = json.loads(
             await original_read("operation", root["operation"]["object"])
         )
-        with self.assertRaisesRegex(manager.HourlyImportError, "sources_invalid"):
+        with self.assertRaisesRegex(core.HourlyImportError, "sources_invalid"):
             self.writer._history_writer().request(
                 {**operation["request"], "source_ids": catalog["source_ids"]},
                 self.context,
@@ -1169,9 +1173,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.writer.async_refresh_history(current, context=self.context)
         await self.complete()
         before = deepcopy(self.store.value)
-        with self.assertRaisesRegex(
-            manager.HourlyImportError, "delta_baseline_changed"
-        ):
+        with self.assertRaisesRegex(core.HourlyImportError, "delta_baseline_changed"):
             await self.writer.async_refresh_history(stale, context=self.context)
         self.assertEqual(self.store.value, before)
 
@@ -1250,7 +1252,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(change=change):
                 self.store.value = writer.sealed({**saved, **change})
-                with self.assertRaises(manager.HourlyImportError):
+                with self.assertRaises(core.HourlyImportError):
                     await self.fresh().async_writer_partition(identity())
         self.store.value = saved
         self.assertEqual(
@@ -1268,8 +1270,8 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             partition.legacy_statistic_ids, {"beestat:zone_fan_runtime_hours"}
         )
-        self.entry.data[manager.MARKER] = {"version": 3, "token": "a" * 64}
-        with self.assertRaises(manager.HourlyImportError):
+        self.entry.data[core.MARKER] = {"version": 3, "token": "a" * 64}
+        with self.assertRaises(core.HourlyImportError):
             await self.fresh().async_writer_partition(identity())
         self.assertFalse(self.recorder.submissions)
 
@@ -1339,24 +1341,24 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.complete()
         saved = deepcopy(self.store.value)
         submissions = deepcopy(self.recorder.submissions)
-        original_marker = deepcopy(self.entry.data[manager.MARKER])
+        original_marker = deepcopy(self.entry.data[core.MARKER])
         rebound = identity()
         next(iter(rebound["resources"].values()))["thermostat_id"] = 2
         other_account = {**identity(), "account_anchors": ["different-account"]}
         for current in (rebound, other_account):
             with (
                 self.subTest(identity=current),
-                self.assertRaises(manager.HourlyImportError),
+                self.assertRaises(core.HourlyImportError),
             ):
                 await self.fresh().async_writer_partition(current)
         for marker in (None, {"version": 3, "token": "a" * 64}):
-            self.entry.data[manager.MARKER] = marker
+            self.entry.data[core.MARKER] = marker
             with (
                 self.subTest(marker=marker),
-                self.assertRaises(manager.HourlyImportError),
+                self.assertRaises(core.HourlyImportError),
             ):
                 await self.fresh().async_writer_partition(identity())
-        self.entry.data[manager.MARKER] = original_marker
+        self.entry.data[core.MARKER] = original_marker
         self.assertEqual(self.store.value, saved)
         self.assertEqual(self.recorder.submissions, submissions)
 

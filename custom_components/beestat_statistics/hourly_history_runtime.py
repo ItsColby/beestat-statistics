@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from .const import MAX_WINDOW_DAYS
-from .hourly_history_contract import MAX_SOURCE_BYTES, utc
+from .hourly_history_contract import (
+    MAX_SOURCE_BYTES,
+    ROUTINE_LOOKBACK_DAYS,
+    utc,
+)
 from .hourly_history_delta import prepare_history_delta
 from .hourly_sources import _row_stamp, async_stage_source
 from .raw_points import async_read_raw_points, parse_raw_point_request
@@ -46,7 +50,7 @@ async def async_refresh_history(
     now = utc(context["evaluated_at"]).replace(microsecond=0)
     current = now.replace(minute=0, second=0, microsecond=0)
     start, end = (
-        current - timedelta(days=min(lookback_days, 45)),
+        current - timedelta(days=min(lookback_days, ROUTINE_LOOKBACK_DAYS)),
         current + timedelta(hours=1),
     )
     baseline = await importer.hourly.async_history_source_points(

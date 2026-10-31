@@ -40,10 +40,8 @@ from custom_components.beestat_statistics.entry_options import (
     FilterChangeConflictError,
     async_mark_filter_changed,
 )
-from custom_components.beestat_statistics.hourly_import import (
-    HourlyImportManager,
-    WriterPartition,
-)
+from custom_components.beestat_statistics.hourly_import import HourlyImportManager
+from custom_components.beestat_statistics.hourly_import_core import WriterPartition
 from custom_components.beestat_statistics.importer import BeestatStatisticsImporter
 from custom_components.beestat_statistics.statistics_builder import (
     detailed_runtime_statistic_ids,

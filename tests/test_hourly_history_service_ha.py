@@ -26,7 +26,7 @@ from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.hourly_history_contract import (
     MAX_SOURCE_BYTES,
 )
-from custom_components.beestat_statistics.hourly_import import MARKER
+from custom_components.beestat_statistics.hourly_import_core import MARKER
 from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.hourly_history_support import (
     END,
