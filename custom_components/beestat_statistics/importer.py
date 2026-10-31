@@ -1080,13 +1080,13 @@ class BeestatStatisticsImporter:
             else self._client.async_read_runtime_sensor
         )
         try:
-            rows = await read(
+            window_rows = await read(
                 resource_id,
                 _format_beestat_time(start),
                 _format_beestat_time(end),
             )
             skipped_windows.transient_failure_count = 0
-            return rows
+            return window_rows
         except BeestatAuthError, BeestatPermanentError:
             raise
         except BeestatApiError as err:
