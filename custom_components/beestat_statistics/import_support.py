@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from datetime import date as dt_date
 from typing import Any
 from urllib.parse import urlsplit
@@ -33,7 +33,11 @@ from .coordinator import BeestatRuntimeData
 from .filter_runtime import parse_source_datetime
 from .import_evidence import SkippedWindowEvidence
 from .runtime import BeestatStatisticsConfigEntry
-from .statistics_builder import CumulativeStatisticSeed, StatisticsSeries
+from .statistics_builder import (
+    CumulativeStatisticSeed,
+    StatisticsSeries,
+    _local_midnight,
+)
 from .url_validation import normalize_api_base
 
 
@@ -397,10 +401,6 @@ def _writer_identity(
         parents.setdefault(sensor.sensor_id, sensor.thermostat_id)
     identity["sensor_parents"] = parents
     return identity
-
-
-def _local_midnight(local_day: dt_date, local_tz: ZoneInfo) -> datetime:
-    return datetime.combine(local_day, time.min, local_tz)
 
 
 def _latest_summary_day(rows: list[dict[str, Any]]) -> dt_date | None:

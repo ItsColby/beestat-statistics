@@ -699,7 +699,3 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(result.data, expected)
         self.assertEqual(session.call_count, 5)
-
-
-if __name__ == "__main__":
-    unittest.main()

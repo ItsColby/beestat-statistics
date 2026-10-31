@@ -328,7 +328,3 @@ def _literal_translation_keys(path: Path) -> set[str]:
             text,
         )
     )
-
-
-if __name__ == "__main__":
-    unittest.main()

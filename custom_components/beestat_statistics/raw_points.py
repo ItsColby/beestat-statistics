@@ -11,10 +11,11 @@ from typing import Any, Literal
 
 from .api import BeestatClient, BeestatRawReadError, BeestatRawResponse
 from .config_model import BeestatConfig
+from .hourly_history_contract import MAX_SOURCE_BYTES, MAX_SOURCE_ROWS
 
 RAW_POINT_MAX_DAYS = 31
-RAW_POINT_MAX_ROWS = 10_000
-RAW_POINT_MAX_BYTES = 8 * 1024 * 1024
+RAW_POINT_MAX_ROWS = MAX_SOURCE_ROWS
+RAW_POINT_MAX_BYTES = MAX_SOURCE_BYTES
 type PointResource = Literal["runtime_thermostat", "runtime_sensor"]
 
 

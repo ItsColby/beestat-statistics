@@ -75,7 +75,3 @@ class TaskCoalescerTest(unittest.IsolatedAsyncioTestCase):
             await scheduler.schedule()
         await scheduler.schedule()
         self.assertEqual(calls, 2)
-
-
-if __name__ == "__main__":
-    unittest.main()

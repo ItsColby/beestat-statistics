@@ -199,6 +199,10 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
     def test_snapshot_inventory_and_schema_fail_closed(self) -> None:
         baseline = json.loads(self.checker.DEFAULT_SNAPSHOT.read_text(encoding="utf-8"))
         self.checker.validate_surface(baseline)
+        self.assertEqual(list(self.checker.WATCH_PATHS), baseline["watch_paths"])
+        self.assertEqual(
+            list(self.checker.INTEGRATION_DECISIONS), baseline["integration_decisions"]
+        )
         invalid = [
             [],
             {},
@@ -297,7 +301,3 @@ class ApiSurfaceCheckerTest(unittest.TestCase):
                 self.assertEqual(
                     baseline, json.loads(snapshot.read_text(encoding="utf-8"))
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

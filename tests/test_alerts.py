@@ -95,7 +95,3 @@ class AlertClassificationTest(unittest.TestCase):
             "maintenance",
         )
         self.assertEqual(alerts.classify_active_alerts(({},)), "unknown")
-
-
-if __name__ == "__main__":
-    unittest.main()

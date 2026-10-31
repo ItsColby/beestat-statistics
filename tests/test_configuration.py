@@ -288,7 +288,3 @@ class ConfigurationResponseTest(unittest.TestCase):
         self.assertTrue(cached["autoAway"])
         cached["fanMinOnTime"]["value"] = 20
         self.assertEqual(returned["fanMinOnTime"]["value"], 60)
-
-
-if __name__ == "__main__":
-    unittest.main()

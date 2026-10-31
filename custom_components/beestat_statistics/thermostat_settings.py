@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any
 
 from .config_rows import (
+    as_bool,
     finite_float_or_none,
     positive_resource_id,
     safe_mapping,
@@ -241,7 +242,7 @@ def build_thermostat_settings_snapshots(
         if thermostat_id is None or ecobee_thermostat_id is None:
             continue
         raw = raw_by_id.get(ecobee_thermostat_id)
-        if raw is None or _truthy(raw.get("inactive")) or _truthy(raw.get("deleted")):
+        if raw is None or as_bool(raw.get("inactive")) or as_bool(raw.get("deleted")):
             continue
         settings = safe_mapping(raw.get("settings"), _all_setting_fields())
         audio = safe_mapping(raw.get("audio"), _AUDIO_FIELDS)
@@ -366,11 +367,3 @@ def _int_or_none(value: Any) -> int | None:
     if isinstance(value, float) and value != parsed:
         return None
     return parsed
-
-
-def _truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value == 1)

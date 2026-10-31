@@ -51,6 +51,7 @@ class HourlyImportManager:
         self._loaded = False
         self._closed = False
         self._error: str | None = None
+        self._invalidated_history_token: str | None = None
 
     def _history_writer(self) -> HistoryWriter:
         return HistoryWriter(self)
@@ -76,7 +77,7 @@ class HourlyImportManager:
                     error="history_store_write_pending",
                     has_pending=False,
                 )
-            if state["token"] == getattr(self, "_invalidated_history_token", None):
+            if state["token"] == self._invalidated_history_token:
                 result.update(
                     status="blocked",
                     error="history_root_invalidated",
@@ -179,7 +180,7 @@ class HourlyImportManager:
                 is not previous
             ):
                 raise HourlyImportError("history_root_changed") from None
-            if state["token"] == getattr(self, "_invalidated_history_token", None):
+            if state["token"] == self._invalidated_history_token:
                 raise HourlyImportError("history_root_invalidated") from None
             return
         except Exception as err:

@@ -549,7 +549,3 @@ class HourlyHistoryQueryTest(unittest.TestCase):
             set(response["identity"]), {"entry_id", "api_base", "account_anchors"}
         )
         self.assertEqual(response["operation"], self.material["operation"])
-
-
-if __name__ == "__main__":
-    unittest.main()
