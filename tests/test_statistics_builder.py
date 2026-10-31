@@ -957,7 +957,3 @@ def _series(series, statistic_id: str):
         if item.statistic_id == statistic_id:
             return item
     raise AssertionError(f"Missing statistic series {statistic_id}")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -308,7 +308,3 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertNotIn("Private Future Value", text)
         self.assertNotIn("future_private_field", text)
         self.assertIn("REDACTED", text)
-
-
-if __name__ == "__main__":
-    unittest.main()

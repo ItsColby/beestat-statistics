@@ -616,7 +616,3 @@ class _FakeCoordinator:
 
     def async_schedule_filter_boundary_reconcile(self) -> None:
         self.scheduled_reconcile_count += 1
-
-
-if __name__ == "__main__":
-    unittest.main()

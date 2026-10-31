@@ -264,7 +264,3 @@ class EntityHelpersTest(unittest.TestCase):
         self.assertIsNone(
             self.entity.thermostat_suggested_object_id(homekit, "filter_due")
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

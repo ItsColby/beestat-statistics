@@ -253,7 +253,6 @@ class BeestatStatisticsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             await self.async_set_unique_id(CONFIG_ENTRY_UNIQUE_ID)
-            self._abort_if_unique_id_configured()
             if not str(user_input.get(CONF_API_KEY, "")).strip():
                 errors[CONF_API_KEY] = "api_key_required"
             else:

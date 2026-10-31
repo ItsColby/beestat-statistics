@@ -42,7 +42,3 @@ class UrlValidationTest(unittest.TestCase):
             ):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     url_validation.normalize_api_base(value)
-
-
-if __name__ == "__main__":
-    unittest.main()

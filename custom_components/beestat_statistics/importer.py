@@ -85,7 +85,6 @@ from .import_support import (
     _iter_windows,
     _latest_cumulative_starts,
     _latest_summary_day,
-    _local_midnight,
     _point_window,
     _sensor_thermostat_map,
     _thermostat_data_end_map,
@@ -101,6 +100,7 @@ from .raw_points import (
 from .runtime import BeestatStatisticsRuntime, entry_scan_interval_seconds
 from .statistics_builder import (
     CumulativeStatisticSeed,
+    _local_midnight,
     apply_cumulative_seeds,
     build_statistics,
     cumulative_statistic_ids,

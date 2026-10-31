@@ -1446,7 +1446,3 @@ def _sensor(sensors, sensor_id: int):
         if sensor.sensor_id == sensor_id:
             return sensor
     raise AssertionError(f"Missing sensor {sensor_id}")
-
-
-if __name__ == "__main__":
-    unittest.main()

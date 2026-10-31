@@ -215,7 +215,3 @@ class EntityReferenceTest(unittest.TestCase):
             ),
             (effective,),
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

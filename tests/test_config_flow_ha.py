@@ -810,13 +810,8 @@ async def test_user_flow_rejects_duplicate_entry(hass: HomeAssistant) -> None:
         context={"source": SOURCE_USER},
     )
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        USER_INPUT,
-    )
-
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["reason"] == "single_instance_allowed"
 
 
 async def test_reconfigure_preserves_entry_when_account_identity_is_unavailable(

@@ -200,7 +200,3 @@ class ThermostatSettingsTest(unittest.TestCase):
             ({"thermostat_id": None, "id": 2, "ecobee_thermostat_id": 1},), rows
         )[2]
         self.assertTrue(self.settings.boolean_setting(snapshot, "autoAway"))
-
-
-if __name__ == "__main__":
-    unittest.main()

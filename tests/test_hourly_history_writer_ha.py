@@ -14,9 +14,9 @@ from homeassistant.core import Context
 from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import import (
     _SAVES,
-    HourlyImportError,
     HourlyImportManager,
 )
+from custom_components.beestat_statistics.hourly_import_core import HourlyImportError
 from custom_components.beestat_statistics.hourly_recorder import HourlyRecorder
 from custom_components.beestat_statistics.hourly_sources import async_stage_source
 from tests.hourly_history_support import (

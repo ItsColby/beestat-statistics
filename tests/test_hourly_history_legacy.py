@@ -235,7 +235,3 @@ class LegacyHistoryTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "native failure"):
             await self.read()
         self.assertEqual(len(self.recorder.calls), 2)
-
-
-if __name__ == "__main__":
-    unittest.main()
