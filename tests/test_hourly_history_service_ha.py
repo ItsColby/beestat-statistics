@@ -136,6 +136,7 @@ def _assert_no_source_io(runtime):
         spy.assert_not_called()
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize(
     "service", ["stage_hourly_source", "plan_hourly_history", "apply_hourly_history"]
 )
@@ -166,9 +167,9 @@ async def test_effect_and_plan_services_require_active_admin_before_io(
     runtime.snapshots.assert_not_called()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_ordinary_authenticated_user_can_read_v3_coverage_and_configuration(
     hass, freezer, monkeypatch, tmp_path
 ):
@@ -194,9 +195,9 @@ async def test_ordinary_authenticated_user_can_read_v3_coverage_and_configuratio
     assert MARKER not in runtime.entry.data
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize(
     "service",
     [
@@ -222,9 +223,9 @@ async def test_native_services_require_the_explicit_loaded_entry(
     runtime.snapshots.assert_not_called()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_apply_rejects_nested_entry_mismatch_before_journal_access(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -243,9 +244,9 @@ async def test_apply_rejects_nested_entry_mismatch_before_journal_access(
     load.assert_not_called()
     runtime.submit.assert_not_called()
     assert runtime.importer._history_worker is None
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("transport", ["rows", "native_rest_export"])
 async def test_stage_upload_lease_and_cleanup_run_in_executor_after_durable_retention(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, transport
@@ -298,9 +299,9 @@ async def test_stage_upload_lease_and_cleanup_run_in_executor_after_durable_rete
     assert runtime.importer.hourly._state is None
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("rejected", ["identity", "window", "incomplete", "shape"])
 async def test_native_rest_upload_rejects_invalid_inner_export_before_retention(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, rejected
@@ -339,9 +340,9 @@ async def test_native_rest_upload_rejects_invalid_inner_export_before_retention(
     runtime.snapshots.assert_not_awaited()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("rejected", ["hash", "size"])
 async def test_rejected_upload_is_cleaned_without_retaining_source_or_journal(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, rejected
@@ -368,9 +369,9 @@ async def test_rejected_upload_is_cleaned_without_retaining_source_or_journal(
     assert not Path(runtime.store.path).exists()
     assert MARKER not in runtime.entry.data
     runtime.submit.assert_not_called()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_plan_query_and_configuration_leave_all_writers_untouched(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -423,9 +424,9 @@ async def test_plan_query_and_configuration_leave_all_writers_untouched(
         spy.assert_not_called()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("service", ["plan_hourly_history", "get_hourly_coverage"])
 @pytest.mark.parametrize("changed", ["runtime", "configuration", "timezone"])
 async def test_context_change_during_native_read_discards_response_without_writes(
@@ -472,9 +473,9 @@ async def test_context_change_during_native_read_discards_response_without_write
     assert MARKER not in runtime.entry.data
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_cancelled_apply_caller_does_not_cancel_durable_acceptance_or_worker(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -568,9 +569,9 @@ async def test_cancelled_apply_caller_does_not_cancel_durable_acceptance_or_work
     no_object.assert_not_called()
     write.assert_called_once()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_retired_coverage_and_selection_routes_fail_before_effects(
     hass, freezer, monkeypatch, tmp_path
 ):
@@ -587,4 +588,3 @@ async def test_retired_coverage_and_selection_routes_fail_before_effects(
     runtime.snapshots.assert_not_called()
     runtime.submit.assert_not_called()
     _assert_no_source_io(runtime)
-    await runtime.entry._async_process_on_unload(hass)

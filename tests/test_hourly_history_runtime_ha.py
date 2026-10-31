@@ -55,6 +55,7 @@ async def _refresh(runtime, *, days=1):
         )
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("provider_rows", ["identical", "shorter", "empty"])
 async def test_unchanged_or_shorter_capture_preserves_claims_without_source_objects(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, provider_rows
@@ -84,9 +85,9 @@ async def test_unchanged_or_shorter_capture_preserves_claims_without_source_obje
     assert read.await_args.kwargs["raw_response"] is True
     runtime.client.async_read_runtime_sensor.assert_not_called()
     runtime.coordinator.async_refresh_runtime.assert_not_called()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_correction_seals_only_delta_and_keeps_current_hour_provisional(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -141,9 +142,9 @@ async def test_correction_seals_only_delta_and_keeps_current_hour_provisional(
     assert provisional["series"][0]["buckets"][0]["reason"] == "provisional"
     assert provisional["series"][0]["buckets"][0]["value"] is None
     assert runtime.write.call_count == 2
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_acquisition_crossing_hour_keeps_full_policy_window_and_fixed_evaluation(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -235,9 +236,9 @@ async def test_acquisition_crossing_hour_keeps_full_policy_window_and_fixed_eval
     assert (await _logical_hour(runtime))["value"] == pytest.approx(
         (150 + 11 * 75) / 3600
     )
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_retained_complete_points_close_without_staging_unchanged_source(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -286,9 +287,9 @@ async def test_retained_complete_points_close_without_staging_unchanged_source(
     assert closed["value"] == 0.25
     assert runtime.write.call_count > writes
     assert read.await_count == 2
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_overlapping_provider_windows_resolve_final_rows_before_delta_staging(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -317,9 +318,9 @@ async def test_overlapping_provider_windows_resolve_final_rows_before_delta_stag
     assert (await _logical_hour(runtime))["value"] == 0.25
     runtime.write.assert_called_once()
     runtime.client.async_read_runtime_sensor.assert_not_called()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_adopted_detailed_quantity_refreshes_after_recent_activity_disappears(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -350,9 +351,9 @@ async def test_adopted_detailed_quantity_refreshes_after_recent_activity_disappe
     assert closed["value"] == 0.0
     read.assert_awaited_once()
     runtime.client.async_read_runtime_sensor.assert_not_called()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_provider_failure_preserves_committed_source_and_native_claims(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -383,9 +384,9 @@ async def test_provider_failure_preserves_committed_source_and_native_claims(
     assert await runtime.store.async_load() == before
     assert runtime.write.call_count == writes
     assert read.await_count == 2
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_pending_accepted_operation_blocks_capture_without_recovery_or_replay(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -402,9 +403,9 @@ async def test_pending_accepted_operation_blocks_capture_without_recovery_or_rep
     read.assert_not_called()
     runtime.write.assert_not_called()
     assert runtime.importer.hourly.has_pending_history
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_importer_wrapper_resumes_pending_intent_but_rebuild_requires_plan(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -430,9 +431,9 @@ async def test_importer_wrapper_resumes_pending_intent_but_rebuild_requires_plan
     assert await runtime.store.async_load() == completed
     runtime.write.assert_called_once()
     read.assert_not_called()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_importer_wrapper_finishes_the_routine_correction_it_accepts(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -451,9 +452,9 @@ async def test_importer_wrapper_finishes_the_routine_correction_it_accepts(
     assert (await _logical_hour(runtime))["value"] == pytest.approx(
         (150 + 11 * 75) / 3600
     )
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_failed_routine_advance_holds_the_operation_without_aborting_import(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -476,9 +477,9 @@ async def test_failed_routine_advance_holds_the_operation_without_aborting_impor
         assert not runtime.importer.hourly.has_pending_history
     # The held operation is reported, not reacquired or retried.
     read.assert_awaited_once()
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_durable_baseline_change_during_capture_cannot_accept_stale_delta(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -505,7 +506,6 @@ async def test_durable_baseline_change_during_capture_cannot_accept_stale_delta(
     assert runtime.write.call_count == writes
     assert changed["operation"] == before["operation"]
     assert changed["pending"] is None
-    await runtime.entry._async_process_on_unload(hass)
 
 
 @pytest.mark.parametrize("interruption", ["configuration", "unload", "cancel"])
@@ -570,6 +570,7 @@ async def test_detached_serialization_cannot_publish_after_context_or_task_ends(
         await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_cold_adoption_keeps_unmapped_unselected_sensor_on_daily_writer(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -632,4 +633,3 @@ async def test_cold_adoption_keeps_unmapped_unselected_sensor_on_daily_writer(
     configuration = runtime.importer.history_configuration()
     assert all(item["sensor_id"] != 11 for item in configuration["quantities"])
     assert (await _logical_hour(runtime))["value"] == 0.25
-    await runtime.entry._async_process_on_unload(hass)

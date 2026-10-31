@@ -28,7 +28,6 @@ class HourlyHistoryQueryTest(unittest.TestCase):
             },
             "config_revision": "config-1",
             "timezone": "America/New_York",
-            "timezone_revision": "tz-1",
             "evaluated_at": (START + 48 * HOUR).isoformat(),
         }
         self.material = {
@@ -126,7 +125,6 @@ class HourlyHistoryQueryTest(unittest.TestCase):
             "start": start.isoformat(),
             "end": end.isoformat(),
             "timezone": self.context["timezone"],
-            "timezone_revision": "tz-1",
             "calendar_verified": True,
             "complete": True,
             "closed": True,
@@ -340,6 +338,23 @@ class HourlyHistoryQueryTest(unittest.TestCase):
         self.assertEqual(bucket["confidence"], ["legacy_summary_precision"])
         self.assertEqual(len(bucket["eligible_intervals"]), 24)
         self.assertEqual(result["series"][0]["summary"]["complete_total"], 2.5)
+
+    def test_legacy_evidence_with_stale_timezone_revision_still_qualifies(self):
+        self.point()
+        self.legacy(timezone_revision="tz-old")
+        result = self.result(self.request(end=START + 24 * HOUR, period="day"))
+        self.assertEqual(
+            result["series"][0]["buckets"][0]["source_basis"], "legacy_daily"
+        )
+        self.assertNotIn("timezone_revision", result)
+
+    def test_legacy_evidence_for_another_zone_does_not_qualify(self):
+        self.point()
+        self.legacy(timezone="America/Chicago")
+        result = self.result(self.request(end=START + 24 * HOUR, period="day"))
+        bucket = result["series"][0]["buckets"][0]
+        self.assertNotEqual(bucket["source_basis"], "legacy_daily")
+        self.assertEqual(bucket["legacy_reason"], "legacy_calendar_mismatch")
 
     def test_unproven_legacy_day_does_not_fill_gaps(self):
         modifications = (

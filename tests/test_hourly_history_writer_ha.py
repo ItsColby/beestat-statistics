@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from hashlib import sha256
@@ -12,6 +13,7 @@ from homeassistant.core import Context
 
 from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import import (
+    _SAVES,
     HourlyImportError,
     HourlyImportManager,
 )
@@ -52,6 +54,7 @@ async def _accepted(hass, admin, freezer, monkeypatch, tmp_path):
     return runtime, apply
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_commit_has_mean_only_row_and_verified_checkpoint(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -72,9 +75,9 @@ async def test_native_commit_has_mean_only_row_and_verified_checkpoint(
     saved = await runtime.store.async_load()
     assert saved["pending"] is None
     assert saved["history"]["coverage_revision"] == 1
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_native_effect_with_failed_proof_readback_restarts_without_resubmission(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -113,9 +116,9 @@ async def test_native_effect_with_failed_proof_readback_restarts_without_resubmi
     assert result["status"] == "completed"
     submit.assert_not_called()
     assert (await runtime.store.async_load())["pending"] is None
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("blocked_before_pending", [False, True])
 async def test_accepted_replacement_hides_old_native_proof_before_pending(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, blocked_before_pending
@@ -190,9 +193,9 @@ async def test_accepted_replacement_hides_old_native_proof_before_pending(
         0
     ].mean == pytest.approx(25)
     assert await runtime.store.async_load() == saved
-    await runtime.entry._async_process_on_unload(hass)
 
 
+@pytest.mark.usefixtures("unload_entries")
 async def test_persisted_fence_blocks_cold_old_root_and_old_entry_marker(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
@@ -239,4 +242,188 @@ async def test_persisted_fence_blocks_cold_old_root_and_old_entry_marker(
     assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
         0
     ].mean == pytest.approx(25)
-    await runtime.entry._async_process_on_unload(hass)
+
+
+_TOKEN = "a" * 64
+
+
+async def _fence_manager(hass, freezer, monkeypatch, tmp_path):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    return runtime, runtime.importer.hourly
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize("check", [True, False])
+async def test_fence_refuses_while_a_store_save_is_pending(
+    hass, freezer, monkeypatch, tmp_path, check
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    pending = hass.loop.create_future()
+    hass.data.setdefault(_SAVES, {})[runtime.entry.entry_id] = pending
+    try:
+        with pytest.raises(HourlyImportError, match="history_store_write_pending"):
+            if check:
+                await importer._check_history_root_fence(
+                    {"version": 3, "token": _TOKEN}
+                )
+            else:
+                await importer._invalidate_history_root(_TOKEN)
+    finally:
+        pending.cancel()
+        hass.data[_SAVES].pop(runtime.entry.entry_id)
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_fence_check_rejects_a_failed_predecessor_fence_task(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+
+    async def failed() -> None:
+        raise OSError("fence write failed")
+
+    task = hass.async_create_task(failed())
+    task._beestat_history_fence = _TOKEN
+    with pytest.raises(OSError, match="fence write failed"):
+        await task
+    hass.data.setdefault(_SAVES, {})[runtime.entry.entry_id] = task
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize("mismatch", ["reference", "readback"])
+async def test_fence_write_rejects_reference_or_readback_mismatch(
+    hass, freezer, monkeypatch, tmp_path, mismatch
+):
+    _runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    importer._loaded = True  # the failed fence must discard the loaded root
+    store = importer._store
+    if mismatch == "reference":
+        write = store.async_write_object
+
+        async def wrong_reference(kind, content):
+            await write(kind, content)
+            return "b" * 64
+
+        monkeypatch.setattr(store, "async_write_object", wrong_reference)
+    else:
+        monkeypatch.setattr(
+            store, "async_read_object", AsyncMock(return_value=b"other")
+        )
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._invalidate_history_root(_TOKEN)
+    assert importer._error == "history_invalidation_fence_unverified"
+    assert importer._loaded is False
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize(
+    ("raw", "error", "reason"),
+    [
+        (b"not the fence", None, "corrupt"),
+        (None, RuntimeError("unreadable"), "unreadable"),
+    ],
+)
+async def test_fence_check_rejects_corrupt_or_unreadable_fence(
+    hass, freezer, monkeypatch, tmp_path, raw, error, reason
+):
+    _runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        importer._store,
+        "async_read_object",
+        AsyncMock(return_value=raw, side_effect=error),
+    )
+    with pytest.raises(HourlyImportError, match=f"history_invalidation_fence_{reason}"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+
+
+async def _finished_task(hass, entry_id, token, *, outcome):
+    async def body() -> None:
+        if outcome == "failed":
+            raise OSError("fence write failed")
+        if outcome == "cancelled":
+            await asyncio.sleep(3600)
+
+    task = hass.async_create_task(body())
+    task._beestat_history_fence = token
+    if outcome == "cancelled":
+        await asyncio.sleep(0)
+        task.cancel()
+    expected = {"failed": OSError, "cancelled": asyncio.CancelledError}
+    if outcome in expected:
+        with pytest.raises(expected[outcome]):
+            await task
+    else:
+        await task
+    hass.data.setdefault(_SAVES, {})[entry_id] = task
+    return task
+
+
+def _fence_absent(importer, monkeypatch, *, during=None):
+    async def absent(kind, name):
+        if during is not None:
+            during()
+        raise FileNotFoundError
+
+    monkeypatch.setattr(importer._store, "async_read_object", absent)
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_fence_check_rejects_a_cancelled_predecessor_fence_task(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    await _finished_task(hass, runtime.entry.entry_id, _TOKEN, outcome="cancelled")
+    with pytest.raises(
+        HourlyImportError, match="history_invalidation_fence_unverified"
+    ):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_fence_check_ignores_a_failed_task_for_another_root(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    await _finished_task(hass, runtime.entry.entry_id, "b" * 64, outcome="failed")
+    _fence_absent(importer, monkeypatch)
+    await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_fence_check_rejects_a_save_task_replaced_during_the_read(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    done = hass.loop.create_future()
+    done.set_result(None)
+    _fence_absent(
+        importer,
+        monkeypatch,
+        during=lambda: hass.data.setdefault(_SAVES, {}).__setitem__(
+            runtime.entry.entry_id, done
+        ),
+    )
+    with pytest.raises(HourlyImportError, match="history_root_changed"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize("source", ["invalidated_here", "matching_predecessor"])
+async def test_absent_fence_still_rejects_a_root_invalidated_in_process(
+    hass, freezer, monkeypatch, tmp_path, source
+):
+    runtime, importer = await _fence_manager(hass, freezer, monkeypatch, tmp_path)
+    if source == "invalidated_here":
+        await importer._invalidate_history_root(_TOKEN)
+        hass.data[_SAVES].pop(runtime.entry.entry_id)
+    else:
+        await _finished_task(hass, runtime.entry.entry_id, _TOKEN, outcome="done")
+    _fence_absent(importer, monkeypatch)
+    with pytest.raises(HourlyImportError, match="history_root_invalidated"):
+        await importer._check_history_root_fence({"version": 3, "token": _TOKEN})

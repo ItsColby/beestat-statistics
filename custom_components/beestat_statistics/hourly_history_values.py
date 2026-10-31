@@ -15,11 +15,14 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from typing import Any
 
-from .const import STATISTIC_MEAN_TYPE_ARITHMETIC, STATISTIC_SOURCE
+from .const import (
+    HOURLY_V2_SUFFIX,
+    STATISTIC_MEAN_TYPE_ARITHMETIC,
+    STATISTIC_SOURCE,
+)
 from .hourly_history_contract import METHOD_VERSION, quantity_id, unmapped_sensor
 from .hourly_statistics import HourlyBucket, HourlySeries
 
-_V2_SUFFIX = "_hourly_v2"
 _V3_SUFFIX = "_hourly_v3"
 _STATISTIC_ID = re.compile(r"beestat:[a-z0-9_]+")
 
@@ -132,7 +135,7 @@ def _daily_only(
         return False
     # Saved ownership cannot be erased by unbinding or reusing its alias.
     _check_parent(resource, parents)
-    if item.statistic_id.removesuffix(_V2_SUFFIX) in aliases:
+    if item.statistic_id.removesuffix(HOURLY_V2_SUFFIX) in aliases:
         raise ValueError("history_legacy_identity_collision")
     return True
 
@@ -151,9 +154,9 @@ def _descriptor(
 ) -> tuple[dict[str, Any], dict[str, Any], float | None]:
     base = item.statistic_id
     quantity = resource["quantity"]
-    if _STATISTIC_ID.fullmatch(base) is None or not base.endswith(_V2_SUFFIX):
+    if _STATISTIC_ID.fullmatch(base) is None or not base.endswith(HOURLY_V2_SUFFIX):
         raise ValueError("history_source_statistic_identity_invalid")
-    if not base.endswith(f"_{quantity}{_V2_SUFFIX}"):
+    if not base.endswith(f"_{quantity}{HOURLY_V2_SUFFIX}"):
         # Configured sensors use their actual field as the suffix as well.
         raise ValueError("history_source_quantity_mismatch")
     metadata = {
@@ -190,7 +193,7 @@ def _descriptor(
         "logical_unit": logical_unit,
         "method_version": METHOD_VERSION,
         "statistic_id": native,
-        "legacy_statistic_ids": [base.removesuffix(_V2_SUFFIX)],
+        "legacy_statistic_ids": [base.removesuffix(HOURLY_V2_SUFFIX)],
         "representation": {
             "kind": "arithmetic_mean",
             "native_field": "mean",
@@ -206,7 +209,7 @@ def _descriptor(
 
 
 def _native_statistic_id(base: str, kind: str) -> str:
-    native = base.removesuffix(_V2_SUFFIX)
+    native = base.removesuffix(HOURLY_V2_SUFFIX)
     if kind == "runtime":
         native = native.removesuffix("_runtime_hours") + "_runtime_rate"
     elif kind == "degree_days":
@@ -243,7 +246,7 @@ def _saved_bindings(saved: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any
             or any(
                 not isinstance(alias, str)
                 or _STATISTIC_ID.fullmatch(alias) is None
-                or alias.endswith((_V2_SUFFIX, _V3_SUFFIX))
+                or alias.endswith((HOURLY_V2_SUFFIX, _V3_SUFFIX))
                 for alias in aliases
             )
         ):
@@ -278,8 +281,8 @@ def _bind_saved(current: dict[str, Any], saved: dict[str, Any]) -> dict[str, Any
     if (
         not isinstance(old_v2, str)
         or _STATISTIC_ID.fullmatch(old_v2) is None
-        or not old_v2.endswith(f"_{current['quantity']}{_V2_SUFFIX}")
-        or old_v2.removesuffix(_V2_SUFFIX) not in saved["legacy_statistic_ids"]
+        or not old_v2.endswith(f"_{current['quantity']}{HOURLY_V2_SUFFIX}")
+        or old_v2.removesuffix(HOURLY_V2_SUFFIX) not in saved["legacy_statistic_ids"]
         or saved["statistic_id"] != _native_statistic_id(old_v2, current["kind"])
     ):
         raise ValueError("history_saved_representation_changed")

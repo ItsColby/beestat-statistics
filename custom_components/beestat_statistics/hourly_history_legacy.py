@@ -70,7 +70,6 @@ async def async_read_legacy_days(
                     "start": _midnight(day, zone).isoformat(),
                     "end": _midnight(day + _DAY, zone).isoformat(),
                     "timezone": selection["timezone"],
-                    "timezone_revision": selection["timezone_revision"],
                     "calendar_verified": True,
                     "complete": True,
                     "closed": True,
@@ -91,9 +90,7 @@ async def async_read_legacy_days(
 def _calendar_owned(selection: Mapping[str, Any], context: Mapping[str, Any]) -> bool:
     return (
         isinstance(selection.get("timezone"), str)
-        and "timezone_revision" in selection
         and selection["timezone"] == context["timezone"]
-        and selection["timezone_revision"] == context["timezone_revision"]
         and selection.get("adopted_at") is not None
     )
 

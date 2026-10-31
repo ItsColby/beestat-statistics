@@ -1,4 +1,4 @@
-"""Native action schemas for the additive qualified-history contract."""
+"""Native action schemas for the qualified-history contract."""
 
 from __future__ import annotations
 

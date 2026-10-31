@@ -49,12 +49,10 @@ class LegacyHistoryTest(unittest.IsolatedAsyncioTestCase):
         }
         self.context = {
             "timezone": "America/New_York",
-            "timezone_revision": "tz-1",
             "evaluated_at": (START + 10 * DAY).isoformat(),
         }
         self.selection = {
             "timezone": "America/New_York",
-            "timezone_revision": "tz-1",
             "adopted_at": (START + 5 * DAY).isoformat(),
         }
         self.metadata = {
@@ -96,6 +94,13 @@ class LegacyHistoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.recorder.calls, [(ALIAS, START - DAY, START + DAY)])
         self.assertEqual(self.check_current.await_count, 3)
 
+    async def test_selection_with_stale_timezone_revision_stays_calendar_owned(self):
+        self.selection["timezone_revision"] = "tz-old"
+        self.context["timezone_revision"] = "tz-new"
+        result = await self.read()
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("timezone_revision", result[0])
+
     async def test_missing_actual_predecessor_is_not_replaced_by_nearby_row(self):
         self.recorder.rows = (
             Row(START - 2 * DAY, sum=10, state=10),
@@ -122,7 +127,6 @@ class LegacyHistoryTest(unittest.IsolatedAsyncioTestCase):
         for field, value in (
             ("timezone", None),
             ("timezone", "UTC"),
-            ("timezone_revision", "old"),
             ("adopted_at", None),
         ):
             old = self.selection[field]

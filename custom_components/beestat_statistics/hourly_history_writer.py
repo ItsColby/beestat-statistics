@@ -18,6 +18,7 @@ from functools import partial
 from hashlib import sha256
 from typing import Any, cast
 
+from .const import HOURLY_V2_SUFFIX
 from .hourly_history_contract import (
     DAILY_POLICY,
     MAX_BATCH_HOURS,
@@ -62,6 +63,12 @@ _DAY = timedelta(days=1)
 _FIELDS = ("entry_id", "api_base", "account_anchors")
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _stable_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    # Records sealed before the binding dropped the process-local timezone
+    # revision still carry it; it is never compared.
+    return {key: value for key, value in binding.items() if key != "timezone_revision"}
 
 
 def sealed(value: dict[str, Any]) -> dict[str, Any]:
@@ -319,7 +326,7 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
         for alias in item["descriptor"]["legacy_statistic_ids"]
     }
     for base, resource in identity["resources"].items():
-        alias_owner = alias_owners.get(base.removesuffix("_hourly_v2"))
+        alias_owner = alias_owners.get(base.removesuffix(HOURLY_V2_SUFFIX))
         if alias_owner is not None and (
             unmapped_sensor(resource) or alias_owner != quantity_id(resource)
         ):
@@ -332,7 +339,7 @@ def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
             raise HourlyImportError("history_sensor_parent_changed")
     return WriterPartition(
         frozenset(
-            base.removesuffix("_hourly_v2")
+            base.removesuffix(HOURLY_V2_SUFFIX)
             for base in identity["resources"]
             if unmapped_sensor(identity["resources"][base])
             or quantity_id(identity["resources"][base]) not in physical
@@ -608,7 +615,6 @@ class HistoryWriter:
             "identity": {key: deepcopy(context["identity"][key]) for key in _FIELDS},
             "config_revision": context["config_revision"],
             "timezone": context["timezone"],
-            "timezone_revision": context["timezone_revision"],
             "method_version": METHOD_VERSION,
         }
 
@@ -754,7 +760,7 @@ class HistoryWriter:
             evaluated_at=utc(request["evaluated_at"]),
             source_end_by_thermostat=horizons,
             existing_statistic_ids=tuple(
-                base.removesuffix("_hourly_v2") for base in identity["resources"]
+                base.removesuffix(HOURLY_V2_SUFFIX) for base in identity["resources"]
             ),
             context=context,
         )
@@ -1528,7 +1534,7 @@ class HistoryWriter:
             if (
                 digest(manifest) != plan_digest
                 or manifest["request"] != self.request(request, context)
-                or manifest["binding"] != self.binding(context)
+                or _stable_binding(manifest["binding"]) != self.binding(context)
             ):
                 raise HourlyImportError("history_operation_replay_changed")
             self.manager._state, self.manager._loaded = state, True
@@ -1589,9 +1595,6 @@ class HistoryWriter:
                 "proofs": prior.get("proofs", {}),
                 "adopted_at": prior.get("adopted_at", context["evaluated_at"]),
                 "timezone": prior.get("timezone", context["timezone"]),
-                "timezone_revision": prior.get(
-                    "timezone_revision", context["timezone_revision"]
-                ),
             }
         root["history"]["source_ids"] = manifest["source_ids"]
         root["history"]["source_revision"] = manifest["source_revision"]
@@ -1664,7 +1667,7 @@ class HistoryWriter:
         binding = self.binding(context)
         if any(
             prior["binding"][key] != binding[key]
-            for key in ("identity", "timezone", "timezone_revision", "method_version")
+            for key in ("identity", "timezone", "method_version")
         ):
             raise HourlyImportError("history_routine_context_changed")
         policy = root["history"]["routine_policy"]
@@ -1882,9 +1885,9 @@ class HistoryWriter:
         ):
             return status(root)
         manifest = await self.read_object("operation", operation["object"], context)
-        if digest(manifest) != operation["plan_digest"] or manifest[
-            "binding"
-        ] != self.binding(context):
+        if digest(manifest) != operation["plan_digest"] or _stable_binding(
+            manifest["binding"]
+        ) != self.binding(context):
             raise HourlyImportError("history_operation_context_changed")
         if root["phase"] == "prepared":
             # A batchless accept is saved completed; only its marker step remains.
