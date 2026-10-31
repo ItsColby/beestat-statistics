@@ -1080,18 +1080,21 @@ class BeestatStatisticsImporter:
             else self._client.async_read_runtime_sensor
         )
         try:
-            return await read(
+            rows = await read(
                 resource_id,
                 _format_beestat_time(start),
                 _format_beestat_time(end),
             )
+            skipped_windows.transient_failure_count = 0
+            return rows
         except BeestatAuthError, BeestatPermanentError:
             raise
         except BeestatApiError as err:
             if not isinstance(err, BeestatResponseTooLargeError):
                 # Timeouts and server errors already used the client's retries;
-                # a bounded budget keeps an outage from fanning out into one
-                # retried request per bisected window.
+                # a budget of consecutive failures keeps an outage from fanning
+                # out into one retried request per bisected window, while a
+                # successful read shows the source is up and resets it.
                 skipped_windows.transient_failure_count += 1
                 if skipped_windows.transient_failure_count > (
                     MAX_TRANSIENT_WINDOW_FAILURES
