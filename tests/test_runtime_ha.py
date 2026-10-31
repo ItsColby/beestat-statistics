@@ -562,7 +562,8 @@ async def test_point_window_persistent_bad_day_is_skipped_from_long_window(
 
     now = datetime(2026, 7, 31, 0, tzinfo=UTC)
     freezer.move_to(now)
-    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
@@ -586,7 +587,8 @@ async def test_point_window_recovered_failures_do_not_exhaust_budget(
 
     now = datetime(2026, 7, 31, 0, tzinfo=UTC)
     freezer.move_to(now)
-    _entry, coordinator, client = _coordinator_data(hass, evaluated_at=now)
+    _entry, coordinator, _client = _coordinator_data(hass, evaluated_at=now)
+    client = BeestatClient(_FakeSession([]), "test-token", "https://api.test/")
     importer = BeestatStatisticsImporter(
         hass, client, coordinator, point_lookback_days=1
     )
