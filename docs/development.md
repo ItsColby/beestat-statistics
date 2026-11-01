@@ -32,16 +32,9 @@ while iterating. Hassfest and HACS run only in CI.
 pins.
 
 The advisory [Upcoming Core workflow](../.github/workflows/upcoming-core.yaml)
-runs mypy and the Home Assistant tests weekly, on manual dispatch, and on pull
-requests that change `pyproject.toml` or the workflow itself, against the newest
-Core and harness
-release that pip resolves. A Core beta is tested only once
-pytest-homeassistant-custom-component publishes a build that pins it; `--pre`
-does not select a beta by itself, and until then the lane tests the latest
-stable Core. It is not part of the Release gate, so it
-never blocks a pull request; read a failure as early warning of an upcoming Core
-change. Hassfest and HACS are not repeated there because they do not take a
-Core version.
+tests newer Core and harness releases, is not part of the Release gate and never
+blocks a pull request; its header explains the lane, and it omits Hassfest and
+HACS because they do not take a Core version.
 
 ## Keep source contracts verifiable
 
