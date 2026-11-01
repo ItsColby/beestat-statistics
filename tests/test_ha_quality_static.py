@@ -76,8 +76,9 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 f"config step {step_id} must describe every field",
             )
 
+        menu_labels = strings["options"]["step"]["init"]["menu_options"]
         self.assertEqual(
-            set(strings["options"]["step"]["init"]["menu_options"]),
+            set(menu_labels),
             {
                 "timing",
                 "source_scope",
@@ -86,6 +87,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
                 "sensor_mapping",
             },
         )
+        self.assertTrue(all(label.strip() for label in menu_labels.values()))
 
         for step_id, options_step in strings["options"]["step"].items():
             self.assertIn(
