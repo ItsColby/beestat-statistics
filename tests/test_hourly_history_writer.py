@@ -8,6 +8,7 @@ import types
 import unittest
 import unittest.mock
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -509,6 +510,155 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.complete()
         self.assertEqual(self.writer.history_status()["status"], "completed")
         self.assertEqual(len(self.recorder.rows[NATIVE]), 2)
+
+    async def blocked_operation(self):
+        request = await self.request(
+            start=(START - HOUR).isoformat(), end=START.isoformat()
+        )
+        request["source_ids"] = [
+            await self.stage(start=START - HOUR, acquisition="same-month")
+        ]
+        request["end"] = (START + HOUR).isoformat()
+        _, apply = await self.accept(request)
+        self.recorder.partial = 1
+        with self.assertRaisesRegex(RuntimeError, "partial"):
+            await self.writer.async_advance_history(context=self.context)
+        self.assertEqual(self.store.value["operation"]["status"], "blocked")
+        self.writer = self.fresh()
+        return apply
+
+    def configured(self, **changes):
+        thermostat = self.context["config"].thermostats[0]
+        return {
+            **self.context,
+            "config_revision": "e" * 64,
+            "config": model.BeestatConfig(
+                thermostats=(replace(thermostat, **changes),), sensors=()
+            ),
+        }
+
+    async def test_blocked_operation_replays_after_unrelated_configuration_change(
+        self,
+    ):
+        apply = await self.blocked_operation()
+        changed = self.configured(
+            temperature_entity_id="sensor.moved", filter_max_age_days=7
+        )
+        await self.writer.async_accept_history(apply, context=changed)
+        while self.writer.has_pending_history:
+            await self.writer.async_advance_history(context=changed)
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+
+    async def test_blocked_operation_refuses_replay_after_effective_change(self):
+        apply = await self.blocked_operation()
+        with self.assertRaisesRegex(
+            core.HourlyImportError, "history_operation_replay_changed"
+        ):
+            await self.writer.async_accept_history(
+                apply, context=self.configured(name="Renamed")
+            )
+
+    def with_sensor(self, thermostat=None, **changes):
+        sensor = model.ConfiguredSensor(
+            sensor_id=7,
+            slug="den",
+            name="Den",
+            thermostat_id=1,
+            thermostat_slug="zone",
+            include_temperature=True,
+            include_air_quality=False,
+            include_co2=False,
+            include_voc=False,
+            occupancy_entity_id="binary_sensor.den",
+        )
+        config = self.context["config"]
+        return {
+            **self.context,
+            "config_revision": "e" * 64,
+            "config": replace(
+                config,
+                thermostats=(replace(config.thermostats[0], **(thermostat or {})),),
+                sensors=(replace(sensor, **changes),),
+            ),
+        }
+
+    async def test_sensor_spec_changes_refuse_replay_unrelated_ones_do_not(self):
+        self.context = self.with_sensor()
+        apply = await self.blocked_operation()
+        for changes in (
+            {"occupancy_entity_id": None},
+            {"include_temperature": False},
+            {"include_co2": True},
+            {"name": "Study"},
+            {"thermostat_id": 2},
+            {"thermostat": {"slug": "zone_two"}},
+        ):
+            with (
+                self.subTest(changes),
+                self.assertRaisesRegex(
+                    core.HourlyImportError, "history_operation_replay_changed"
+                ),
+            ):
+                await self.writer.async_accept_history(
+                    apply, context=self.with_sensor(**changes)
+                )
+        await self.writer.async_accept_history(
+            apply, context=self.with_sensor(motion_entity_id="binary_sensor.moved")
+        )
+
+    def test_config_digest_is_pinned(self):
+        digest = writer._config_digest(self.with_sensor()["config"])
+        self.assertEqual(
+            digest,
+            "a41556f1894a11758ac4d2ab51161397c05cfef8aae316354279c9f7360c4ee8",
+            "A change here alters the sealed binding of in-flight operations "
+            "and needs a deliberate compatibility decision.",
+        )
+
+    async def test_old_binding_ignores_timezone_revision_only_difference(self):
+        original = writer.HistoryWriter.binding
+
+        def old_binding(owner, context):
+            result = original(owner, context)
+            del result["config_digest"]
+            return {
+                **result,
+                "config_revision": context["config_revision"],
+                "timezone_revision": 1,
+            }
+
+        with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
+            _, apply = await self.accept()
+        restarted = {**self.context, "timezone_revision": 0}
+        self.writer = self.fresh()
+        replay = await self.writer.async_accept_history(apply, context=restarted)
+        self.assertEqual(replay["status"], "accepted")
+
+    async def test_old_binding_keeps_whole_configuration_comparison(self):
+        original = writer.HistoryWriter.binding
+
+        def old_binding(owner, context):
+            result = original(owner, context)
+            del result["config_digest"]
+            return {**result, "config_revision": context["config_revision"]}
+
+        with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
+            apply = await self.blocked_operation()
+        manifest = next(
+            json.loads(content)
+            for (kind, _), content in self.store.objects.items()
+            if kind == "operation" and b"config_revision" in content
+        )
+        self.assertNotIn("config_digest", manifest["binding"])
+        with self.assertRaisesRegex(
+            core.HourlyImportError, "history_operation_replay_changed"
+        ):
+            await self.writer.async_accept_history(
+                apply, context=self.configured(temperature_entity_id="sensor.moved")
+            )
+        await self.writer.async_accept_history(apply, context=self.context)
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
 
     async def test_third_native_state_holds_without_replacing_intent(self):
         _, apply = await self.accept()
