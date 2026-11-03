@@ -321,6 +321,9 @@
     "request_id_reused": {
       "message": "This request ID already belongs to a different replacement. Use a new ID for a new replacement."
     },
+    "hourly_routine_quantities_exceeded": {
+      "message": "The adopted hourly quantities exceed the routine refresh limit of {limit}, so this adoption was not applied. Disable quantities you no longer need to recover, then plan again."
+    },
     "hourly_history_admin_required": {
       "message": "An active Home Assistant administrator must call this hourly history action."
     }

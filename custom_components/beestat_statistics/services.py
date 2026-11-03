@@ -55,6 +55,8 @@ from .entry_options import (
 )
 from .filter_forecast import build_filter_forecast, filter_forecast_quality_attributes
 from .hourly_history_contract import (
+    MAX_QUANTITIES,
+    ROUTINE_QUANTITIES_EXCEEDED,
     SERVICE_APPLY_HOURLY_HISTORY,
     SERVICE_PLAN_HOURLY_HISTORY,
     SERVICE_STAGE_HOURLY_SOURCE,
@@ -378,6 +380,12 @@ async def _async_handle_history_service(
             return await importer.async_plan_hourly_history(request)
         return await importer.async_apply_hourly_history(request)
     except Exception as err:  # noqa: BLE001 - no private payload or raw errors in output
+        if str(err) == ROUTINE_QUANTITIES_EXCEEDED:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="hourly_routine_quantities_exceeded",
+                translation_placeholders={"limit": str(MAX_QUANTITIES)},
+            ) from None
         _LOGGER.warning(
             "History action did not complete (%s)", exception_fingerprint(err)
         )

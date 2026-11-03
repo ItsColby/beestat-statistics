@@ -317,7 +317,9 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
             plan = await self.writer.async_plan_history(request, context=self.context)
         self.assertEqual(plan["status"], "blocked", plan)
-        self.assertEqual(plan["blocking_reasons"], ["history_quantities_invalid"])
+        self.assertEqual(
+            plan["blocking_reasons"], ["history_routine_quantities_exceeded"]
+        )
         with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 2):
             plan = await self.writer.async_plan_history(request, context=self.context)
         self.assertEqual(plan["status"], "planned", plan)

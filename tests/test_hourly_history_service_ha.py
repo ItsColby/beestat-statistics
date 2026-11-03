@@ -19,14 +19,18 @@ import pytest
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.hourly_history_contract import (
     MAX_SOURCE_BYTES,
+    ROUTINE_QUANTITIES_EXCEEDED,
 )
-from custom_components.beestat_statistics.hourly_import_core import MARKER
+from custom_components.beestat_statistics.hourly_import_core import (
+    MARKER,
+    HourlyImportError,
+)
 from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
 from tests.hourly_history_support import (
     END,
@@ -244,6 +248,27 @@ async def test_apply_rejects_nested_entry_mismatch_before_journal_access(
     load.assert_not_called()
     runtime.submit.assert_not_called()
     assert runtime.importer._history_worker is None
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_apply_reports_routine_quantity_limit_with_recovery_text(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        runtime.importer,
+        "async_apply_hourly_history",
+        AsyncMock(side_effect=HourlyImportError(ROUTINE_QUANTITIES_EXCEEDED)),
+    )
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(
+            runtime,
+            "apply_hourly_history",
+            _request(runtime, "apply_hourly_history"),
+            Context(user_id=hass_admin_user.id),
+        )
+    assert raised.value.translation_key == "hourly_routine_quantities_exceeded"
+    assert raised.value.translation_placeholders == {"limit": "40"}
 
 
 @pytest.mark.usefixtures("unload_entries")

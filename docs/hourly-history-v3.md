@@ -423,6 +423,12 @@ root records only its nearest predecessors, since precedence uses the
 transitive closure; lists saved in full by earlier releases are reduced on the
 next accepted delta.
 
+A routine pass requests every adopted quantity whose resource is still enabled
+in one request, so that set may not exceed the per-request quantity limit (`MAX_QUANTITIES`). Planning
+refuses an adoption that would exceed it with
+`history_routine_quantities_exceeded`; disabling quantities (their selections
+stay stored but stop counting) lets planning succeed again.
+
 Selection stays bounded by the routine window: about one delta per resource and
 window day plus the current day's passes, however long history runs. A
 delta also re-carries every row of a closed UTC day in its window whose slots

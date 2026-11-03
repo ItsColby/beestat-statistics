@@ -26,6 +26,7 @@ from .hourly_history_contract import (
     MAX_SOURCE_CHUNKS,
     METHOD_VERSION,
     ROUTINE_LOOKBACK_DAYS,
+    ROUTINE_QUANTITIES_EXCEEDED,
     bounds,
     canonical_json,
     capabilities,
@@ -1409,7 +1410,7 @@ class HistoryWriter:
             item["quantity_id"] for item in descriptors
         }
         if len(routine) > MAX_QUANTITIES:
-            raise HourlyImportError("history_quantities_invalid")
+            raise HourlyImportError(ROUTINE_QUANTITIES_EXCEEDED)
         manifest = {
             "contract_version": 3,
             "request": normalized,
