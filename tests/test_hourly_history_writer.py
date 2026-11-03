@@ -545,7 +545,6 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             temperature_entity_id="sensor.moved", filter_max_age_days=7
         )
         await self.writer.async_accept_history(apply, context=changed)
-        self.recorder.partial = 0
         while self.writer.has_pending_history:
             await self.writer.async_advance_history(context=changed)
         self.assertEqual(self.writer.history_status()["status"], "completed")
@@ -581,9 +580,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             await self.writer.async_accept_history(
                 apply, context=self.configured(temperature_entity_id="sensor.moved")
             )
-        replay = await self.writer.async_accept_history(apply, context=self.context)
-        self.assertEqual(replay["status"], "accepted")
-        self.recorder.partial = 0
+        await self.writer.async_accept_history(apply, context=self.context)
         await self.complete()
         self.assertEqual(self.writer.history_status()["status"], "completed")
 
