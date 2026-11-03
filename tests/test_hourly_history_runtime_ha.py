@@ -86,6 +86,18 @@ async def test_unchanged_or_shorter_capture_preserves_claims_without_source_obje
 
 
 @pytest.mark.usefixtures("unload_entries")
+async def test_capture_resolves_the_thermostat_row_like_the_coordinator(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    # Identity admits any decimal spelling of the configured id.
+    for row in runtime.coordinator.data.thermostat_rows:
+        row["id"] = "01"
+    _provider(runtime, monkeypatch, rows=json.loads(_content()))
+    assert await _refresh(runtime) == {"status": "unchanged", "changed_rows": 0}
+
+
+@pytest.mark.usefixtures("unload_entries")
 async def test_correction_seals_only_delta_and_keeps_current_hour_provisional(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
