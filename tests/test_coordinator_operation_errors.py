@@ -1,22 +1,66 @@
 """Status stays in error until the failing operation itself succeeds."""
 
-from types import SimpleNamespace
+import asyncio
+from types import MethodType, SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+import pytest
+
+from custom_components.beestat_statistics import coordinator as coordinator_module
+from custom_components.beestat_statistics.config_model import BeestatConfig
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
 )
 
 
+class _Client:
+    def __init__(self) -> None:
+        self.fail: Exception | None = None
+
+    def redact_error(self, err: Exception) -> str:
+        return str(err)
+
+    async def async_read_id(self, _resource: str) -> list[Any]:
+        if self.fail is not None:
+            raise self.fail
+        return []
+
+
 def _coordinator() -> Any:
     coordinator: Any = object.__new__(BeestatRuntimeDataCoordinator)
-    coordinator._client = SimpleNamespace(redact_error=str)
+    coordinator._client = _Client()
     coordinator._operation_errors = {}
     coordinator.last_error = None
     coordinator.last_error_at = None
-    coordinator.data = object()
+    coordinator.data = None
+    coordinator.hass = SimpleNamespace()
+    coordinator._beestat_config_entry = SimpleNamespace(data={}, options={})
     coordinator.async_update_listeners = lambda: None
+    coordinator._summary_window_start = lambda _config, _rows, today: today
+
+    async def reconcile(*_args: Any) -> None:
+        return None
+
+    coordinator._async_reconcile_pending_filter_boundaries = reconcile
+    coordinator.capture_temporal_context = lambda: SimpleNamespace()
+    coordinator._build_runtime_data = MethodType(
+        lambda *_args, **_kwargs: SimpleNamespace(), coordinator
+    )
     return coordinator
+
+
+def _fetch(coordinator: Any) -> Any:
+    with patch.object(
+        coordinator_module,
+        "build_beestat_config",
+        lambda *_args, **_kwargs: BeestatConfig(thermostats=(), sensors=()),
+    ):
+        return asyncio.run(
+            BeestatRuntimeDataCoordinator._async_fetch_runtime_data_locked(
+                coordinator, skip_sync=True, summary_window=False
+            )
+        )
 
 
 def _record_import_success(coordinator: Any) -> None:
@@ -41,13 +85,14 @@ def test_refresh_success_keeps_import_failure() -> None:
     coordinator = _coordinator()
 
     coordinator.async_record_import_error(RuntimeError("import boom"))
-    coordinator._clear_operation_error("refresh")
+    _fetch(coordinator)
 
     assert coordinator.status == "error"
     assert coordinator.last_error == "import boom"
     assert coordinator.last_error_at is not None
 
     _record_import_success(coordinator)
+    coordinator.data = SimpleNamespace()
 
     assert coordinator.status == "ok"
     assert coordinator.last_error is None
@@ -57,13 +102,17 @@ def test_refresh_success_keeps_import_failure() -> None:
 def test_import_success_keeps_refresh_failure() -> None:
     coordinator = _coordinator()
 
-    coordinator._async_record_error(RuntimeError("refresh boom"))
+    coordinator._client.fail = RuntimeError("refresh boom")
+    with pytest.raises(RuntimeError, match="refresh boom"):
+        _fetch(coordinator)
     _record_import_success(coordinator)
 
     assert coordinator.status == "error"
     assert coordinator.last_error == "refresh boom"
 
-    coordinator._clear_operation_error("refresh")
+    coordinator._client.fail = None
+    _fetch(coordinator)
+    coordinator.data = SimpleNamespace()
 
     assert coordinator.status == "ok"
     assert coordinator.last_error is None
