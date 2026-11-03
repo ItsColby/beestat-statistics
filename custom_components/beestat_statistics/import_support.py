@@ -21,7 +21,12 @@ from .config_model import BeestatConfig
 from .config_model import (
     build_sensor_statistics as build_sensor_specs,
 )
-from .config_rows import finite_float_or_none, positive_resource_id, row_resource_id
+from .config_rows import (
+    as_bool,
+    finite_float_or_none,
+    positive_resource_id,
+    row_resource_id,
+)
 from .const import (
     API_BASE,
     CONF_API_BASE,
@@ -501,7 +506,7 @@ def _dedupe_rows(rows: list[dict[str, Any]], *, id_field: str) -> list[dict[str,
             )
         deduped[key] = row
     return sorted(
-        (row for row in deduped.values() if not row.get("deleted")),
+        (row for row in deduped.values() if not as_bool(row.get("deleted"))),
         key=lambda row: (str(row.get("timestamp", "")), str(row.get(id_field, ""))),
     )
 

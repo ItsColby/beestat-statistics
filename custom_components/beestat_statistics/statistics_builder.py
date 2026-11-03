@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .config_model import BeestatConfig
 from .config_model import build_sensor_statistics as build_sensor_specs
-from .config_rows import finite_float_or_none, positive_resource_id
+from .config_rows import as_bool, finite_float_or_none, positive_resource_id
 from .const import (
     DETAILED_RUNTIME_FIELDS,
     RUNTIME_FIELD_GROUPS,
@@ -544,7 +544,7 @@ def _summary_rows_by_thermostat(
         thermostat_id: sorted(
             (local_day, row)
             for local_day, row in rows.items()
-            if not row.get("deleted")
+            if not as_bool(row.get("deleted"))
         )
         for thermostat_id, rows in rows_by_thermostat.items()
     }

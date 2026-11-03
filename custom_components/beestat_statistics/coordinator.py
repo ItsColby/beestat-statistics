@@ -1874,7 +1874,7 @@ def _effective_resource_rows(
         row_id = row_resource_id(row, *id_fields)
         if row_id is not None:
             effective[row_id] = row
-    return tuple(row for row in effective.values() if not row.get("deleted"))
+    return tuple(row for row in effective.values() if not as_bool(row.get("deleted")))
 
 
 def _effective_summary_rows(
@@ -1888,4 +1888,4 @@ def _effective_summary_rows(
         local_day = _parse_date(row.get("date"))
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
-    return tuple(row for row in effective.values() if not row.get("deleted"))
+    return tuple(row for row in effective.values() if not as_bool(row.get("deleted")))
