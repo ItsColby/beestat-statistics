@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.beestat_statistics import coordinator as coordinator_module
+from custom_components.beestat_statistics.api import BeestatApiError
 from custom_components.beestat_statistics.config_model import BeestatConfig
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
@@ -31,6 +32,7 @@ def _coordinator() -> Any:
     coordinator: Any = object.__new__(BeestatRuntimeDataCoordinator)
     coordinator._client = _Client()
     coordinator._operation_errors = {}
+    coordinator._refresh_error_exc = None
     coordinator.last_error = None
     coordinator.last_error_at = None
     coordinator.data = None
@@ -60,6 +62,30 @@ def _fetch(coordinator: Any) -> Any:
             BeestatRuntimeDataCoordinator._async_fetch_runtime_data_locked(
                 coordinator, skip_sync=True, summary_window=False
             )
+        )
+
+
+async def _refresh(coordinator: Any) -> Any:
+    """Run the real entry-owned refresh around the real locked fetch."""
+
+    async def fetch(**kwargs: Any) -> Any:
+        return await BeestatRuntimeDataCoordinator._async_fetch_runtime_data_locked(
+            coordinator, **kwargs
+        )
+
+    coordinator._async_fetch_runtime_data = fetch
+    coordinator._beestat_config_entry.async_start_reauth_if_available = lambda _hass: (
+        None
+    )
+    coordinator.async_set_update_error = lambda _err: None
+    coordinator.async_set_updated_data = lambda _data: None
+    with patch.object(
+        coordinator_module,
+        "build_beestat_config",
+        lambda *_args, **_kwargs: BeestatConfig(thermostats=(), sensors=()),
+    ):
+        return await BeestatRuntimeDataCoordinator._async_refresh_runtime(
+            coordinator, skip_sync=True, summary_window=False
         )
 
 
@@ -112,6 +138,30 @@ def test_import_success_keeps_refresh_failure() -> None:
 
     coordinator._client.fail = None
     _fetch(coordinator)
+    coordinator.data = SimpleNamespace()
+
+    assert coordinator.status == "ok"
+    assert coordinator.last_error is None
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("refresh boom"), BeestatApiError("api boom")]
+)
+def test_import_that_fails_in_its_own_refresh_leaves_one_error(
+    failure: Exception,
+) -> None:
+    """The refresh failure an import re-raises is recorded once, as a refresh."""
+
+    coordinator = _coordinator()
+    coordinator._client.fail = failure
+
+    with pytest.raises(Exception, match=r"boom|failed") as raised:
+        asyncio.run(_refresh(coordinator))
+    # Importer, scheduler and service boundaries all hand this exception here.
+    coordinator.async_record_import_error(raised.value)
+
+    coordinator._client.fail = None
+    asyncio.run(_refresh(coordinator))
     coordinator.data = SimpleNamespace()
 
     assert coordinator.status == "ok"

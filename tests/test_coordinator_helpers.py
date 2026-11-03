@@ -601,6 +601,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
         built: list[tuple[date | None, ZoneInfo, datetime]] = []
         coordinator = object.__new__(self.coordinator.BeestatRuntimeDataCoordinator)
         coordinator._operation_errors = {}
+        coordinator._refresh_error_exc = None
         coordinator._filter_day_cache = {}
         coordinator._refresh_lock = asyncio.Lock()
         coordinator._closed = False
@@ -1418,6 +1419,7 @@ class CoordinatorHelpersTest(unittest.TestCase):
             _client=types.SimpleNamespace(redact_error=lambda err: str(err)),
             async_update_listeners=lambda: None,
             _operation_errors={},
+            _refresh_error_exc=None,
         )
         coordinator._publish_operation_errors = lambda: (
             self.coordinator.BeestatRuntimeDataCoordinator._publish_operation_errors(

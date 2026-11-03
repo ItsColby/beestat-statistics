@@ -220,6 +220,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
         self._operation_errors: dict[str, tuple[str, datetime]] = {}
+        self._refresh_error_exc: Exception | None = None
         self.last_import_success_at: datetime | None = None
         self.last_imported_series: int | None = None
         self.last_imported_rows: int | None = None
@@ -576,6 +577,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     translation_key="beestat_request_failed",
                 )
             self.async_set_update_error(safe_error)
+            self._refresh_error_exc = safe_error
             if isinstance(err, BeestatAuthError):
                 self._beestat_config_entry.async_start_reauth_if_available(self.hass)
             if safe_error is err:
@@ -686,7 +688,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_fallback_reason = "import_failed"
         self.last_import_cumulative_seed_count = None
         self.last_import_writers = None
-        self._async_record_error(err, "import")
+        if err is not self._refresh_error_exc:
+            # The import's own refresh failure is already recorded as "refresh"
+            # and only a successful refresh may clear it.
+            self._async_record_error(err, "import")
 
     async def _async_fetch_runtime_data(
         self,
