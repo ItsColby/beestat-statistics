@@ -913,6 +913,31 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.complete()
         self.assertFalse(self.store.value["history"]["source_holds"])
 
+    async def test_retained_refresh_does_not_clear_a_held_conflict(self):
+        first = await self.stage(horizon=START + timedelta(minutes=55))
+        await self.accept(await self.request(source_ids=[first]))
+        await self.complete()
+        # The disputed source contradicts hour 0 and alone makes hour 1 ready.
+        incoming = await self.stage(acquisition="disputed", fan=300)
+        window = {
+            "start": START.isoformat(),
+            "end": (START + 2 * HOUR).isoformat(),
+        }
+        held = await self.writer.async_refresh_history(
+            {"source_ids": [incoming], **window}, context=self.context
+        )
+        self.assertEqual(held["error"], "source_conflict")
+        holds = deepcopy(self.store.value["history"]["source_holds"])
+        submissions = len(self.recorder.submissions)
+        result = await self.writer.async_refresh_history(
+            {"source_ids": [], **window}, context=self.context
+        )
+        self.assertEqual(result["error"], "source_conflict", result)
+        self.assertFalse(result["has_pending"])
+        self.assertEqual(self.store.value["history"]["source_holds"], holds)
+        self.assertEqual(len(self.recorder.submissions), submissions)
+        self.assertIsNotNone(self.recorder.rows[NATIVE][START].mean)
+
     async def test_failed_hold_save_blocks_old_verified_view_after_restart(self):
         await self.accept()
         await self.complete()

@@ -1789,6 +1789,15 @@ class HistoryWriter:
         manifest, batches, _state = await self.plan(
             normalized, context, changed_only=True
         )
+        if any(batch["dispositions"].get("source_conflict") for batch in batches):
+            # A held conflict needs a reviewed plan; a routine pass must not
+            # clear its committed value or drop its hold.
+            return {
+                **status(root),
+                "status": "blocked",
+                "error": "source_conflict",
+                "has_pending": False,
+            }
         if not await self.new_ready_hours(root, batches, context):
             return {"status": "unchanged", "changed_rows": 0}
         return await self.accept(
