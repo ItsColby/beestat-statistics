@@ -469,9 +469,10 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 self.store.value["history"]["selections"][KEY], restarted
             )
         )
-        await self.writer.async_refresh_history(
+        refreshed = await self.writer.async_refresh_history(
             await self.delta_request(), context=restarted
         )
+        self.assertEqual(refreshed["status"], "accepted", refreshed)
 
     async def test_replay_observes_progress_and_conflicting_digest_is_rejected(self):
         _, apply = await self.accept()
