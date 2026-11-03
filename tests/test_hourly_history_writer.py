@@ -512,7 +512,14 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.recorder.rows[NATIVE]), 2)
 
     async def blocked_operation(self):
-        _, apply = await self.accept()
+        request = await self.request(
+            start=(START - HOUR).isoformat(), end=START.isoformat()
+        )
+        request["source_ids"] = [
+            await self.stage(start=START - HOUR, acquisition="same-month")
+        ]
+        request["end"] = (START + HOUR).isoformat()
+        _, apply = await self.accept(request)
         self.recorder.partial = 1
         with self.assertRaisesRegex(RuntimeError, "partial"):
             await self.writer.async_advance_history(context=self.context)
