@@ -290,6 +290,38 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             ids.append(receipt["source_id"])
         return {**request, "source_ids": ids}
 
+    async def test_plan_blocks_adoption_beyond_quantity_limit(self):
+        second = "beestat:zone_cool_runtime_hours_hourly_v2"
+        resources = {
+            **identity()["resources"],
+            second: {
+                "thermostat_id": 1,
+                "sensor_id": None,
+                "quantity": "cool_runtime_hours",
+            },
+        }
+        self.context["identity"] = {**identity(), "resources": resources}
+        self.context["descriptors"] = [
+            item.descriptor
+            for item in representation.build_history_series(
+                (source(), source(statistic_id=second)), self.context["identity"]
+            )
+        ]
+        await self.accept()
+        await self.complete()
+        request = await self.request(
+            quantity_ids=["thermostat:1:cool_runtime_hours"],
+            operation_id="second-adoption",
+            expected_revision=self.writer._state["revision"],
+        )
+        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
+            plan = await self.writer.async_plan_history(request, context=self.context)
+        self.assertEqual(plan["status"], "blocked", plan)
+        self.assertEqual(plan["blocking_reasons"], ["history_quantities_invalid"])
+        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 2):
+            plan = await self.writer.async_plan_history(request, context=self.context)
+        self.assertEqual(plan["status"], "planned", plan)
+
     async def test_plan_is_readonly_and_detail_paging_keeps_digest(self):
         request = await self.request()
         plan = await self.writer.async_plan_history(request, context=self.context)

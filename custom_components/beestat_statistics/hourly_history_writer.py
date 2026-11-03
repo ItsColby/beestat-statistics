@@ -1398,6 +1398,18 @@ class HistoryWriter:
                 batches.append(batch)
         if digest(await self.root(context)) != digest(state):
             raise HourlyImportError("history_root_changed_during_plan")
+        # Routine refresh requests every adopted, still enabled quantity in one
+        # request, so that total must stay within one request's limit.
+        enabled = {
+            quantity_id(resource)
+            for resource in context["identity"]["resources"].values()
+            if not unmapped_sensor(resource)
+        }
+        routine = (set(history.get("selections", {})) & enabled) | {
+            item["quantity_id"] for item in descriptors
+        }
+        if len(routine) > MAX_QUANTITIES:
+            raise HourlyImportError("history_quantities_invalid")
         manifest = {
             "contract_version": 3,
             "request": normalized,
