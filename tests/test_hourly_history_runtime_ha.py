@@ -98,6 +98,19 @@ async def test_capture_resolves_the_thermostat_row_like_the_coordinator(
 
 
 @pytest.mark.usefixtures("unload_entries")
+async def test_capture_names_a_missing_parent_row(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    _provider(runtime, monkeypatch, rows=json.loads(_content()))
+    # Identity validation already proved the row, so only the parent lookup
+    # inside capture is made to miss it.
+    monkeypatch.setattr(hourly_history_runtime, "row_resource_id", lambda *_a: None)
+    with pytest.raises(ValueError, match="history_routine_source_horizon_unavailable"):
+        await _refresh(runtime)
+
+
+@pytest.mark.usefixtures("unload_entries")
 async def test_correction_seals_only_delta_and_keeps_current_hour_provisional(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):
