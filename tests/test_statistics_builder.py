@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import unittest
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -892,7 +892,7 @@ class StatisticsBuilderTest(unittest.TestCase):
         ]
         seeds = {
             "beestat:test": statistics_builder.CumulativeStatisticSeed(
-                start=start.replace(day=30),
+                start=start - timedelta(hours=1),
                 state=1e307,
                 sum=1e307,
             )

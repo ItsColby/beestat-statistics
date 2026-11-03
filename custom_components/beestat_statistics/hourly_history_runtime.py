@@ -15,6 +15,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from .config_rows import row_resource_id
 from .const import MAX_WINDOW_DAYS
 from .hourly_history_contract import (
     MAX_SOURCE_BYTES,
@@ -149,9 +150,12 @@ async def _capture(
             # The provider horizon comes from the captured metadata, never the
             # query end or elapsed time. Parser validates every captured row.
             parent = next(
-                row
-                for row in current.thermostat_rows
-                if str(row.get("thermostat_id", row.get("id"))) == str(thermostat_id)
+                (
+                    row
+                    for row in current.thermostat_rows
+                    if row_resource_id(row, "thermostat_id", "id") == thermostat_id
+                ),
+                {},
             )
             source_end = _row_stamp({"timestamp": parent.get("data_end")})
             if source_end is None:

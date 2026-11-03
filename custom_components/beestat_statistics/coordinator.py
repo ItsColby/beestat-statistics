@@ -219,6 +219,8 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self._timezone_revision = 0
         self.last_error: str | None = None
         self.last_error_at: datetime | None = None
+        self._operation_errors: dict[str, tuple[str, datetime]] = {}
+        self._refresh_error_exc: Exception | None = None
         self.last_import_success_at: datetime | None = None
         self.last_imported_series: int | None = None
         self.last_imported_rows: int | None = None
@@ -575,6 +577,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
                     translation_key="beestat_request_failed",
                 )
             self.async_set_update_error(safe_error)
+            self._refresh_error_exc = safe_error
             if isinstance(err, BeestatAuthError):
                 self._beestat_config_entry.async_start_reauth_if_available(self.hass)
             if safe_error is err:
@@ -650,8 +653,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
     ) -> None:
         """Record the latest Recorder import metrics for diagnostic sensors."""
 
-        self.last_error = None
-        self.last_error_at = None
+        self._clear_operation_error("import")
         self.last_import_success_at = datetime.now(UTC)
         self.last_imported_series = imported_series
         self.last_imported_rows = imported_rows
@@ -686,7 +688,10 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
         self.last_import_summary_fallback_reason = "import_failed"
         self.last_import_cumulative_seed_count = None
         self.last_import_writers = None
-        self._async_record_error(err)
+        if err is not self._refresh_error_exc:
+            # The import's own refresh failure is already recorded as "refresh"
+            # and only a successful refresh may clear it.
+            self._async_record_error(err, "import")
 
     async def _async_fetch_runtime_data(
         self,
@@ -829,17 +834,38 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             self._async_record_error(err)
             raise
 
-        self.last_error = None
-        self.last_error_at = None
+        self._clear_operation_error("refresh")
         return data
 
     @callback
-    def _async_record_error(self, err: Exception) -> None:
+    def _async_record_error(self, err: Exception, operation: str = "refresh") -> None:
         """Record an error message safe for Home Assistant state."""
 
-        self.last_error = self._client.redact_error(err)
-        self.last_error_at = datetime.now(UTC)
+        self._operation_errors[operation] = (
+            self._client.redact_error(err),
+            datetime.now(UTC),
+        )
+        self._publish_operation_errors()
         self.async_update_listeners()
+
+    @callback
+    def _clear_operation_error(self, operation: str) -> None:
+        """Clear only the error left by an operation that has now succeeded."""
+
+        self._operation_errors.pop(operation, None)
+        self._publish_operation_errors()
+
+    @callback
+    def _publish_operation_errors(self) -> None:
+        """Expose the newest error among operations not yet recovered."""
+
+        if not self._operation_errors:
+            self.last_error = None
+            self.last_error_at = None
+            return
+        self.last_error, self.last_error_at = max(
+            self._operation_errors.values(), key=lambda error: error[1]
+        )
 
     async def _async_reconcile_pending_filter_boundaries(
         self,
@@ -1853,7 +1879,7 @@ def _effective_resource_rows(
         row_id = row_resource_id(row, *id_fields)
         if row_id is not None:
             effective[row_id] = row
-    return tuple(row for row in effective.values() if not row.get("deleted"))
+    return tuple(row for row in effective.values() if not as_bool(row.get("deleted")))
 
 
 def _effective_summary_rows(
@@ -1867,4 +1893,4 @@ def _effective_summary_rows(
         local_day = _parse_date(row.get("date"))
         if thermostat_id is not None and local_day is not None:
             effective[(thermostat_id, local_day)] = row
-    return tuple(row for row in effective.values() if not row.get("deleted"))
+    return tuple(row for row in effective.values() if not as_bool(row.get("deleted")))

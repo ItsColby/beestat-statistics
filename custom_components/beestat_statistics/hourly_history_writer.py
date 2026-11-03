@@ -26,6 +26,7 @@ from .hourly_history_contract import (
     MAX_SOURCE_CHUNKS,
     METHOD_VERSION,
     ROUTINE_LOOKBACK_DAYS,
+    ROUTINE_QUANTITIES_EXCEEDED,
     bounds,
     canonical_json,
     capabilities,
@@ -1398,6 +1399,18 @@ class HistoryWriter:
                 batches.append(batch)
         if digest(await self.root(context)) != digest(state):
             raise HourlyImportError("history_root_changed_during_plan")
+        # Routine refresh requests every adopted, still enabled quantity in one
+        # request, so that total must stay within one request's limit.
+        enabled = {
+            quantity_id(resource)
+            for resource in context["identity"]["resources"].values()
+            if not unmapped_sensor(resource)
+        }
+        routine = (set(history.get("selections", {})) & enabled) | {
+            item["quantity_id"] for item in descriptors
+        }
+        if len(routine) > MAX_QUANTITIES:
+            raise HourlyImportError(ROUTINE_QUANTITIES_EXCEEDED)
         manifest = {
             "contract_version": 3,
             "request": normalized,
@@ -1776,6 +1789,15 @@ class HistoryWriter:
         manifest, batches, _state = await self.plan(
             normalized, context, changed_only=True
         )
+        if any(batch["dispositions"].get("source_conflict") for batch in batches):
+            # A held conflict needs a reviewed plan; a routine pass must not
+            # clear its committed value or drop its hold.
+            return {
+                **status(root),
+                "status": "blocked",
+                "error": "source_conflict",
+                "has_pending": False,
+            }
         if not await self.new_ready_hours(root, batches, context):
             return {"status": "unchanged", "changed_rows": 0}
         return await self.accept(

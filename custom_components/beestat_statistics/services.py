@@ -18,6 +18,7 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 
 from .api import BeestatAuthError, exception_fingerprint
 from .config_rows import positive_resource_id
@@ -55,6 +56,8 @@ from .entry_options import (
 )
 from .filter_forecast import build_filter_forecast, filter_forecast_quality_attributes
 from .hourly_history_contract import (
+    MAX_QUANTITIES,
+    ROUTINE_QUANTITIES_EXCEEDED,
     SERVICE_APPLY_HOURLY_HISTORY,
     SERVICE_PLAN_HOURLY_HISTORY,
     SERVICE_STAGE_HOURLY_SOURCE,
@@ -151,7 +154,8 @@ RECORD_FILTER_CHANGE_SERVICE_SCHEMA = probatio.Schema(
 def async_register_services(hass: HomeAssistant) -> None:
     """Register the integration's domain-level actions."""
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_IMPORT_STATISTICS,
         partial(_async_handle_import_service, hass),
@@ -195,21 +199,24 @@ def async_register_services(hass: HomeAssistant) -> None:
             supports_response=SupportsResponse.ONLY,
         )
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_REBUILD_STATISTICS,
         partial(_async_handle_rebuild_service, hass),
         schema=REBUILD_SERVICE_SCHEMA,
     )
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
         partial(_async_handle_repair_filter_change_boundary, hass),
         schema=REPAIR_FILTER_CHANGE_BOUNDARY_SERVICE_SCHEMA,
     )
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_RECORD_FILTER_CHANGE,
         partial(_async_handle_record_filter_change, hass),
@@ -378,6 +385,12 @@ async def _async_handle_history_service(
             return await importer.async_plan_hourly_history(request)
         return await importer.async_apply_hourly_history(request)
     except Exception as err:  # noqa: BLE001 - no private payload or raw errors in output
+        if str(err) == ROUTINE_QUANTITIES_EXCEEDED:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="hourly_routine_quantities_exceeded",
+                translation_placeholders={"limit": str(MAX_QUANTITIES)},
+            ) from None
         _LOGGER.warning(
             "History action did not complete (%s)", exception_fingerprint(err)
         )

@@ -39,6 +39,8 @@ from custom_components.beestat_statistics.const import (
 )
 from custom_components.beestat_statistics.coordinator import (
     BeestatRuntimeDataCoordinator,
+    _effective_resource_rows,
+    _effective_summary_rows,
 )
 from custom_components.beestat_statistics.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -69,6 +71,7 @@ from custom_components.beestat_statistics.sensor import (
 from custom_components.beestat_statistics.statistics_builder import (
     CumulativeStatisticSeed,
     StatisticsSeries,
+    _summary_rows_by_thermostat,
 )
 from custom_components.beestat_statistics.tracking import (
     _async_track_runtime_entity_states,
@@ -248,6 +251,20 @@ async def test_malformed_point_ids_cannot_shadow_a_valid_source_row(
     assert _dedupe_rows(
         [valid_row, fallback_row, deleted_fallback], id_field="sensor_id"
     ) == [valid_row]
+
+
+@pytest.mark.parametrize("flag", ["0", "false", "no", "off", ""])
+async def test_daily_paths_parse_a_string_deleted_flag_like_hourly(flag: str) -> None:
+    """A string-false `deleted` keeps the row on every daily path."""
+
+    point = {"sensor_id": 10, "timestamp": "2026-07-01 12:05:00", "deleted": flag}
+    assert _dedupe_rows([point], id_field="sensor_id") == [point]
+    resource = {"id": 1, "deleted": flag}
+    assert _effective_resource_rows([resource], "id") == (resource,)
+    summary = {"thermostat_id": 1, "date": "2026-07-01", "deleted": flag}
+    assert _effective_summary_rows([summary]) == (summary,)
+    assert _summary_rows_by_thermostat([summary]) == {1: [(date(2026, 7, 1), summary)]}
+    assert _dedupe_rows([{**point, "deleted": "true"}], id_field="sensor_id") == []
 
 
 @pytest.mark.parametrize(

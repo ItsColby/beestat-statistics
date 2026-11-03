@@ -86,6 +86,31 @@ async def test_unchanged_or_shorter_capture_preserves_claims_without_source_obje
 
 
 @pytest.mark.usefixtures("unload_entries")
+async def test_capture_resolves_the_thermostat_row_like_the_coordinator(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    # Identity admits any decimal spelling of the configured id.
+    for row in runtime.coordinator.data.thermostat_rows:
+        row["id"] = "01"
+    _provider(runtime, monkeypatch, rows=json.loads(_content()))
+    assert await _refresh(runtime) == {"status": "unchanged", "changed_rows": 0}
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_capture_names_a_missing_parent_row(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    _provider(runtime, monkeypatch, rows=json.loads(_content()))
+    # Identity validation already proved the row, so only the parent lookup
+    # inside capture is made to miss it.
+    monkeypatch.setattr(hourly_history_runtime, "row_resource_id", lambda *_a: None)
+    with pytest.raises(ValueError, match="history_routine_source_horizon_unavailable"):
+        await _refresh(runtime)
+
+
+@pytest.mark.usefixtures("unload_entries")
 async def test_correction_seals_only_delta_and_keeps_current_hour_provisional(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path
 ):

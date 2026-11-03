@@ -290,6 +290,78 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             ids.append(receipt["source_id"])
         return {**request, "source_ids": ids}
 
+    async def test_plan_blocks_adoption_beyond_quantity_limit(self):
+        second = "beestat:zone_cool_runtime_hours_hourly_v2"
+        resources = {
+            **identity()["resources"],
+            second: {
+                "thermostat_id": 1,
+                "sensor_id": None,
+                "quantity": "cool_runtime_hours",
+            },
+        }
+        self.context["identity"] = {**identity(), "resources": resources}
+        self.context["descriptors"] = [
+            item.descriptor
+            for item in representation.build_history_series(
+                (source(), source(statistic_id=second)), self.context["identity"]
+            )
+        ]
+        await self.accept()
+        await self.complete()
+        request = await self.request(
+            quantity_ids=["thermostat:1:cool_runtime_hours"],
+            operation_id="second-adoption",
+            expected_revision=self.writer._state["revision"],
+        )
+        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
+            plan = await self.writer.async_plan_history(request, context=self.context)
+        self.assertEqual(plan["status"], "blocked", plan)
+        self.assertEqual(
+            plan["blocking_reasons"], ["history_routine_quantities_exceeded"]
+        )
+        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 2):
+            plan = await self.writer.async_plan_history(request, context=self.context)
+        self.assertEqual(plan["status"], "planned", plan)
+
+    async def test_plan_ignores_selections_of_disabled_resources_for_limit(self):
+        second = "beestat:zone_cool_runtime_hours_hourly_v2"
+        resources = {
+            **identity()["resources"],
+            second: {
+                "thermostat_id": 1,
+                "sensor_id": None,
+                "quantity": "cool_runtime_hours",
+            },
+        }
+        self.context["identity"] = {**identity(), "resources": resources}
+        self.context["descriptors"] = [
+            item.descriptor
+            for item in representation.build_history_series(
+                (source(), source(statistic_id=second)), self.context["identity"]
+            )
+        ]
+        await self.accept()
+        await self.complete()
+        # KEY stays adopted in storage but is no longer an enabled resource.
+        only_second = {second: resources[second]}
+        self.context["identity"] = {**identity(), "resources": only_second}
+        self.context["descriptors"] = [
+            item.descriptor
+            for item in representation.build_history_series(
+                (source(statistic_id=second),), self.context["identity"]
+            )
+        ]
+        self.assertIn(KEY, self.writer._state["history"]["selections"])
+        request = await self.request(
+            quantity_ids=["thermostat:1:cool_runtime_hours"],
+            operation_id="second-adoption",
+            expected_revision=self.writer._state["revision"],
+        )
+        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
+            plan = await self.writer.async_plan_history(request, context=self.context)
+        self.assertEqual(plan["status"], "planned", plan)
+
     async def test_plan_is_readonly_and_detail_paging_keeps_digest(self):
         request = await self.request()
         plan = await self.writer.async_plan_history(request, context=self.context)
@@ -397,9 +469,10 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 self.store.value["history"]["selections"][KEY], restarted
             )
         )
-        await self.writer.async_refresh_history(
+        refreshed = await self.writer.async_refresh_history(
             await self.delta_request(), context=restarted
         )
+        self.assertEqual(refreshed["status"], "accepted", refreshed)
 
     async def test_replay_observes_progress_and_conflicting_digest_is_rejected(self):
         _, apply = await self.accept()
@@ -840,6 +913,31 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.recorder.rows[NATIVE][START].mean)
         await self.complete()
         self.assertFalse(self.store.value["history"]["source_holds"])
+
+    async def test_retained_refresh_does_not_clear_a_held_conflict(self):
+        first = await self.stage(horizon=START + timedelta(minutes=55))
+        await self.accept(await self.request(source_ids=[first]))
+        await self.complete()
+        # The disputed source contradicts hour 0 and alone makes hour 1 ready.
+        incoming = await self.stage(acquisition="disputed", fan=300)
+        window = {
+            "start": START.isoformat(),
+            "end": (START + 2 * HOUR).isoformat(),
+        }
+        held = await self.writer.async_refresh_history(
+            {"source_ids": [incoming], **window}, context=self.context
+        )
+        self.assertEqual(held["error"], "source_conflict")
+        holds = deepcopy(self.store.value["history"]["source_holds"])
+        submissions = len(self.recorder.submissions)
+        result = await self.writer.async_refresh_history(
+            {"source_ids": [], **window}, context=self.context
+        )
+        self.assertEqual(result["error"], "source_conflict", result)
+        self.assertFalse(result["has_pending"])
+        self.assertEqual(self.store.value["history"]["source_holds"], holds)
+        self.assertEqual(len(self.recorder.submissions), submissions)
+        self.assertIsNotNone(self.recorder.rows[NATIVE][START].mean)
 
     async def test_failed_hold_save_blocks_old_verified_view_after_restart(self):
         await self.accept()
