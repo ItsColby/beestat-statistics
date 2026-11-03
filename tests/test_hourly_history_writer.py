@@ -613,9 +613,11 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             }
 
         with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
-            apply = await self.blocked_operation()
+            _, apply = await self.accept()
         restarted = {**self.context, "timezone_revision": 0}
-        await self.writer.async_accept_history(apply, context=restarted)
+        self.writer = self.fresh()
+        replay = await self.writer.async_accept_history(apply, context=restarted)
+        self.assertEqual(replay["status"], "accepted")
 
     async def test_old_binding_keeps_whole_configuration_comparison(self):
         original = writer.HistoryWriter.binding
