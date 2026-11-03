@@ -10,11 +10,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 import voluptuous as vol
+from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.components.blueprint import models as blueprint_models
 from homeassistant.components.blueprint.schemas import BLUEPRINT_SCHEMA
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from homeassistant.util import yaml as yaml_util
 
 from custom_components.beestat_statistics import async_setup
@@ -22,6 +23,8 @@ from custom_components.beestat_statistics.const import (
     DOMAIN,
     SERVICE_IMPORT_STATISTICS,
     SERVICE_REBUILD_STATISTICS,
+    SERVICE_RECORD_FILTER_CHANGE,
+    SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
 )
 from custom_components.beestat_statistics.import_support import UnknownThermostatError
 from tests.runtime_support import _coordinator_data
@@ -125,6 +128,63 @@ async def test_rebuild_action_rejects_non_positive_integer_thermostat_id(
             DOMAIN, SERVICE_REBUILD_STATISTICS, {"thermostat_id": value}, blocking=True
         )
     importer.assert_not_awaited()
+
+
+_WRITE_ACTIONS = (
+    (SERVICE_IMPORT_STATISTICS, {}),
+    (SERVICE_REBUILD_STATISTICS, {}),
+    (
+        SERVICE_REPAIR_FILTER_CHANGE_BOUNDARY,
+        {
+            "config_entry_id": "missing",
+            "thermostat_id": 1,
+            "changed_at": "2026-07-06T12:00:00+00:00",
+        },
+    ),
+    (
+        SERVICE_RECORD_FILTER_CHANGE,
+        {
+            "config_entry_id": "missing",
+            "thermostat_id": 1,
+            "changed_at": "2026-07-06T12:00:00+00:00",
+            "expected_changed_at": None,
+            "expected_changed_date": None,
+            "expected_request_id": None,
+            "request_id": "fixture-request",
+        },
+    ),
+)
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize(("service", "data"), _WRITE_ACTIONS)
+@pytest.mark.parametrize("caller", ["reader", "admin", "automation"])
+async def test_write_actions_refuse_non_admin_users(
+    hass: HomeAssistant, hass_admin_user: Any, service: str, data: dict, caller: str
+) -> None:
+    assert await async_setup(hass, {})
+    reader = await hass.auth.async_create_user(
+        "Action fixture reader", group_ids=[GROUP_ID_USER]
+    )
+    context = {
+        "reader": Context(user_id=reader.id),
+        "admin": Context(user_id=hass_admin_user.id),
+        "automation": Context(),
+    }[caller]
+    # No entry is loaded, so an allowed caller reaches the handler's own
+    # no-entry refusal while a refused caller never gets that far.
+    expected = Unauthorized if caller == "reader" else ServiceValidationError
+    with pytest.raises(expected) as raised:
+        await hass.services.async_call(
+            DOMAIN,
+            service,
+            data,
+            blocking=True,
+            context=context,
+            return_response=service == SERVICE_RECORD_FILTER_CHANGE,
+        )
+    if expected is ServiceValidationError:
+        assert raised.value.translation_key == "no_loaded_entry"
 
 
 def test_stale_runtime_blueprint_loads_with_expected_inputs() -> None:

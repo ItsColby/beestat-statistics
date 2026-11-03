@@ -275,6 +275,12 @@ quality, comfort profiles, allowed cached hardware/Ecobee settings, and
 It does not include the API key, but contains private local names and IDs; do not attach
 this response to public issues.
 
+`import_statistics`, `rebuild_statistics`, `record_filter_change` and
+`repair_filter_change_boundary` write persistent state, so a Home Assistant user
+calling them must be an administrator. Automations and scripts without a user
+context are allowed. The read actions `get_configuration` and
+`get_hourly_coverage` stay open to any authenticated caller.
+
 To refresh entities and import recent point history:
 
 ```yaml
