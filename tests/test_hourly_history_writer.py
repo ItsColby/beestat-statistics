@@ -558,7 +558,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 apply, context=self.configured(name="Renamed")
             )
 
-    def with_sensor(self, **changes):
+    def with_sensor(self, thermostat=None, **changes):
         sensor = model.ConfiguredSensor(
             sensor_id=7,
             slug="den",
@@ -575,7 +575,11 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         return {
             **self.context,
             "config_revision": "e" * 64,
-            "config": replace(config, sensors=(replace(sensor, **changes),)),
+            "config": replace(
+                config,
+                thermostats=(replace(config.thermostats[0], **(thermostat or {})),),
+                sensors=(replace(sensor, **changes),),
+            ),
         }
 
     async def test_sensor_spec_changes_refuse_replay_unrelated_ones_do_not(self):
@@ -586,6 +590,8 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             {"include_temperature": False},
             {"include_co2": True},
             {"name": "Study"},
+            {"thermostat_id": 2},
+            {"thermostat": {"slug": "zone_two"}},
         ):
             with (
                 self.subTest(changes),
@@ -598,6 +604,15 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 )
         await self.writer.async_accept_history(
             apply, context=self.with_sensor(motion_entity_id="binary_sensor.moved")
+        )
+
+    def test_config_digest_is_pinned(self):
+        digest = writer._config_digest(self.with_sensor()["config"])
+        self.assertEqual(
+            digest,
+            "a41556f1894a11758ac4d2ab51161397c05cfef8aae316354279c9f7360c4ee8",
+            "A change here alters the sealed binding of in-flight operations "
+            "and needs a deliberate compatibility decision.",
         )
 
     async def test_old_binding_ignores_timezone_revision_only_difference(self):
