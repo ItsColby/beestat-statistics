@@ -21,6 +21,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
+from custom_components.beestat_statistics import hourly_history_writer
 from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.hourly_history_contract import (
@@ -36,6 +37,7 @@ from tests.hourly_history_support import (
     END,
     QUANTITY,
     START,
+    _adopted,
     _call,
     _content,
     _manifest,
@@ -269,6 +271,41 @@ async def test_apply_reports_routine_quantity_limit_with_recovery_text(
         )
     assert raised.value.translation_key == "hourly_routine_quantities_exceeded"
     assert raised.value.translation_placeholders == {"limit": "40"}
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_apply_reaches_routine_quantity_limit_through_the_writer(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    """A plan that fit when made is refused at apply once the limit is exceeded."""
+
+    runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
+    context = Context(user_id=hass_admin_user.id)
+    state = await runtime.store.async_load()
+    request = {
+        **_plan_request(runtime, state["history"]["source_ids"][0]),
+        "quantity_ids": ["thermostat:1:cool_runtime_hours"],
+        "operation_id": "second-adoption",
+        "expected_revision": state["revision"],
+    }
+    plan = await _call(runtime, "plan_hourly_history", request, context)
+    assert plan["status"] == "planned", plan
+    # Adopting a second quantity now would exceed a limit of one.
+    monkeypatch.setattr(hourly_history_writer, "MAX_QUANTITIES", 1)
+    with pytest.raises(ServiceValidationError) as raised:
+        await _call(
+            runtime,
+            "apply_hourly_history",
+            {
+                "config_entry_id": runtime.entry.entry_id,
+                "plan_digest": plan["plan_digest"],
+                "plan": plan["request"],
+            },
+            context,
+        )
+    assert raised.value.translation_key == "hourly_routine_quantities_exceeded"
+    assert raised.value.translation_placeholders == {"limit": "40"}
+    assert await runtime.store.async_load() == state
 
 
 @pytest.mark.usefixtures("unload_entries")

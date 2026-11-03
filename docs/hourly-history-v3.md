@@ -427,7 +427,9 @@ A routine pass requests every adopted quantity whose resource is still enabled
 in one request, so that set may not exceed the per-request quantity limit (`MAX_QUANTITIES`). Planning
 refuses an adoption that would exceed it with
 `history_routine_quantities_exceeded`; disabling quantities (their selections
-stay stored but stop counting) lets planning succeed again.
+stay stored but stop counting) lets planning succeed again. The plan response
+carries that code as a blocking reason; applying a plan that now exceeds the
+limit fails with the translated `hourly_routine_quantities_exceeded` message.
 
 Selection stays bounded by the routine window: about one delta per resource and
 window day plus the current day's passes, however long history runs. A
