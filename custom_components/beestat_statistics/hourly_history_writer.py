@@ -67,10 +67,62 @@ _FIELDS = ("entry_id", "api_base", "account_anchors")
 _LOGGER = logging.getLogger(__name__)
 
 
-def _stable_binding(binding: dict[str, Any]) -> dict[str, Any]:
-    # Records sealed before the binding dropped the process-local timezone
-    # revision still carry it; it is never compared.
-    return {key: value for key, value in binding.items() if key != "timezone_revision"}
+def _config_digest(config: Any) -> str:
+    """Digest only what decides which statistics a routine operation imports.
+
+    Statistic identity, names and the sensor quantity set come from the
+    thermostat id/slug/name and the sensor id/owner/slug/name/include flags
+    (``build_hourly_statistics`` and ``build_sensor_statistics``). Entity
+    mappings, filter state, saved overrides, timing and source details do not
+    change what is imported, so they stay out. Rows are sorted by id so that
+    ordering never moves the digest.
+    """
+    return digest(
+        {
+            "thermostats": sorted(
+                (
+                    {"id": item.thermostat_id, "slug": item.slug, "name": item.name}
+                    for item in config.thermostats
+                ),
+                key=lambda row: row["id"],
+            ),
+            "sensors": sorted(
+                (
+                    {
+                        "id": item.sensor_id,
+                        "thermostat_id": item.thermostat_id,
+                        "slug": item.slug,
+                        "name": item.name,
+                        "temperature": item.include_temperature,
+                        "air_quality": item.include_air_quality,
+                        "co2": item.include_co2,
+                        "voc": item.include_voc,
+                    }
+                    for item in config.sensors
+                ),
+                key=lambda row: row["id"],
+            ),
+        }
+    )
+
+
+def _binding_matches(
+    sealed_binding: dict[str, Any], current: dict[str, Any], context: dict[str, Any]
+) -> bool:
+    """Compare a sealed binding under the form it was sealed with.
+
+    Records sealed before the binding dropped the process-local timezone
+    revision still carry it; it is never compared. A sealed record that stores
+    ``config_revision`` predates ``config_digest`` and keeps comparing the
+    whole configuration response; newer records compare the digest only.
+    """
+    stored = {k: v for k, v in sealed_binding.items() if k != "timezone_revision"}
+    if "config_revision" in stored:
+        current = {
+            **{k: v for k, v in current.items() if k != "config_digest"},
+            "config_revision": context["config_revision"],
+        }
+    return stored == current
 
 
 def sealed(value: dict[str, Any]) -> dict[str, Any]:
@@ -615,7 +667,7 @@ class HistoryWriter:
     def binding(self, context: dict[str, Any]) -> dict[str, Any]:
         return {
             "identity": {key: deepcopy(context["identity"][key]) for key in _FIELDS},
-            "config_revision": context["config_revision"],
+            "config_digest": _config_digest(context["config"]),
             "timezone": context["timezone"],
             "method_version": METHOD_VERSION,
         }
@@ -1548,7 +1600,9 @@ class HistoryWriter:
             if (
                 digest(manifest) != plan_digest
                 or manifest["request"] != self.request(request, context)
-                or _stable_binding(manifest["binding"]) != self.binding(context)
+                or not _binding_matches(
+                    manifest["binding"], self.binding(context), context
+                )
             ):
                 raise HourlyImportError("history_operation_replay_changed")
             self.manager._state, self.manager._loaded = state, True
@@ -1908,9 +1962,9 @@ class HistoryWriter:
         ):
             return status(root)
         manifest = await self.read_object("operation", operation["object"], context)
-        if digest(manifest) != operation["plan_digest"] or _stable_binding(
-            manifest["binding"]
-        ) != self.binding(context):
+        if digest(manifest) != operation["plan_digest"] or not _binding_matches(
+            manifest["binding"], self.binding(context), context
+        ):
             raise HourlyImportError("history_operation_context_changed")
         if root["phase"] == "prepared":
             # A batchless accept is saved completed; only its marker step remains.

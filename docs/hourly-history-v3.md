@@ -220,12 +220,22 @@ spans pages. Keep one summary per quantity/view token; never add page summaries.
 native verification and durable proof publication. `root_revision` also tracks
 admission, pending work and operation progress. `source_revision` is a digest
 of admitted source/policy, or null before admission; it is not proof of complete
-import. `config_revision` binds the detached non-secret configuration.
+import. `config_revision` is the digest of the detached non-secret configuration
+response; it only labels views and guards a single call against change.
 `view_token` additionally binds pending suppression, native values/metadata,
 identity, policy, timezone, query and fixed evaluation. Neither revision alone
 is a paging token. The status entity's `hourly_history_revision` and
 `hourly_history_status` attributes use the existing entity refresh lifecycle to
 invalidate consumer views after closed-history corrections.
+
+A sealed operation binds identity, timezone, method version and `config_digest`:
+a digest of the sorted thermostat id/slug/name and sensor
+id/thermostat/slug/name/include-flag rows, which decide the statistics an
+operation imports. Entity mappings, filter state, saved overrides, timing and
+source details are not bound, so an unrelated configuration change does not
+block `accept()` replay of a blocked operation. Records sealed with the older
+`config_revision` binding (detected by that key in the sealed binding) keep
+comparing the whole configuration response and are never rewritten.
 
 `operation` always contains `status`, `root_revision` and `has_pending`.
 An unselected entry has `status: unselected` and no operation identity. Accepted
