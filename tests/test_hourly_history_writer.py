@@ -8,6 +8,7 @@ import types
 import unittest
 import unittest.mock
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -509,6 +510,75 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         await self.complete()
         self.assertEqual(self.writer.history_status()["status"], "completed")
         self.assertEqual(len(self.recorder.rows[NATIVE]), 2)
+
+    async def blocked_operation(self):
+        _, apply = await self.accept()
+        self.recorder.partial = 1
+        with self.assertRaisesRegex(RuntimeError, "partial"):
+            await self.writer.async_advance_history(context=self.context)
+        self.assertEqual(self.store.value["operation"]["status"], "blocked")
+        self.writer = self.fresh()
+        return apply
+
+    def configured(self, **changes):
+        thermostat = self.context["config"].thermostats[0]
+        return {
+            **self.context,
+            "config_revision": "e" * 64,
+            "config": model.BeestatConfig(
+                thermostats=(replace(thermostat, **changes),), sensors=()
+            ),
+        }
+
+    async def test_blocked_operation_replays_after_unrelated_configuration_change(
+        self,
+    ):
+        apply = await self.blocked_operation()
+        changed = self.configured(
+            temperature_entity_id="sensor.moved", filter_max_age_days=7
+        )
+        await self.writer.async_accept_history(apply, context=changed)
+        self.recorder.partial = 0
+        while self.writer.has_pending_history:
+            await self.writer.async_advance_history(context=changed)
+        self.assertEqual(self.writer.history_status()["status"], "completed")
+
+    async def test_blocked_operation_refuses_replay_after_effective_change(self):
+        apply = await self.blocked_operation()
+        with self.assertRaisesRegex(
+            core.HourlyImportError, "history_operation_replay_changed"
+        ):
+            await self.writer.async_accept_history(
+                apply, context=self.configured(name="Renamed")
+            )
+
+    async def test_old_binding_keeps_whole_configuration_comparison(self):
+        original = writer.HistoryWriter.binding
+
+        def old_binding(owner, context):
+            result = original(owner, context)
+            del result["config_digest"]
+            return {**result, "config_revision": context["config_revision"]}
+
+        with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
+            apply = await self.blocked_operation()
+        manifest = next(
+            json.loads(content)
+            for (kind, _), content in self.store.objects.items()
+            if kind == "operation" and b"config_revision" in content
+        )
+        self.assertNotIn("config_digest", manifest["binding"])
+        with self.assertRaisesRegex(
+            core.HourlyImportError, "history_operation_replay_changed"
+        ):
+            await self.writer.async_accept_history(
+                apply, context=self.configured(temperature_entity_id="sensor.moved")
+            )
+        replay = await self.writer.async_accept_history(apply, context=self.context)
+        self.assertEqual(replay["status"], "accepted")
+        self.recorder.partial = 0
+        await self.complete()
+        self.assertEqual(self.writer.history_status()["status"], "completed")
 
     async def test_third_native_state_holds_without_replacing_intent(self):
         _, apply = await self.accept()
