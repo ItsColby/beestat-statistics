@@ -229,11 +229,14 @@ is a paging token. The status entity's `hourly_history_revision` and
 invalidate consumer views after closed-history corrections.
 
 A sealed operation binds identity, timezone, method version and `config_digest`:
-a digest of the sorted thermostat id/slug/name and sensor
-id/thermostat/slug/name/include-flag rows, which decide the statistics an
-operation imports. Entity mappings, filter state, saved overrides, timing and
-source details are not bound, so an unrelated configuration change does not
-block `accept()` replay of a blocked operation. Records sealed with the older
+a digest derived from the statistic owners, not a field list. It covers the
+thermostat quantities built from each thermostat id/slug/name and the specs
+`build_sensor_statistics` returns, with each sensor's owning thermostat, so a
+new spec condition enters the binding by itself (clearing a sensor's occupancy
+entity or flipping an `include_*` flag changes it). Entity mappings no spec
+reads, filter state, saved overrides, timing and source details are not bound,
+so an unrelated configuration change does not block `accept()` replay of a
+blocked operation. Records sealed with the older
 `config_revision` binding (detected by that key in the sealed binding) keep
 comparing the whole configuration response and are never rewritten.
 

@@ -558,6 +558,65 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 apply, context=self.configured(name="Renamed")
             )
 
+    def with_sensor(self, **changes):
+        sensor = model.ConfiguredSensor(
+            sensor_id=7,
+            slug="den",
+            name="Den",
+            thermostat_id=1,
+            thermostat_slug="zone",
+            include_temperature=True,
+            include_air_quality=False,
+            include_co2=False,
+            include_voc=False,
+            occupancy_entity_id="binary_sensor.den",
+        )
+        config = self.context["config"]
+        return {
+            **self.context,
+            "config_revision": "e" * 64,
+            "config": replace(config, sensors=(replace(sensor, **changes),)),
+        }
+
+    async def test_sensor_spec_changes_refuse_replay_unrelated_ones_do_not(self):
+        self.context = self.with_sensor()
+        apply = await self.blocked_operation()
+        for changes in (
+            {"occupancy_entity_id": None},
+            {"include_temperature": False},
+            {"include_co2": True},
+            {"name": "Study"},
+        ):
+            with (
+                self.subTest(changes),
+                self.assertRaisesRegex(
+                    core.HourlyImportError, "history_operation_replay_changed"
+                ),
+            ):
+                await self.writer.async_accept_history(
+                    apply, context=self.with_sensor(**changes)
+                )
+        await self.writer.async_accept_history(
+            apply, context=self.with_sensor(motion_entity_id="binary_sensor.moved")
+        )
+
+    async def test_old_binding_ignores_timezone_revision_only_difference(self):
+        original = writer.HistoryWriter.binding
+
+        def old_binding(owner, context):
+            result = original(owner, context)
+            del result["config_digest"]
+            return {
+                **result,
+                "config_revision": context["config_revision"],
+                "timezone_revision": 1,
+            }
+
+        with unittest.mock.patch.object(writer.HistoryWriter, "binding", old_binding):
+            apply = await self.blocked_operation()
+        restarted = {**self.context, "timezone_revision": 0}
+        await self.writer.async_accept_history(apply, context=restarted)
+
     async def test_old_binding_keeps_whole_configuration_comparison(self):
         original = writer.HistoryWriter.binding
 

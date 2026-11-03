@@ -12,12 +12,13 @@ import json
 import logging
 from collections import Counter
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from functools import partial
 from hashlib import sha256
 from typing import Any, cast
 
+from .config_model import build_sensor_statistics
 from .const import HOURLY_V2_SUFFIX
 from .hourly_history_contract import (
     DAILY_POLICY,
@@ -58,7 +59,7 @@ from .hourly_sources import (
     source_redundancy,
     source_resolution,
 )
-from .hourly_statistics import build_hourly_statistics
+from .hourly_statistics import _thermostat_quantities, build_hourly_statistics
 
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
@@ -70,37 +71,36 @@ _LOGGER = logging.getLogger(__name__)
 def _config_digest(config: Any) -> str:
     """Digest only what decides which statistics a routine operation imports.
 
-    Statistic identity, names and the sensor quantity set come from the
-    thermostat id/slug/name and the sensor id/owner/slug/name/include flags
-    (``build_hourly_statistics`` and ``build_sensor_statistics``). Entity
-    mappings, filter state, saved overrides, timing and source details do not
-    change what is imported, so they stay out. Rows are sorted by id so that
-    ordering never moves the digest.
+    The digest is derived from the owners, not a field list: the thermostat
+    quantities ``build_hourly_statistics`` creates (``_thermostat_quantities``
+    per thermostat id/slug/name) and the specs ``build_sensor_statistics``
+    returns, with each sensor's owning thermostat. A new spec condition
+    therefore enters the binding automatically. Entity mappings, filter state,
+    saved overrides, timing and source details that no spec reads stay out.
+    Rows are sorted so ordering never moves the digest.
     """
+    owners = {item.sensor_id: item.thermostat_id for item in config.sensors}
     return digest(
         {
             "thermostats": sorted(
                 (
-                    {"id": item.thermostat_id, "slug": item.slug, "name": item.name}
+                    {
+                        "id": item.thermostat_id,
+                        "quantities": [
+                            asdict(quantity)
+                            for quantity in _thermostat_quantities(item.slug, item.name)
+                        ],
+                    }
                     for item in config.thermostats
                 ),
                 key=lambda row: row["id"],
             ),
             "sensors": sorted(
                 (
-                    {
-                        "id": item.sensor_id,
-                        "thermostat_id": item.thermostat_id,
-                        "slug": item.slug,
-                        "name": item.name,
-                        "temperature": item.include_temperature,
-                        "air_quality": item.include_air_quality,
-                        "co2": item.include_co2,
-                        "voc": item.include_voc,
-                    }
-                    for item in config.sensors
+                    {**asdict(spec), "thermostat_id": owners[spec.sensor_id]}
+                    for spec in build_sensor_statistics(config)
                 ),
-                key=lambda row: row["id"],
+                key=lambda row: (row["sensor_id"], row["statistic_suffix"]),
             ),
         }
     )
