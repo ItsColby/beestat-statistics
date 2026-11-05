@@ -629,11 +629,6 @@ def _validate_observations(source: Mapping[str, Any]) -> None:
         raise ValueError("history_source_observations_invalid")
 
 
-async def _load_payload(store: SourceStore, source: dict[str, Any]) -> dict[str, Any]:
-    content = await store.async_read_object("source", source["sha256"])
-    return await store.async_process_source_job(_parse_payload, content, source)
-
-
 def _parse_payload(content: bytes, source: dict[str, Any]) -> dict[str, Any]:
     rows, delta = _parse_source_document(content, source["manifest"])
     if source["byte_count"] != len(content) or source["row_count"] != len(rows):
@@ -697,9 +692,7 @@ async def async_load_source_bundle(
     selected = await store.async_process_source_job(
         _select_bundle, declarations, requested
     )
-    loaded = [await _load_payload(store, source) for source in selected]
-    await _verify_originals(store, loaded)
-    return loaded
+    return await _load_originals(store, selected)
 
 
 async def async_load_catalog_source_bundle(
@@ -734,8 +727,7 @@ async def async_load_catalog_source_bundle(
     selected = await store.async_process_source_job(
         _select_bundle, declarations, requested
     )
-    loaded = [await _load_payload(store, source) for source in selected]
-    await _verify_originals(store, loaded)
+    loaded = await _load_originals(store, selected)
     return declarations, loaded
 
 
@@ -812,19 +804,24 @@ def _window_sources(
     ]
 
 
-async def _verify_originals(
+async def _load_originals(
     store: SourceStore, sources: Sequence[dict[str, Any]]
-) -> None:
-    """Reproduce each original hash with bounded reads before exposing rows."""
+) -> list[dict[str, Any]]:
+    """Parse verified chunks in original order and return declaration order."""
     originals = await store.async_process_source_job(_original_groups, sources)
+    loaded = {}
     for ordered in originals:
         first = ordered[0]["manifest"]
         digest_state = sha256()
         for source in ordered:
             content = await store.async_read_object("source", source["sha256"])
             await store.async_process_source_job(digest_state.update, content)
+            loaded[source["source_id"]] = await store.async_process_source_job(
+                _parse_payload, content, source
+            )
         if digest_state.hexdigest() != first["original_sha256"]:
             raise ValueError("history_source_original_digest_mismatch")
+    return [loaded[source["source_id"]] for source in sources]
 
 
 def _original_groups(sources: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
