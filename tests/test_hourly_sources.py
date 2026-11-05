@@ -517,6 +517,55 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "original_digest_mismatch"):
             await self.merged(receipts, archive=True)
 
+    async def test_both_bundle_loaders_read_each_selected_payload_once(self):
+        chunks = [
+            json.dumps(row(temperature=72)).encode() + b"\n",
+            json.dumps(row(temperature=73)).encode() + b"\n",
+        ]
+        receipts = await self.original_chunks(
+            chunks,
+            changes={0: {"source_kind": "provider"}, 1: {"source_kind": "provider"}},
+        )
+        ids = [item["source_id"] for item in reversed(receipts)]
+        window = ("2026-09-01T00:00:00Z", "2026-09-02T00:00:00Z")
+        for catalog in (False, True):
+            with self.subTest(catalog=catalog):
+                self.store.reads.clear()
+                if catalog:
+                    _, loaded = await sources.async_load_catalog_source_bundle(
+                        self.store, ids, identity(), window=window
+                    )
+                else:
+                    loaded = await sources.async_load_source_bundle(
+                        self.store, ids, identity(), window=window
+                    )
+                self.assertEqual([item["source_id"] for item in loaded], ids)
+                self.assertEqual(
+                    [item for item in self.store.reads if item[0] == "source"],
+                    [("source", item["sha256"]) for item in receipts],
+                )
+                merged = sources.merge_source_bundle(loaded, archive_policy=True)
+                self.assertEqual(
+                    merged["resources"]["runtime_sensor:10"]["rows"][0]["temperature"],
+                    73,
+                )
+
+                key = ("source", receipts[1]["sha256"])
+                original = self.store.objects[key]
+                self.store.objects[key] = b"corrupt"
+                try:
+                    with self.assertRaisesRegex(ValueError, "corrupt fixture object"):
+                        if catalog:
+                            await sources.async_load_catalog_source_bundle(
+                                self.store, ids, identity(), window=window
+                            )
+                        else:
+                            await sources.async_load_source_bundle(
+                                self.store, ids, identity(), window=window
+                            )
+                finally:
+                    self.store.objects[key] = original
+
     async def test_original_offset_gap_overlap_and_missing_piece_fail_closed(self):
         chunks = [
             json.dumps(row()).encode() + b"\n",
