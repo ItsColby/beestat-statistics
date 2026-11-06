@@ -171,7 +171,10 @@ class BinarySensorHelpersTest(unittest.TestCase):
             (({"code": "1028"},), False),
             (({"code": "1029"},), False),
             (({"code": "1028"}, {"code": "9999"}), True),
-            (({"code": "1028"}, {"code": "1006"}), True),
+            (
+                ({"code": "1028"}, {"code": "1006", "text": "Problem with cooling"}),
+                True,
+            ),
         ):
             with self.subTest(active_alerts=active_alerts):
                 data.thermostat_metadata[1] = replace(
