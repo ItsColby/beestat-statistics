@@ -166,6 +166,22 @@ class BinarySensorHelpersTest(unittest.TestCase):
 
         self.assertTrue(by_key["active_alert"].is_on)
         self.assertFalse(by_key["equipment_alert"].is_on)
+        metadata = data.thermostat_metadata[1]
+        for active_alerts, equipment_on in (
+            (({"code": "1028"},), False),
+            (({"code": "1029"},), False),
+            (({"code": "1028"}, {"code": "9999"}), True),
+            (({"code": "1028"}, {"code": "1006"}), True),
+        ):
+            with self.subTest(active_alerts=active_alerts):
+                data.thermostat_metadata[1] = replace(
+                    metadata,
+                    active_alert_count=len(active_alerts),
+                    active_alerts=active_alerts,
+                )
+                self.assertTrue(by_key["active_alert"].is_on)
+                self.assertEqual(by_key["equipment_alert"].is_on, equipment_on)
+        data.thermostat_metadata[1] = metadata
         self.assertFalse(by_key["filter_due"].is_on)
         self.assertTrue(by_key["filter_due_soon"].is_on)
         self.assertTrue(by_key["runtime_summary_stale"].is_on)

@@ -88,6 +88,40 @@ class AlertClassificationTest(unittest.TestCase):
         for combined in permutations((maintenance, unknown, equipment)):
             self.assertEqual(alerts.classify_active_alerts(combined), "equipment")
 
+    def test_remote_sensor_codes_are_not_equipment_alerts(self) -> None:
+        for code, expected in ((1028, "sensor"), (1027, "info"), (1029, "info")):
+            for field in ("code", "alertNumber"):
+                for value in (code, f" {code} "):
+                    with self.subTest(code=value, field=field):
+                        alert = {field: value, "text": "Sensor cooling heating"}
+                        self.assertEqual(
+                            alerts.classify_active_alerts((alert,)), expected
+                        )
+                        self.assertEqual(
+                            alerts.active_alert_examples((alert,))[0]["category"],
+                            expected,
+                        )
+
+    def test_neighbouring_sensor_reading_codes_stay_unknown(self) -> None:
+        for code in (1026, 1030, 1031, 1032):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    alerts.classify_active_alerts(({"code": code},)), "unknown"
+                )
+
+    def test_category_rank_keeps_faults_above_remote_sensor_alerts(self) -> None:
+        equipment = {"code": 1006, "text": "Problem with cooling"}
+        unknown = {"code": 3139}
+        sensor = {"code": 1028, "text": "Remote sensor not communicating"}
+        maintenance = {"code": 3130}
+        info = {"code": 1029, "text": "Remote sensor re-established"}
+        ranked = (equipment, unknown, sensor, maintenance, info)
+        expected = ("equipment", "unknown", "sensor", "maintenance", "info")
+        for index, category in enumerate(expected):
+            for combined in permutations(ranked[index:]):
+                with self.subTest(category=category, combined=combined):
+                    self.assertEqual(alerts.classify_active_alerts(combined), category)
+
     def test_legacy_text_and_empty_alert_contracts_remain(self) -> None:
         self.assertEqual(alerts.classify_active_alerts(()), "none")
         self.assertEqual(
