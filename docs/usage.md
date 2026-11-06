@@ -137,8 +137,8 @@ remain provisional. Pending corrections suppress affected values until verified.
 | Scheduled comfort profile / next scheduled time | Schedule projected from cached program data in the thermostat's timezone when supplied, with Home Assistant's timezone as fallback. |
 | Beestat-reported sensor in use / in-use sensor count | Cloud-reported participation; not a fresh local occupancy reading. |
 | Configured profile room temperature spread | Spread of mapped local temperatures for configured profile membership; inspect coverage attributes before using it. |
-| Active alert / count / category | Upstream alerts, classified to distinguish maintenance from equipment concerns. |
-| Equipment alert | Equipment/other actionable alert classification rather than filter maintenance alone. |
+| Active alert / count / category | Upstream alerts. The category is the highest-ranked of `equipment`, `unknown` (an unrecognized alert), `sensor` (a remote sensor not communicating), `maintenance` and `info` (a remote sensor detected or re-established), or `none`. |
+| Equipment alert | On for an `equipment` or `unknown` category; a remote-sensor, maintenance or informational alert alone leaves it off. |
 | Runtime summary latest date / lag / stale | Age of daily summary coverage. |
 | Cloud data end / lag / stale | Age of the source's data horizon, independent of a successful request. |
 | Status / sync timestamps | Acquisition and import health. |

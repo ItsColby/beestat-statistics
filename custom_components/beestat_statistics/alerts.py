@@ -12,6 +12,14 @@ _STATE_ALERT_FIELDS = ("code", "type", "severity", "timestamp")
 _MAINTENANCE_ALERT_CODES = frozenset(
     {"3130", "3131", "3132", "3133", "3134", "3135", "3136", "3137", "3138", "3140"}
 )
+# Same table: 1028 "Remote sensor not communicating" is active sensor trouble;
+# 1027 "Remote sensor detected" and 1029 "Remote sensor re-established" report
+# a new or recovered sensor rather than a problem.
+_SENSOR_ALERT_CODES = frozenset({"1028"})
+_INFO_ALERT_CODES = frozenset({"1027", "1029"})
+# Highest first: an equipment or unrecognized alert is never hidden by a
+# remote-sensor, maintenance or informational one.
+_CATEGORY_PRIORITY = ("equipment", "unknown", "sensor", "maintenance", "info")
 
 
 def normalize_alert(alert: dict[str, Any]) -> dict[str, Any]:
@@ -61,7 +69,7 @@ def classify_active_alerts(alerts: tuple[dict[str, Any], ...]) -> str:
     if not alerts:
         return "none"
     categories = {_classify_alert(alert) for alert in alerts}
-    for category in ("equipment", "unknown", "maintenance"):
+    for category in _CATEGORY_PRIORITY:
         if category in categories:
             return category
     return "unknown"
@@ -74,6 +82,10 @@ def _classify_alert(alert: dict[str, Any]) -> str:
     code = _bounded_scalar(alert.get("code"))
     if code in _MAINTENANCE_ALERT_CODES:
         return "maintenance"
+    if code in _SENSOR_ALERT_CODES:
+        return "sensor"
+    if code in _INFO_ALERT_CODES:
+        return "info"
 
     text = " ".join(
         str(alert.get(field) or "").lower()

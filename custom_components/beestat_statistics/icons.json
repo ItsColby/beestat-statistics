@@ -165,8 +165,10 @@
         "default": "mdi:alert-decagram-outline",
         "state": {
           "equipment": "mdi:alert-circle",
+          "info": "mdi:information-outline",
           "maintenance": "mdi:wrench-clock",
           "none": "mdi:check-circle-outline",
+          "sensor": "mdi:thermometer-off",
           "unknown": "mdi:alert-decagram-outline"
         }
       },
