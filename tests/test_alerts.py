@@ -103,7 +103,7 @@ class AlertClassificationTest(unittest.TestCase):
                         )
 
     def test_neighbouring_sensor_reading_codes_stay_unknown(self) -> None:
-        for code in (1026, 1030, 1031, 1032):
+        for code in (1026, 1030, 1031, 1032, 1033):
             with self.subTest(code=code):
                 self.assertEqual(
                     alerts.classify_active_alerts(({"code": code},)), "unknown"
