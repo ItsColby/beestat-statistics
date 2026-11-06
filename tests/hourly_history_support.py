@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
-from homeassistant.helpers.storage import Store
+from homeassistant.helpers.storage import Store, _FileStoreIO
 
 from custom_components import beestat_statistics as integration
 from custom_components.beestat_statistics import importer as importer_module
@@ -35,7 +35,19 @@ NOW = datetime(2026, 9, 10, 18, 30, tzinfo=UTC)
 START = NOW.replace(hour=17, minute=0)
 END = START + timedelta(hours=1)
 QUANTITY = "thermostat:1:fan_runtime_hours"
-_NATIVE_STORE_WRITE = Store._async_write_data
+# Capture before hass_storage substitutes its in-memory I/O.
+_NATIVE_FILE_IO = _FileStoreIO
+
+
+def native_disk_io(store: Store, path: str) -> _FileStoreIO:
+    """Return the real file I/O for one Store, writing to path."""
+    return _NATIVE_FILE_IO(
+        store.hass,
+        store.key,
+        path,
+        store._io._private,
+        store._io._atomic_writes,
+    )
 
 
 async def _runtime(hass, freezer, monkeypatch, tmp_path):
@@ -50,12 +62,9 @@ async def _runtime(hass, freezer, monkeypatch, tmp_path):
     )
     entry.mock_state(hass, ConfigEntryState.LOADED)
     store = importer.hourly._store
-    monkeypatch.setattr(store._store, "path", str(tmp_path / "hourly-journal.json"))
-    monkeypatch.setattr(
-        store._store,
-        "_async_write_data",
-        _NATIVE_STORE_WRITE.__get__(store._store),
-    )
+    path = str(tmp_path / "hourly-journal.json")
+    monkeypatch.setattr(store._store, "path", path)
+    monkeypatch.setattr(store._store, "_io", native_disk_io(store._store, path))
     forbidden = []
     for owner, methods in (
         (

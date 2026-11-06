@@ -45,7 +45,7 @@ jobs:
           PY
           )"
           # --pre deliberately admits pre-release dependencies of the harness.
-          python -m pip install --pre pytest-homeassistant-custom-component "$mypy_pin"
+          python -m pip install --pre pytest-homeassistant "$mypy_pin"
           python -m pip check
       - name: Report resolved Core against the pin
         run: |
@@ -61,7 +61,7 @@ jobs:
               next(d for d in group if d.startswith("homeassistant==")).split("==")[1]
           )
           resolved = Version(version("homeassistant"))
-          harness = version("pytest-homeassistant-custom-component")
+          harness = version("pytest-homeassistant")
           print(f"Pinned Core {pin}; resolved Core {resolved}; harness {harness}")
           if resolved > pin:
               kind = "pre-release" if resolved.is_prerelease else "stable release"

@@ -11,7 +11,7 @@ from homeassistant.util import dt as dt_util
 
 from tests.hourly_support import RECORDER_NOW
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+pytest_plugins = "pytest_homeassistant"
 
 
 @pytest.fixture(autouse=True)
