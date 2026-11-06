@@ -626,6 +626,9 @@ async def test_migrate_entry_rejects_entries_below_the_supported_floor(
         with pytest.raises(ConfigEntryError) as raised:
             await async_migrate_entry(hass, unsupported)
         assert raised.value.translation_key == "unsupported_entry_version"
+        assert raised.value.translation_placeholders == {
+            "version": f"{unsupported.version}.{unsupported.minor_version}"
+        }
 
 
 @pytest.mark.parametrize(
