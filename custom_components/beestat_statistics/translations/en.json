@@ -270,6 +270,9 @@
     }
   },
   "exceptions": {
+    "unsupported_entry_version": {
+      "message": "This Beestat Statistics entry uses unsupported configuration version {version}. Install an earlier release to migrate it first."
+    },
     "beestat_auth_failed": {
       "message": "Beestat rejected the saved API key. Reauthenticate Beestat Statistics to reconnect."
     },

@@ -30,7 +30,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity import Entity
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.beestat_statistics import (
     async_migrate_entry,
@@ -616,13 +616,16 @@ async def test_migrate_entry_rejects_entries_below_the_supported_floor(
             data={CONF_API_KEY: "synthetic-key", CONF_API_BASE: API_BASE},
         )
 
-    assert await async_migrate_entry(
+    await async_migrate_entry(
         hass, entry_at(CONFIG_ENTRY_VERSION, CONFIG_ENTRY_MINOR_VERSION)
     )
-    assert not await async_migrate_entry(
-        hass, entry_at(CONFIG_ENTRY_VERSION, CONFIG_ENTRY_MINOR_VERSION - 1)
-    )
-    assert not await async_migrate_entry(hass, entry_at(CONFIG_ENTRY_VERSION + 1, 1))
+    for unsupported in (
+        entry_at(CONFIG_ENTRY_VERSION, CONFIG_ENTRY_MINOR_VERSION - 1),
+        entry_at(CONFIG_ENTRY_VERSION + 1, 1),
+    ):
+        with pytest.raises(ConfigEntryError) as raised:
+            await async_migrate_entry(hass, unsupported)
+        assert raised.value.translation_key == "unsupported_entry_version"
 
 
 @pytest.mark.parametrize(

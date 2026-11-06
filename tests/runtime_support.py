@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
 )
 

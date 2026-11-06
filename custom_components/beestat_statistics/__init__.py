@@ -80,7 +80,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: BeestatStatisticsConfigEntry,
-) -> bool:
+) -> None:
     """Set up Beestat Statistics from a config entry."""
 
     local_tz = ZoneInfo(str(hass.config.time_zone))
@@ -196,7 +196,6 @@ async def async_setup_entry(
         f"{DOMAIN}_startup_import",
         eager_start=False,
     )
-    return True
 
 
 async def _async_rollback_platforms(
@@ -230,7 +229,7 @@ def _validated_entry_api_base(
     return api_base
 
 
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reject config entries older than the supported storage version."""
 
     if (
@@ -243,17 +242,22 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.version,
             entry.minor_version,
         )
-        return False
-    return True
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key="unsupported_entry_version",
+            translation_placeholders={
+                "version": f"{entry.version}.{entry.minor_version}",
+            },
+        )
 
 
 async def async_unload_entry(
     hass: HomeAssistant,
     entry: BeestatStatisticsConfigEntry,
-) -> bool:
+) -> None:
     """Unload a Beestat Statistics config entry."""
 
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    await hass.config_entries.async_unload_platforms_or_raise(entry, PLATFORMS)
 
 
 async def async_remove_config_entry_device(

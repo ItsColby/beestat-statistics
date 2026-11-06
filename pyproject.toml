@@ -75,11 +75,13 @@ files = ["custom_components", "scripts"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Let Home Assistant install its httpx alias before respx is imported.
+addopts = "-p no:respx"
 
 [dependency-groups]
 dev = ["pre-commit==4.6.2"]
 ha-current = [
-  "homeassistant==2026.10.4",
-  "pytest-homeassistant-custom-component==0.13.375",
+  "homeassistant==2026.11.0",
+  "pytest-homeassistant==2026.11.0",
   "mypy==2.3.0",
 ]

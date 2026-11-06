@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
 
 from custom_components.beestat_statistics import hourly_storage
@@ -20,9 +19,7 @@ from custom_components.beestat_statistics.hourly_storage import (
     HourlyStorageError,
     HourlyStore,
 )
-
-# Capture before hass_storage substitutes its in-memory writer.
-_NATIVE_STORE_WRITE = Store._async_write_data
+from tests.hourly_history_support import native_disk_io
 
 
 @pytest.fixture
@@ -127,9 +124,10 @@ async def test_failed_atomic_install_cannot_create_receipt_or_touch_journal(
 def disk_store(hass, tmp_path):
     store = HourlyStore(hass, "writer-contract")
     native = store._store
+    path = str(tmp_path / "hourly-journal.json")
     with (
-        patch.object(native, "path", str(tmp_path / "hourly-journal.json")),
-        patch.object(native, "_async_write_data", _NATIVE_STORE_WRITE.__get__(native)),
+        patch.object(native, "path", path),
+        patch.object(native, "_io", native_disk_io(native, path)),
     ):
         yield store
 
@@ -163,8 +161,8 @@ async def test_native_silent_write_failure_cannot_prove_new_intent(disk_store, c
     await store.async_save({"revision": 1})
     with (
         patch.object(
-            store._store,
-            "_write_prepared_data",
+            store._store._io,
+            "async_write",
             side_effect=WriteError("Synthetic journal write failure"),
         ),
         pytest.raises(HourlyStorageError, match="hourly_store_write_unverified"),
