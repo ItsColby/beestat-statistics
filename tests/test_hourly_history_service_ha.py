@@ -33,6 +33,7 @@ from custom_components.beestat_statistics.hourly_import_core import (
     HourlyImportError,
 )
 from custom_components.beestat_statistics.hourly_rows import RecorderSnapshot
+from tests import history_contract as contract
 from tests.hourly_history_support import (
     END,
     QUANTITY,
@@ -196,7 +197,12 @@ async def test_ordinary_authenticated_user_can_read_v3_coverage_and_configuratio
     assert coverage["contract_version"] == 3
     assert coverage["pagination"]["total_buckets"] == 1
     assert coverage["series"][0]["buckets"][0]["value"] is None
-    assert configuration["hourly_statistics"]["history_v3"]["contract_version"] == 3
+    capability = configuration["hourly_statistics"]["history_v3"]
+    assert capability["contract_version"] == 3
+    missing = sorted(contract.CONFIGURATION_REQUIRED - set(capability))
+    assert not missing, f"Missing {missing}. " + contract.changed(
+        "history_v3", "configuration"
+    )
     assert not Path(runtime.store.path).exists()
     assert MARKER not in runtime.entry.data
     runtime.submit.assert_not_called()

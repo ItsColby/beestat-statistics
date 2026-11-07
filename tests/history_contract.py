@@ -126,6 +126,35 @@ DAY_BUCKET = BUCKET | {
 }
 
 
+# "Discover identities" lists what get_configuration's history_v3 contains,
+# not every key it carries, so only a dropped key fails.
+CONFIGURATION_REQUIRED = frozenset(
+    {
+        "contract_version",
+        "method_version",
+        "daily_policy",
+        "services",
+        "limits",
+        "identity",
+        "root_revision",
+        "source_revision",
+        "coverage_revision",
+        "operation",
+        "quantities",
+    }
+)
+
+
+def changed(name: str, payload: str = "history response") -> str:
+    """The failure message for a consumer-visible key set change."""
+    return (
+        f"The {name} key set of the contract-v3 {payload} changed. This is a "
+        "consumer-visible contract change: bump contract_version, or update "
+        "docs/hourly-history-v3.md and every consumer that validates the "
+        "response first."
+    )
+
+
 def assert_key_sets(
     test: TestCase,
     cases: Iterable[tuple[str, Iterable[Mapping[str, Any]], frozenset[str]]],
@@ -136,11 +165,4 @@ def assert_key_sets(
         test.assertTrue(items, f"No {name} object was produced to check.")
         for index, item in enumerate(items):
             with test.subTest(object=name, index=index):
-                test.assertEqual(
-                    set(item),
-                    keys,
-                    f"The {name} key set of the contract-v3 history response "
-                    "changed. This is a consumer-visible contract change: bump "
-                    "contract_version, or update docs/hourly-history-v3.md and "
-                    "every consumer that validates the response first.",
-                )
+                test.assertEqual(set(item), keys, changed(name))
