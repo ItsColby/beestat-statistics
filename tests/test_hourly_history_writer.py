@@ -854,6 +854,75 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                     "beestat:zone_fan_runtime_hours" in read_ids, period == "day"
                 )
 
+    async def test_query_response_key_sets_are_a_consumer_contract(self):
+        # Consumers validate these fields by name, so a response change that
+        # keeps contract_version 3 must not add or drop one silently.
+        await self.accept()
+        await self.complete()
+        request = {
+            "contract_version": 3,
+            "quantity_ids": [KEY],
+            "start": START.isoformat(),
+            "end": (START + 2 * HOUR).isoformat(),
+            "page_size": 1,
+        }
+        material = await self.writer.async_history_material(
+            request, context=self.context
+        )
+        response = history_response(request, material, self.context)
+        expected = {
+            "response": {
+                "contract_version",
+                "identity",
+                "config_revision",
+                "root_revision",
+                "source_revision",
+                "coverage_revision",
+                "method_version",
+                "daily_policy",
+                "period",
+                "start",
+                "end",
+                "evaluated_at",
+                "timezone",
+                "native_verification",
+                "operation",
+                "view_token",
+                "pagination",
+                "series",
+            },
+            "operation": {
+                "contract_version",
+                "status",
+                "operation_id",
+                "plan_digest",
+                "cursor",
+                "batch_count",
+                "verified_batches",
+                "remaining_batches",
+                "root_revision",
+                "error",
+                "has_pending",
+            },
+            "pagination": {"offset", "next_offset", "has_more", "total_buckets"},
+        }
+        actual = {
+            "response": set(response),
+            "operation": set(response["operation"]),
+            "pagination": set(response["pagination"]),
+        }
+        for name, keys in expected.items():
+            with self.subTest(object=name):
+                self.assertEqual(
+                    actual[name],
+                    keys,
+                    f"The {name} key set of the contract-v3 history response "
+                    "changed. This is a consumer-visible contract change: bump "
+                    "contract_version, or update the known consumer, Home's "
+                    "dashboard-runtime-history-card.js (validateRuntimePage), "
+                    "in the same release.",
+                )
+
     async def test_query_guard_accepts_cold_cache_and_rejects_durable_change(self):
         await self.accept()
         cold = self.fresh()
