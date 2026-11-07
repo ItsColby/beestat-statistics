@@ -7,6 +7,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from custom_components.beestat_statistics import hourly_history_query as query_module
+from tests import history_contract as contract
 
 history_response = query_module.history_response
 METHOD = "five_minute_complete_hour_v3"
@@ -538,6 +539,68 @@ class HourlyHistoryQueryTest(unittest.TestCase):
         self.assertEqual(bucket["value"], 45)
         self.assertIsNone(bucket["min"])
         self.assertIsNone(bucket["max"])
+
+    def test_measurement_and_legacy_day_key_sets_are_a_consumer_contract(self):
+        # Descriptors here are fixtures, so the writer test pins those; this
+        # covers the bucket and summary shapes a single writer source cannot.
+        rejected = self.add_quantity("thermostat:1:cool_runtime")
+        measurement = self.add_quantity("sensor:2:temperature", "measurement")
+        self.point()
+        self.point(mean=70, low=68, high=72, quantity=measurement)
+        quantities = [QUANTITY, rejected, measurement]
+        hour = self.result(self.request(quantity_ids=quantities))["series"]
+        day_request = self.request(
+            end=START + 24 * HOUR, period="day", quantity_ids=quantities
+        )
+        point_day = self.result(day_request)["series"]
+        self.legacy()
+        self.legacy(quantity=rejected, timezone="America/Chicago")
+        self.legacy(
+            quantity=measurement, method="legacy_sample_mean", mean=68, min=66, max=70
+        )
+        legacy_day = self.result(day_request)["series"]
+        all_series = [*hour, *point_day, *legacy_day]
+        # The slices below assume the request order per response.
+        self.assertEqual(len(all_series), 9)
+        contract.assert_key_sets(self, (("series", all_series, contract.SERIES),))
+        self.assertEqual(
+            [item["buckets"][0]["source_basis"] for item in legacy_day],
+            ["legacy_daily", "unavailable", "legacy_daily"],
+        )
+        contract.assert_key_sets(
+            self,
+            (
+                (
+                    "amount summary",
+                    [item["summary"] for item in all_series[0::3] + all_series[1::3]],
+                    contract.AMOUNT_SUMMARY,
+                ),
+                (
+                    "measurement summary",
+                    [item["summary"] for item in all_series[2::3]],
+                    contract.MEASUREMENT_SUMMARY,
+                ),
+                (
+                    "hour bucket",
+                    [bucket for item in hour for bucket in item["buckets"]],
+                    contract.BUCKET,
+                ),
+                (
+                    "day bucket",
+                    [
+                        bucket
+                        for item in [*point_day, legacy_day[0], legacy_day[2]]
+                        for bucket in item["buckets"]
+                    ],
+                    contract.DAY_BUCKET,
+                ),
+                (
+                    "rejected legacy day bucket",
+                    legacy_day[1]["buckets"],
+                    contract.DAY_BUCKET | {"legacy_reason"},
+                ),
+            ),
+        )
 
     def test_public_identity_excludes_internal_resource_map_and_operation_is_preserved(
         self,

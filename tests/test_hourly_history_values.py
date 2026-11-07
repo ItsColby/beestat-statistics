@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from custom_components.beestat_statistics import config_model
 from custom_components.beestat_statistics import hourly_history_values as values
 from custom_components.beestat_statistics import hourly_statistics as hourly
+from tests import history_contract as contract
 
 
 class HourlyHistoryValuesTest(unittest.TestCase):
@@ -261,6 +262,29 @@ class HourlyHistoryValuesTest(unittest.TestCase):
         self.assertEqual(voc.hours, ())
         self.assertEqual(voc.blocked_reason, "voc_unit_unresolved")
         self.assertEqual(voc.descriptor["admission"], "blocked")
+        # Every quantity kind's real descriptor, including the blocked one, is
+        # the consumer-visible series descriptor of the history response.
+        others = [item for item in result if item is not voc]
+        contract.assert_key_sets(
+            self,
+            (
+                (
+                    "descriptor",
+                    [item.descriptor for item in others],
+                    contract.DESCRIPTOR,
+                ),
+                (
+                    "blocked descriptor",
+                    [voc.descriptor],
+                    contract.DESCRIPTOR | {"blocked_reason"},
+                ),
+                (
+                    "representation",
+                    [item.descriptor["representation"] for item in result],
+                    contract.REPRESENTATION,
+                ),
+            ),
+        )
         self.assertTrue(
             all(
                 not item.metadata["has_sum"] and item.metadata["mean_type"] == 1
