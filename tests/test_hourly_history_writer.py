@@ -855,8 +855,10 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_query_response_key_sets_are_a_consumer_contract(self):
-        # Consumers validate these fields by name, so a response change that
-        # keeps contract_version 3 must not add or drop one silently.
+        # docs/hourly-history-v3.md documents these keys and consumers read
+        # them by name, so contract_version 3 must not gain or lose one
+        # silently. This lives with the writer tests because only here is
+        # operation real status() output rather than a fixture.
         await self.accept()
         await self.complete()
         request = {
@@ -905,11 +907,13 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 "has_pending",
             },
             "pagination": {"offset", "next_offset", "has_more", "total_buckets"},
+            "unselected operation": {"status", "root_revision", "has_pending"},
         }
         actual = {
             "response": set(response),
             "operation": set(response["operation"]),
             "pagination": set(response["pagination"]),
+            "unselected operation": set(writer.status(None)),
         }
         for name, keys in expected.items():
             with self.subTest(object=name):
@@ -918,9 +922,8 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                     keys,
                     f"The {name} key set of the contract-v3 history response "
                     "changed. This is a consumer-visible contract change: bump "
-                    "contract_version, or update the known consumer, Home's "
-                    "dashboard-runtime-history-card.js (validateRuntimePage), "
-                    "in the same release.",
+                    "contract_version, or update docs/hourly-history-v3.md and "
+                    "every consumer that validates the response first.",
                 )
 
     async def test_query_guard_accepts_cold_cache_and_rejects_durable_change(self):
