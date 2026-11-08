@@ -992,6 +992,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             source_data_end=source_end,
             evaluated_at=temporal_context.evaluated_at,
         )
+        if boundary.boundary_status == "source_gap" and source_end is None:
+            # Without Beestat's sync horizon, the missing rows may still arrive.
+            return True
         changes = _filter_boundary_changes(boundary, current_override)
         if changes is not None:
             self.hass.config_entries.async_update_entry(

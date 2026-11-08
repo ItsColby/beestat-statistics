@@ -2196,6 +2196,12 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             coordinator,
         )
 
+        # Without Beestat's sync horizon the missing rows may still arrive.
+        await reconcile(config, summaries, ())
+        self.assertEqual(updates, [])
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+        scheduled.clear()
+
         await reconcile(config, summaries, metadata)
         saved = entry.options["thermostats"][0]
         self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
@@ -2235,6 +2241,16 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["filter_change_day_runtime_baseline_seconds"], 187 * 60)
         self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
         self.assertEqual(len(updates), 2)
+
+        # A correction deleting a pre-click row returns it to source_gap.
+        raw_rows = all_rows[1:]
+        summaries[0]["count"] = 287
+        await reconcile(config, summaries, metadata)
+        saved = entry.options["thermostats"][0]
+        self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
+        self.assertIsNotNone(saved["filter_change_boundary_reconciled_at"])
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
+        self.assertEqual(len(updates), 3)
 
     async def test_cleared_boundary_cannot_be_restored_by_slow_reconciliation(
         self,
