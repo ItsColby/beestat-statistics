@@ -763,6 +763,22 @@ class CoordinatorHelpersTest(unittest.TestCase):
             ),
             "legacy_date_only",
         )
+        reconciled_at = datetime.fromisoformat("2026-07-06T00:00:00+00:00")
+        changed_at = datetime.fromisoformat("2026-07-05T21:48:00+00:00")
+        self.assertEqual(
+            self.config_model.boundary_lifecycle_status(changed_at, 600, reconciled_at),
+            "finalized",
+        )
+        self.assertEqual(
+            self.config_model.boundary_lifecycle_status(
+                changed_at, None, reconciled_at
+            ),
+            "source_gap",
+        )
+        self.assertEqual(
+            self.config_model.boundary_lifecycle_status(None, 600, None),
+            "legacy_snapshot",
+        )
 
     def test_filter_boundary_fast_retry_window_is_bounded(self) -> None:
         now = datetime.fromisoformat("2026-07-06T03:00:00+00:00")
@@ -2100,9 +2116,135 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             "filter_change_day_runtime_baseline_seconds",
             entry.options["thermostats"][0],
         )
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+        # A deleted pre-click row leaves no exact baseline: a source gap, not pending.
+        self.assertIn(
+            "filter_change_boundary_reconciled_at", entry.options["thermostats"][0]
+        )
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
         self.assertEqual(entry.options["concurrent_option"], "preserved")
         self.assertEqual(len(coordinator._filter_day_cache), 1)
+
+    async def test_boundary_inside_source_gap_persists_terminal_status(
+        self,
+    ) -> None:
+        zone = ZoneInfo("America/New_York")
+        changed_at = datetime(2026, 9, 8, 15, 33, 32, 27786, tzinfo=zone).astimezone(
+            UTC
+        )
+        thermostat = self.config_model.ConfiguredThermostat(
+            thermostat_id=87014,
+            slug="upstairs",
+            name="Upstairs",
+            filter_changed_date=date(2026, 9, 8),
+            filter_changed_at=changed_at,
+        )
+        entry = types.SimpleNamespace(
+            data={},
+            options={
+                "thermostats": [
+                    {
+                        "id": 87014,
+                        "filter_changed_date": "2026-09-08",
+                        "filter_changed_at": changed_at.isoformat(),
+                    }
+                ]
+            },
+        )
+        updates = []
+        calls = []
+        scheduled = []
+
+        def update_entry(_entry, *, options):
+            entry.options = options
+            updates.append(options)
+
+        start = datetime(2026, 9, 8, 4, tzinfo=UTC)
+        all_rows = [
+            {"timestamp": (start + timedelta(minutes=5 * i)).isoformat(), "fan": 60}
+            for i in range(288)
+        ]
+        # Source rows stop at 09:05 local and resume at 16:25, after the click.
+        raw_rows = all_rows[:110] + all_rows[197:]
+
+        async def read_runtime(*args):
+            calls.append(args)
+            return [dict(row) for row in raw_rows]
+
+        coordinator = types.SimpleNamespace(
+            _filter_day_cache={},
+            _client=types.SimpleNamespace(
+                async_read_runtime_thermostat=read_runtime,
+                redact_error=lambda err: str(err),
+            ),
+            _local_tz=zone,
+            _timezone_revision=0,
+            _beestat_config_entry=entry,
+            hass=types.SimpleNamespace(
+                config_entries=types.SimpleNamespace(async_update_entry=update_entry)
+            ),
+            async_schedule_filter_boundary_reconcile=scheduled.append,
+            _async_cancel_filter_boundary_retry=lambda: None,
+        )
+        self._attach_temporal_context(coordinator)
+        context = self.coordinator.TemporalContext(
+            datetime(2026, 9, 10, 12, tzinfo=UTC), zone, 0
+        )
+        coordinator.capture_temporal_context = lambda: context
+        config = self.config_model.BeestatConfig(thermostats=(thermostat,), sensors=())
+        summaries = [
+            {"thermostat_id": 87014, "date": "2026-09-08", "count": 201, "sum_fan": 1}
+        ]
+        metadata = ({"id": 87014, "data_end": "2026-09-10T11:55:00+00:00"},)
+        reconcile = types.MethodType(
+            self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries,
+            coordinator,
+        )
+
+        # Without Beestat's sync horizon the missing rows may still arrive.
+        await reconcile(config, summaries, ())
+        self.assertEqual(updates, [])
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+        scheduled.clear()
+
+        await reconcile(config, summaries, metadata)
+        saved = entry.options["thermostats"][0]
+        self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
+        self.assertIsNotNone(saved["filter_change_boundary_reconciled_at"])
+        self.assertEqual(
+            saved["filter_change_boundary_source_data_end"], "2026-09-09T03:55:00+00:00"
+        )
+        self.assertEqual(saved["filter_changed_at"], changed_at.isoformat())
+        persisted = self.config_model.ConfiguredThermostat(
+            thermostat_id=87014,
+            slug="upstairs",
+            name="Upstairs",
+            filter_changed_at=changed_at,
+            filter_change_boundary_reconciled_at=datetime.fromisoformat(
+                saved["filter_change_boundary_reconciled_at"]
+            ),
+        )
+        self.assertEqual(
+            self.config_model.filter_boundary_status(persisted), "source_gap"
+        )
+        # Terminal: no pending count, no fast retry, and no rewrite on reread.
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
+        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 0)
+        self.assertEqual(scheduled, [])
+        context = replace(
+            context, evaluated_at=context.evaluated_at + timedelta(hours=6)
+        )
+        await reconcile(config, summaries, metadata)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(updates), 1)
+
+        # A later Beestat backfill still finalizes the exact baseline.
+        raw_rows = all_rows
+        summaries[0]["count"] = 288
+        await reconcile(config, summaries, metadata)
+        saved = entry.options["thermostats"][0]
+        self.assertEqual(saved["filter_change_day_runtime_baseline_seconds"], 187 * 60)
+        self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
+        self.assertEqual(len(updates), 2)
 
     async def test_cleared_boundary_cannot_be_restored_by_slow_reconciliation(
         self,

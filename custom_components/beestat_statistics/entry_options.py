@@ -10,6 +10,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .api import exception_fingerprint
+from .config_model import boundary_lifecycle_status
 from .config_payload import (
     effective_thermostat_override,
     update_thermostat_override_options,
@@ -223,14 +224,11 @@ def _filter_change_response(
         or saved.get(CONF_FILTER_CHANGED_DATE) != requested_date
     ):
         status = "superseded"
-    boundary_status = "legacy_date_only"
-    if saved.get(CONF_FILTER_CHANGED_AT) is not None:
-        boundary_status = (
-            "finalized"
-            if saved.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT) is not None
-            and saved.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS) is not None
-            else "pending_data"
-        )
+    boundary_status = boundary_lifecycle_status(
+        saved.get(CONF_FILTER_CHANGED_AT),
+        saved.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS),
+        saved.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT),
+    )
     return {
         "schema_version": 1,
         "status": status,

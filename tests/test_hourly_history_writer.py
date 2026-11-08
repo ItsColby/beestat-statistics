@@ -27,6 +27,7 @@ from custom_components.beestat_statistics.hourly_rows import (
     HourlyStatisticRow,
     RecorderSnapshot,
 )
+from tests import history_contract as contract
 from tests.history_support import Recorder as FixtureRecorder
 from tests.history_support import Store as FixtureStore
 from tests.history_support import identity, source
@@ -855,76 +856,78 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 )
 
     async def test_query_response_key_sets_are_a_consumer_contract(self):
-        # docs/hourly-history-v3.md documents these keys and consumers read
-        # them by name, so contract_version 3 must not gain or lose one
-        # silently. This lives with the writer tests because only here is
-        # operation real status() output rather than a fixture.
+        # This lives with the writer tests because only here are operation
+        # and descriptors real writer output rather than fixtures. The
+        # measurement and legacy-day shapes are pinned in
+        # tests/test_hourly_history_query.py, every kind's descriptor in
+        # tests/test_hourly_history_values.py.
         await self.accept()
         await self.complete()
-        request = {
-            "contract_version": 3,
-            "quantity_ids": [KEY],
-            "start": START.isoformat(),
-            "end": (START + 2 * HOUR).isoformat(),
-            "page_size": 1,
-        }
-        material = await self.writer.async_history_material(
-            request, context=self.context
+        responses = {}
+        for period, start, page_size in (
+            ("hour", START, 1),
+            ("day", START - timedelta(days=2), 4096),
+        ):
+            request = {
+                "contract_version": 3,
+                "quantity_ids": [KEY],
+                "start": start.isoformat(),
+                "end": (START + 2 * HOUR).isoformat(),
+                "period": period,
+                "page_size": page_size,
+            }
+            material = await self.writer.async_history_material(
+                request, context=self.context
+            )
+            responses[period] = history_response(request, material, self.context)
+        response = responses["hour"]
+        series = [*response["series"], *responses["day"]["series"]]
+        # Check parents first so a dropped parent key reports the contract
+        # message before the nested lookups below raise KeyError.
+        contract.assert_key_sets(
+            self,
+            (
+                ("response", [response], contract.RESPONSE),
+                ("operation", [response["operation"]], contract.OPERATION),
+                (
+                    "unselected operation",
+                    [writer.status(None)],
+                    contract.UNSELECTED_OPERATION,
+                ),
+                ("pagination", [response["pagination"]], contract.PAGINATION),
+                ("series", series, contract.SERIES),
+            ),
         )
-        response = history_response(request, material, self.context)
-        expected = {
-            "response": {
-                "contract_version",
-                "identity",
-                "config_revision",
-                "root_revision",
-                "source_revision",
-                "coverage_revision",
-                "method_version",
-                "daily_policy",
-                "period",
-                "start",
-                "end",
-                "evaluated_at",
-                "timezone",
-                "native_verification",
-                "operation",
-                "view_token",
-                "pagination",
-                "series",
-            },
-            "operation": {
-                "contract_version",
-                "status",
-                "operation_id",
-                "plan_digest",
-                "cursor",
-                "batch_count",
-                "verified_batches",
-                "remaining_batches",
-                "root_revision",
-                "error",
-                "has_pending",
-            },
-            "pagination": {"offset", "next_offset", "has_more", "total_buckets"},
-            "unselected operation": {"status", "root_revision", "has_pending"},
-        }
-        actual = {
-            "response": set(response),
-            "operation": set(response["operation"]),
-            "pagination": set(response["pagination"]),
-            "unselected operation": set(writer.status(None)),
-        }
-        for name, keys in expected.items():
-            with self.subTest(object=name):
-                self.assertEqual(
-                    actual[name],
-                    keys,
-                    f"The {name} key set of the contract-v3 history response "
-                    "changed. This is a consumer-visible contract change: bump "
-                    "contract_version, or update docs/hourly-history-v3.md and "
-                    "every consumer that validates the response first.",
-                )
+        contract.assert_key_sets(
+            self,
+            (
+                (
+                    "descriptor",
+                    [item["descriptor"] for item in series],
+                    contract.DESCRIPTOR,
+                ),
+                (
+                    "representation",
+                    [item["descriptor"]["representation"] for item in series],
+                    contract.REPRESENTATION,
+                ),
+                (
+                    "amount summary",
+                    [item["summary"] for item in series],
+                    contract.AMOUNT_SUMMARY,
+                ),
+                (
+                    "hour bucket",
+                    response["series"][0]["buckets"],
+                    contract.BUCKET,
+                ),
+                (
+                    "day bucket",
+                    responses["day"]["series"][0]["buckets"],
+                    contract.DAY_BUCKET,
+                ),
+            ),
+        )
 
     async def test_query_guard_accepts_cold_cache_and_rejects_durable_change(self):
         await self.accept()

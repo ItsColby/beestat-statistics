@@ -992,6 +992,9 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             source_data_end=source_end,
             evaluated_at=temporal_context.evaluated_at,
         )
+        if boundary.boundary_status == "source_gap" and source_end is None:
+            # Without Beestat's sync horizon, the missing rows may still arrive.
+            return True
         changes = _filter_boundary_changes(boundary, current_override)
         if changes is not None:
             self.hass.config_entries.async_update_entry(
@@ -1005,7 +1008,7 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
             )
             if boundary.baseline_seconds is not None:
                 self.last_filter_boundary_reconciled_count += 1
-        return boundary.baseline_seconds is None
+        return boundary.boundary_status == "pending_data"
 
     def _build_runtime_data(
         self,
@@ -1209,7 +1212,25 @@ def _filter_boundary_changes(
     boundary: ChangeDayObservation,
     current: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Persist a corrected baseline once, or clear a no-longer-covered baseline."""
+    """Persist a corrected baseline or a source gap once, or clear either."""
+    if boundary.boundary_status == "source_gap":
+        # Source history passed the boundary without the rows an exact baseline
+        # needs. Record that terminal outcome without inventing a baseline;
+        # periodic rereads still finalize it if Beestat later backfills.
+        if (
+            current.get(CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS) is None
+            and current.get(CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT) is not None
+        ):
+            return None
+        return {
+            CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: None,
+            CONF_FILTER_CHANGE_BOUNDARY_RECONCILED_AT: datetime.now(UTC).isoformat(),
+            CONF_FILTER_CHANGE_BOUNDARY_SOURCE_DATA_END: (
+                boundary.source_data_end.isoformat()
+                if boundary.source_data_end
+                else None
+            ),
+        }
     if boundary.baseline_seconds is None:
         changes = {
             CONF_FILTER_CHANGE_DAY_RUNTIME_BASELINE_SECONDS: None,
