@@ -2132,7 +2132,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             UTC
         )
         thermostat = self.config_model.ConfiguredThermostat(
-            thermostat_id=87014,
+            thermostat_id=1001,
             slug="upstairs",
             name="Upstairs",
             filter_changed_date=date(2026, 9, 8),
@@ -2143,7 +2143,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             options={
                 "thermostats": [
                     {
-                        "id": 87014,
+                        "id": 1001,
                         "filter_changed_date": "2026-09-08",
                         "filter_changed_at": changed_at.isoformat(),
                     }
@@ -2192,9 +2192,9 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         coordinator.capture_temporal_context = lambda: context
         config = self.config_model.BeestatConfig(thermostats=(thermostat,), sensors=())
         summaries = [
-            {"thermostat_id": 87014, "date": "2026-09-08", "count": 201, "sum_fan": 1}
+            {"thermostat_id": 1001, "date": "2026-09-08", "count": 201, "sum_fan": 1}
         ]
-        metadata = ({"id": 87014, "data_end": "2026-09-10T11:55:00+00:00"},)
+        metadata = ({"id": 1001, "data_end": "2026-09-10T11:55:00+00:00"},)
         reconcile = types.MethodType(
             self.coordinator.BeestatRuntimeDataCoordinator._async_reconcile_pending_filter_boundaries,
             coordinator,
@@ -2215,7 +2215,7 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(saved["filter_changed_at"], changed_at.isoformat())
         persisted = self.config_model.ConfiguredThermostat(
-            thermostat_id=87014,
+            thermostat_id=1001,
             slug="upstairs",
             name="Upstairs",
             filter_changed_at=changed_at,
