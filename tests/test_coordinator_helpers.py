@@ -2116,7 +2116,11 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
             "filter_change_day_runtime_baseline_seconds",
             entry.options["thermostats"][0],
         )
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 1)
+        # A deleted pre-click row leaves no exact baseline: a source gap, not pending.
+        self.assertIn(
+            "filter_change_boundary_reconciled_at", entry.options["thermostats"][0]
+        )
+        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
         self.assertEqual(entry.options["concurrent_option"], "preserved")
         self.assertEqual(len(coordinator._filter_day_cache), 1)
 
@@ -2241,16 +2245,6 @@ class CoordinatorBoundaryReconcileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["filter_change_day_runtime_baseline_seconds"], 187 * 60)
         self.assertEqual(coordinator.last_filter_boundary_reconciled_count, 1)
         self.assertEqual(len(updates), 2)
-
-        # A correction deleting a pre-click row returns it to source_gap.
-        raw_rows = all_rows[1:]
-        summaries[0]["count"] = 287
-        await reconcile(config, summaries, metadata)
-        saved = entry.options["thermostats"][0]
-        self.assertNotIn("filter_change_day_runtime_baseline_seconds", saved)
-        self.assertIsNotNone(saved["filter_change_boundary_reconciled_at"])
-        self.assertEqual(coordinator.last_filter_boundary_pending_count, 0)
-        self.assertEqual(len(updates), 3)
 
     async def test_cleared_boundary_cannot_be_restored_by_slow_reconciliation(
         self,
