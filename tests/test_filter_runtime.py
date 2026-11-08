@@ -401,3 +401,46 @@ class FilterRuntimeTest(unittest.TestCase):
         self.assertIsNone(raw.baseline_seconds)
         self.assertEqual(raw.gap_seconds, 0)
         self.assertEqual(raw.observed_seconds, 144 * 60)
+
+    def test_boundary_inside_source_gap_keeps_a_usable_lower_bound(self) -> None:
+        zone = ZoneInfo("America/New_York")
+        day = date(2026, 9, 8)
+        # Source rows stop at 09:05 and resume at 16:25; the click falls between.
+        rows = [
+            row
+            for index, row in enumerate(points(day, zone=zone))
+            if index <= 109 or index >= 197
+        ]
+        changed = datetime(2026, 9, 8, 15, 33, 32, 27786, tzinfo=zone)
+        evaluated = datetime(2026, 9, 10, 4, tzinfo=UTC)
+        source_end = evaluated - timedelta(minutes=5)
+        raw = runtime.assess_change_day(
+            rows,
+            changed,
+            local_tz=zone,
+            source_data_end=source_end,
+            evaluated_at=evaluated,
+        )
+        self.assertEqual(raw.boundary_status, "source_gap")
+        self.assertIsNone(raw.baseline_seconds)
+        # Only reported post-gap intervals count; the 15:35-16:20 gap stays unknown.
+        self.assertEqual(raw.observed_seconds, 91 * 60)
+        self.assertEqual(raw.gap_seconds, 10 * 300)
+        observed = runtime.build_filter_runtime_observation(
+            [{"date": "2026-09-09", "count": 288, "sum_fan": 86400}],
+            changed_date=day,
+            changed_at=changed,
+            change_day=raw,
+            source_data_end=source_end,
+            evaluated_at=evaluated,
+            local_tz=zone,
+        )
+        self.assertEqual(observed.boundary_status, "source_gap")
+        self.assertEqual(observed.coverage, "partial")
+        self.assertEqual(observed.observed_hours, 25.5)
+        unknown = observed.unknown_interval_seconds
+        assert unknown is not None
+        self.assertAlmostEqual(unknown, 3000 + 87.972214)
+        self.assertTrue(observed.threshold_reached(25))
+        self.assertIsNone(observed.threshold_reached(26))
+        self.assertFalse(observed.threshold_reached(27))

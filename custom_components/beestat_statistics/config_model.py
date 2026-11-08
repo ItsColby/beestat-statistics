@@ -191,14 +191,23 @@ class BeestatConfig:
 def filter_boundary_status(thermostat: ConfiguredThermostat) -> str:
     """Return the persisted click-boundary lifecycle state."""
 
-    if thermostat.filter_changed_at is not None:
-        if (
-            thermostat.filter_change_day_runtime_baseline_seconds is not None
-            and thermostat.filter_change_boundary_reconciled_at is not None
-        ):
-            return "finalized"
-        return "pending_data"
-    if thermostat.filter_change_day_runtime_baseline_seconds is not None:
+    return boundary_lifecycle_status(
+        thermostat.filter_changed_at,
+        thermostat.filter_change_day_runtime_baseline_seconds,
+        thermostat.filter_change_boundary_reconciled_at,
+    )
+
+
+def boundary_lifecycle_status(
+    changed_at: object, baseline: object, reconciled_at: object
+) -> str:
+    """Classify saved boundary fields; a reconciliation without a baseline is a gap."""
+
+    if changed_at is not None:
+        if reconciled_at is None:
+            return "pending_data"
+        return "finalized" if baseline is not None else "source_gap"
+    if baseline is not None:
         return "legacy_snapshot"
     return "legacy_date_only"
 

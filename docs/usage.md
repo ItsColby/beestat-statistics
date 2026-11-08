@@ -250,6 +250,13 @@ replacement timestamp is within its six-hour fast-retry window. An older
 replacement recorded now does not start a new six-hour window. Regular refreshes
 can reconcile it later. `finalized` means the saved change-day baseline was
 reconciled; inspect current runtime quality for later gaps and source corrections.
+`source_gap` is the terminal outcome when Beestat history has passed the
+replacement but lacks the change-day intervals an exact baseline needs, such as a
+replacement recorded during a thermostat outage. It ends the 15-minute retries
+and saves no baseline. Runtime still counts only reported intervals after the
+replacement, so it is a usable lower bound: a threshold it reaches is proven,
+and the missing intervals remain in `runtime_unknown_interval_minutes`. Regular
+refreshes still finalize it if Beestat later backfills those intervals.
 
 ## Call actions and handle their results
 
