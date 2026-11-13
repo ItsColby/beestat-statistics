@@ -546,6 +546,24 @@
         }
       }
     },
+    "stage_hourly_correction": {
+      "name": "Stage hourly history correction",
+      "description": "Retain a reviewed correction bundle for a later history plan. Requires an active administrator; staging does not change active history.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Configuration entry",
+          "description": "Loaded Beestat Statistics entry bound to the correction."
+        },
+        "file_id": {
+          "name": "Correction bundle",
+          "description": "Uploaded JSON bundle, at most 8 MiB. Paths and URLs are not accepted."
+        },
+        "sha256": {
+          "name": "Bundle digest",
+          "description": "Exact 64-character lowercase SHA-256 digest of the uploaded bytes."
+        }
+      }
+    },
     "plan_hourly_history": {
       "name": "Plan hourly Beestat history",
       "description": "Read sealed source evidence, current ownership, and bounded Recorder rows to prepare an exact adoption or repair plan. Requires an active administrator. Does not fetch source data, reconcile pending work, or change state.",
@@ -557,6 +575,10 @@
         "source_ids": {
           "name": "Sealed source IDs",
           "description": "From 1 to 2048 distinct source manifest SHA-256 IDs returned by Stage hourly Beestat source."
+        },
+        "correction_ids": {
+          "name": "Correction IDs",
+          "description": "Optional distinct correction document SHA-256 IDs returned by Stage hourly history correction, up to 2048."
         },
         "quantity_ids": {
           "name": "Quantity IDs",

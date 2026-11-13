@@ -127,6 +127,22 @@ stage_hourly_source:
       required: true
       selector:
         object: {}
+stage_hourly_correction:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: beestat_statistics
+    file_id:
+      required: true
+      selector:
+        file:
+          accept: application/json,.json
+    sha256:
+      required: true
+      selector:
+        text: {}
 plan_hourly_history:
   fields:
     config_entry_id:
@@ -136,6 +152,10 @@ plan_hourly_history:
           integration: beestat_statistics
     source_ids:
       required: true
+      selector:
+        text:
+          multiple: true
+    correction_ids:
       selector:
         text:
           multiple: true

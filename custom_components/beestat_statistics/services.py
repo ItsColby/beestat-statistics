@@ -60,12 +60,14 @@ from .hourly_history_contract import (
     ROUTINE_QUANTITIES_EXCEEDED,
     SERVICE_APPLY_HOURLY_HISTORY,
     SERVICE_PLAN_HOURLY_HISTORY,
+    SERVICE_STAGE_HOURLY_CORRECTION,
     SERVICE_STAGE_HOURLY_SOURCE,
 )
 from .hourly_history_service import (
     APPLY_HISTORY_SCHEMA,
     COVERAGE_HISTORY_SCHEMA,
     PLAN_HISTORY_SCHEMA,
+    STAGE_CORRECTION_SCHEMA,
     STAGE_HISTORY_SCHEMA,
 )
 from .import_support import UnknownThermostatError
@@ -188,6 +190,7 @@ def async_register_services(hass: HomeAssistant) -> None:
 
     for service, schema in (
         (SERVICE_STAGE_HOURLY_SOURCE, STAGE_HISTORY_SCHEMA),
+        (SERVICE_STAGE_HOURLY_CORRECTION, STAGE_CORRECTION_SCHEMA),
         (SERVICE_PLAN_HOURLY_HISTORY, PLAN_HISTORY_SCHEMA),
         (SERVICE_APPLY_HOURLY_HISTORY, APPLY_HISTORY_SCHEMA),
     ):
@@ -381,6 +384,8 @@ async def _async_handle_history_service(
         request = dict(call.data)
         if call.service == SERVICE_STAGE_HOURLY_SOURCE:
             return await importer.async_stage_hourly_source(request)
+        if call.service == SERVICE_STAGE_HOURLY_CORRECTION:
+            return await importer.async_stage_hourly_correction(request)
         if call.service == SERVICE_PLAN_HOURLY_HISTORY:
             return await importer.async_plan_hourly_history(request)
         return await importer.async_apply_hourly_history(request)

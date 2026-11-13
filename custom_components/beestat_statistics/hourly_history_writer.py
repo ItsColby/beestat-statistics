@@ -20,6 +20,8 @@ from typing import Any, cast
 
 from .config_model import build_sensor_statistics
 from .const import HOURLY_V2_SUFFIX
+from .hourly_correction_store import Corrections, validate_index
+from .hourly_corrections import project
 from .hourly_history_contract import (
     DAILY_POLICY,
     MAX_BATCH_HOURS,
@@ -64,6 +66,7 @@ from .hourly_statistics import _thermostat_quantities, build_hourly_statistics
 _HOUR = timedelta(hours=1)
 _DAY = timedelta(days=1)
 _FIELDS = ("entry_id", "api_base", "account_anchors")
+_ROOT_VERSIONS = (3, 4)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -137,7 +140,7 @@ def validate_root(manager: Any, state: dict[str, Any]) -> None:
         body = {key: value for key, value in state.items() if key != "integrity"}
         if (
             state["integrity"] != digest(body)
-            or state["version"] != 3
+            or state["version"] not in _ROOT_VERSIONS
             or state["entry_id"] != manager._entry.entry_id
             or type(state["revision"]) is not int
             or state["revision"] < 0
@@ -153,6 +156,14 @@ def validate_root(manager: Any, state: dict[str, Any]) -> None:
         ):
             raise ValueError("history_identity_invalid")
         _validate_history(state["history"])
+        if state["version"] == 3 and "corrections" in state["history"]:
+            raise ValueError("history_correction_requires_v4")
+        if state["version"] == 4:
+            validate_index(state["history"]["corrections"])
+            if set(state["history"]["corrections"]) - set(
+                state["history"]["selections"]
+            ):
+                raise ValueError("history_correction_owner_missing")
         if state.get("legacy_v2") is not None:
             raise ValueError("history_v2_retired")
         _validate_operation(state["operation"])
@@ -253,7 +264,7 @@ def _validate_history_intent(state: dict[str, Any]) -> None:
 
 
 def status(state: dict[str, Any] | None) -> dict[str, Any]:
-    if state is None or state.get("version") != 3:
+    if state is None or state.get("version") not in _ROOT_VERSIONS:
         return {"status": "unselected", "root_revision": 0, "has_pending": False}
     operation = state["operation"]
     return {
@@ -360,11 +371,11 @@ def _stale_delta(sealed: dict[str, Any], revision: str | None) -> bool:
 
 def partition(manager: Any, identity: dict[str, Any]) -> WriterPartition:
     state = manager._state
-    if state is None or state.get("version") != 3:
+    if state is None or state.get("version") not in _ROOT_VERSIONS:
         raise HourlyImportError("history_partition_requires_v3")
     _identity_matches(state["identity"], identity)
     marker = manager._entry.data.get(MARKER)
-    if marker != {"version": 3, "token": state["token"]} and not (
+    if marker != {"version": state["version"], "token": state["token"]} and not (
         state["phase"] == "prepared" and marker == state.get("previous_marker")
     ):
         raise HourlyImportError("history_marker_mismatch")
@@ -504,7 +515,9 @@ class HistoryWriter:
             marker = self.manager._entry.data.get(MARKER)
             expected = {"version": state["version"], "token": state["token"]}
             prepared_marker = (
-                state.get("previous_marker") if state["version"] == 3 else None
+                state.get("previous_marker")
+                if state["version"] in _ROOT_VERSIONS
+                else None
             )
             if marker != expected and not (
                 state["phase"] == "prepared" and marker == prepared_marker
@@ -551,7 +564,7 @@ class HistoryWriter:
         state = await self.root(context)
         if (
             state is None
-            or state["version"] != 3
+            or state["version"] not in _ROOT_VERSIONS
             or state["phase"] != "hourly"
             or state.get("pending")
             or state["operation"]["status"] != "completed"
@@ -668,6 +681,13 @@ class HistoryWriter:
             "method_version": METHOD_VERSION,
         }
 
+    async def stage_correction(
+        self, content: bytes, expected: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Retain reviewed evidence without changing a root or Recorder."""
+        await self.guard(context)
+        return await Corrections(self).stage(content, expected, context)
+
     def request(
         self, request: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
@@ -693,6 +713,15 @@ class HistoryWriter:
             raise HourlyImportError("history_sources_invalid")
         for source in sources:
             require_digest(source)
+        corrections = request.get("correction_ids", [])
+        if (
+            not isinstance(corrections, list)
+            or len(corrections) > MAX_SOURCE_CHUNKS
+            or len(set(corrections)) != len(corrections)
+        ):
+            raise HourlyImportError("history_corrections_invalid")
+        for reference in corrections:
+            require_digest(reference)
         if (
             request["archive_policy"]
             not in {"reject", "before_first_provider", "provider_gaps"}
@@ -717,6 +746,7 @@ class HistoryWriter:
         return {
             "config_entry_id": self.manager._entry.entry_id,
             "source_ids": sorted(sources),
+            **({"correction_ids": sorted(corrections)} if corrections else {}),
             "quantity_ids": sorted(quantities),
             "start": first.isoformat(),
             "end": stop.isoformat(),
@@ -783,9 +813,36 @@ class HistoryWriter:
         provider_order: dict[str, Any] | None,
         provider_supersedes: dict[str, Any] | None,
     ) -> tuple[Any, dict[str, Any]]:
-        history = state["history"] if state and state["version"] == 3 else {}
+        history = (
+            state["history"] if state and state["version"] in _ROOT_VERSIONS else {}
+        )
+        correction_index, documents = await Corrections(self).resolve(
+            request, history, context
+        )
+        await Corrections(self).guard_controls(
+            request,
+            state,
+            correction_index,
+            provider_order,
+            provider_supersedes,
+            context,
+        )
+        source_request = deepcopy(request)
+        first, end = bounds(request["start"], request["end"])
+        dependency_starts, dependency_ends = [first], [end]
+        for wrapped in documents:
+            for index in wrapped["entry_indices"]:
+                entry = wrapped["document"]["entries"][index]
+                dependency_starts.append(utc(entry["dependency_start"]))
+                dependency_ends.append(utc(entry["dependency_end"]))
+        source_request["start"] = min(dependency_starts).isoformat()
+        source_request["end"] = max(dependency_ends).isoformat()
         sources, merged = await self.source_view(
-            request, history, context, provider_order, provider_supersedes
+            source_request,
+            {**history, "corrections": correction_index},
+            context,
+            provider_order,
+            provider_supersedes,
         )
         thermostats: dict[int, list[dict[str, Any]]] = {}
         sensors: dict[int, list[dict[str, Any]]] = {}
@@ -829,7 +886,22 @@ class HistoryWriter:
             },
             context=context,
         )
-        return {item.descriptor["quantity_id"]: item for item in represented}, merged
+        built = {item.descriptor["quantity_id"]: item for item in represented}
+        if documents:
+            built, quantity_resources = await self.cpu(
+                project, built, merged, sources, documents, context, context=context
+            )
+            merged["quantity_resources"] = quantity_resources
+        merged["corrections"] = correction_index
+        if (
+            correction_index
+            or "corrections" in history
+            or request.get("correction_ids")
+        ):
+            merged["source_revision"] = digest(
+                {"raw": merged["source_revision"], "corrections": correction_index}
+            )
+        return built, merged
 
     async def source_view(
         self,
@@ -884,13 +956,16 @@ class HistoryWriter:
             context=context,
         )
         # Sources being admitted and held conflicts are never retired here.
+        correction_sources = await Corrections(self).protected_sources(
+            history, sources, context
+        )
         redundancy = await self.cpu(
             source_redundancy,
             sources,
             provider_order=order,
             provider_supersedes=supersedes,
             window=(first, end),
-            protected=held | (requested - cataloged),
+            protected=held | (requested - cataloged) | correction_sources,
             context=context,
         )
         retired = set(redundancy["source_ids"])
@@ -1014,7 +1089,7 @@ class HistoryWriter:
         self, request: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
         state = await self.root(context)
-        if not state or state["version"] != 3:
+        if not state or state["version"] not in _ROOT_VERSIONS:
             raise HourlyImportError("history_source_baseline_unadopted")
         history = state["history"]
         if state["operation"]["status"] != "completed" or state.get("pending"):
@@ -1168,7 +1243,8 @@ class HistoryWriter:
             if (
                 start.strftime("%Y-%m") != month
                 or end - start > _HOUR
-                or interval["reason"] != "source_conflict"
+                or interval["reason"]
+                not in {"source_conflict", "source_timestamp_unplaced"}
             ):
                 raise HourlyImportError("history_source_hold_invalid")
             for source_id in interval["source_ids"]:
@@ -1191,15 +1267,16 @@ class HistoryWriter:
             hold = await self.hold(root["history"], key, month, context)
             intervals = {row["start"]: row for row in hold["intervals"]}
             for hour in batch["proof"]["hours"]:
-                if hour["status"] != "source_conflict" or not utc(
-                    batch["start"]
-                ) <= utc(hour["start"]) < utc(batch["end"]):
+                if hour["status"] not in {
+                    "source_conflict",
+                    "source_timestamp_unplaced",
+                } or not utc(batch["start"]) <= utc(hour["start"]) < utc(batch["end"]):
                     continue
                 prior = intervals.get(hour["start"], {})
                 intervals[hour["start"]] = {
                     "start": hour["start"],
                     "end": (utc(hour["start"]) + _HOUR).isoformat(),
-                    "reason": "source_conflict",
+                    "reason": hour["status"],
                     "source_ids": sorted(
                         set(source_ids) | set(prior.get("source_ids", ()))
                     ),
@@ -1234,7 +1311,7 @@ class HistoryWriter:
             self.manager._entry,
             data={
                 **self.manager._entry.data,
-                MARKER: {"version": 3, "token": after["token"]},
+                MARKER: {"version": after["version"], "token": after["token"]},
             },
         )
         self.manager._state, self.manager._loaded = root, True
@@ -1309,8 +1386,13 @@ class HistoryWriter:
                 for start, stop in blocked
             ):
                 reason = "source_conflict"
-            if reason != "source_conflict" and (
-                item.blocked_reason or item.rejected_timestamps
+            correction_id = resource.get("correction_ids", {}).get(
+                hour.start.isoformat()
+            )
+            if (
+                not correction_id
+                and reason != "source_conflict"
+                and (item.blocked_reason or item.rejected_timestamps)
             ):
                 reason = item.blocked_reason or "source_timestamp_unplaced"
             values = hour.values if reason == "ready" else None
@@ -1328,6 +1410,9 @@ class HistoryWriter:
                 )
                 lineage.update(slot.get("source_ids", ()))
                 confidence.update(slot.get("confidence", ()))
+            confidence.update(
+                ("reviewed_quantity_correction_v1",) if correction_id else ()
+            )
             proof_hours[stamp] = {
                 "start": stamp,
                 "status": reason,
@@ -1343,6 +1428,7 @@ class HistoryWriter:
                 "source_ids": sorted(lineage),
                 "confidence": sorted(confidence),
                 "row": native,
+                **({"correction_id": correction_id} if correction_id else {}),
             }
         # The proof binds each hour's own lineage, not the whole-catalog
         # revision, so an untouched month's proof stays byte-identical.
@@ -1398,7 +1484,7 @@ class HistoryWriter:
             state.get("pending")
             or state.get("phase") == "prepared"
             or (
-                state.get("version") == 3
+                state.get("version") in _ROOT_VERSIONS
                 and state["operation"]["status"] != "completed"
             )
         ):
@@ -1406,7 +1492,9 @@ class HistoryWriter:
         built, merged = await self.built(
             normalized, state, context, provider_order, provider_supersedes
         )
-        history = state["history"] if state and state["version"] == 3 else {}
+        history = (
+            state["history"] if state and state["version"] in _ROOT_VERSIONS else {}
+        )
         batches: list[dict[str, Any]] = []
         descriptors: list[dict[str, Any]] = []
         metadata: dict[str, Any] = {}
@@ -1424,7 +1512,9 @@ class HistoryWriter:
                 if sensor is not None
                 else f"runtime_thermostat:{item.descriptor['thermostat_id']}"
             )
-            resource = merged["resources"].get(resource_key, {})
+            resource = merged.get("quantity_resources", {}).get(
+                key, merged["resources"].get(resource_key, {})
+            )
             for start, stop in month_windows(first, end):
                 hold = await self.hold(history, key, start.strftime("%Y-%m"), context)
                 batch = await self.batch(
@@ -1485,6 +1575,13 @@ class HistoryWriter:
             "source_catalog_objects": merged["source_catalog_objects"],
             "first_provider": merged["first_provider"],
             "source_holds_digest": digest(history.get("source_holds", {})),
+            **(
+                {"corrections": merged["corrections"]}
+                if merged["corrections"]
+                or "corrections" in history
+                or normalized.get("correction_ids")
+                else {}
+            ),
             "descriptors": descriptors,
             "metadata": metadata,
             "legacy_reservations": sorted(
@@ -1591,7 +1688,7 @@ class HistoryWriter:
         state = await self.root(context)
         if (
             state
-            and state.get("version") == 3
+            and state.get("version") in _ROOT_VERSIONS
             and state["operation"]["operation_id"] == request["operation_id"]
         ):
             operation = state["operation"]
@@ -1631,7 +1728,7 @@ class HistoryWriter:
             raise HourlyImportError("history_root_changed_before_accept")
         root = (
             deepcopy(state)
-            if state and state.get("version") == 3
+            if state and state.get("version") in _ROOT_VERSIONS
             else {
                 "version": 3,
                 "entry_id": self.manager._entry.entry_id,
@@ -1649,6 +1746,10 @@ class HistoryWriter:
             }
         )
         root["phase"] = "prepared"
+        root["previous_marker"] = deepcopy(self.manager._entry.data.get(MARKER))
+        if "corrections" in manifest:
+            root["version"] = 4
+            root["history"]["corrections"] = manifest["corrections"]
         for descriptor in manifest["descriptors"]:
             key = descriptor["quantity_id"]
             prior = root["history"]["selections"].get(key, {})
@@ -1725,7 +1826,7 @@ class HistoryWriter:
         root = await self.root(context)
         if (
             root is None
-            or root["version"] != 3
+            or root["version"] not in _ROOT_VERSIONS
             or root["operation"]["status"] != "completed"
             or root.get("pending")
         ):
@@ -1910,7 +2011,7 @@ class HistoryWriter:
 
     async def finish_accept(self, context: dict[str, Any]) -> None:
         root = deepcopy(self.manager._state)
-        marker = {"version": 3, "token": root["token"]}
+        marker = {"version": root["version"], "token": root["token"]}
         current = self.manager._entry.data.get(MARKER)
         if current not in (root.get("previous_marker"), marker):
             raise HourlyImportError("history_marker_changed")
@@ -1948,7 +2049,7 @@ class HistoryWriter:
             root = self.manager._state
             if (
                 root
-                and root.get("version") == 3
+                and root.get("version") in _ROOT_VERSIONS
                 and root["operation"]["status"] != "completed"
             ):
                 after = deepcopy(root)
@@ -1965,7 +2066,7 @@ class HistoryWriter:
         await self.manager._load()
         await self.guard(context)
         root = self.manager._state
-        if not root or root.get("version") != 3:
+        if not root or root.get("version") not in _ROOT_VERSIONS:
             return status(root)
         _identity_matches(root["identity"], context["identity"])
         operation = root["operation"]
@@ -1985,7 +2086,7 @@ class HistoryWriter:
             if root["operation"]["status"] == "completed":
                 return status(root)
         if self.manager._entry.data.get(MARKER) != {
-            "version": 3,
+            "version": root["version"],
             "token": root["token"],
         }:
             raise HourlyImportError("history_marker_changed")
@@ -2076,7 +2177,9 @@ class HistoryWriter:
 
     def configuration(self, context: dict[str, Any]) -> dict[str, Any]:
         state = self.manager._state or {}
-        history = state.get("history", {}) if state.get("version") == 3 else {}
+        history = (
+            state.get("history", {}) if state.get("version") in _ROOT_VERSIONS else {}
+        )
         descriptors = {
             item["quantity_id"]: deepcopy(item)
             for item in context.get("descriptors", ())
@@ -2085,7 +2188,8 @@ class HistoryWriter:
             descriptors[key] = deepcopy(item["descriptor"])
         if (
             not state
-            and (self.manager._entry.data.get(MARKER) or {}).get("version") == 3
+            and (self.manager._entry.data.get(MARKER) or {}).get("version")
+            in _ROOT_VERSIONS
         ):
             descriptors = {}
         return {
@@ -2110,7 +2214,11 @@ class HistoryWriter:
         ):
             raise HourlyImportError("history_query_quantities_invalid")
         state = await self.root(context)
-        history = state.get("history", {}) if state and state["version"] == 3 else {}
+        history = (
+            state.get("history", {})
+            if state and state["version"] in _ROOT_VERSIONS
+            else {}
+        )
         selected = history.get("selections", {})
         descriptors = {
             item["quantity_id"]: deepcopy(item)
@@ -2178,7 +2286,7 @@ class HistoryWriter:
         self, state: dict[str, Any] | None, context: dict[str, Any]
     ) -> dict[str, list[list[str]]]:
         """Suppress replaced proof until each accepted batch commits its successor."""
-        if not state or state.get("version") != 3:
+        if not state or state.get("version") not in _ROOT_VERSIONS:
             return {}
         operation = state["operation"]
         if operation["cursor"] == operation["batch_count"]:

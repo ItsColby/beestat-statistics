@@ -30,7 +30,9 @@ from .hourly_history_contract import canonical_json
 
 _VERSION = 1
 _MINOR_VERSION = 1
-_OBJECT_KINDS = frozenset({"source", "manifest", "proof", "operation"})
+_OBJECT_KINDS = frozenset(
+    {"source", "manifest", "proof", "operation", "correction", "evidence"}
+)
 # Proof and operation objects are swept against the root's keep set. Sources and
 # manifests are deleted only by name, as integration deltas the root no longer
 # reaches or can admit; staged originals are never swept.

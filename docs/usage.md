@@ -344,6 +344,13 @@ observations remain visibly unqualified; missing observations are never zero.
 An active administrator uses `stage_hourly_source` to retain bounded native
 uploads, `plan_hourly_history` to inspect an exact read-only proposal, and
 `apply_hourly_history` to accept that proposal for the entry's background worker.
+For a separately reviewed quantity correction, `stage_hourly_correction` retains
+the sealed document and its original evidence without changing Recorder. Pass
+the returned `correction_id` in the plan's `correction_ids`, inspect replacements
+and explicit holds, then accept that exact plan. Unqualified or changed evidence
+keeps the affected hour held; it never becomes a zero observation. See the
+[correction contract](hourly-history-v3.md#stage-a-reviewed-quantity-correction) before
+preparing a document or recovery set.
 Admission preserves the selected quantity's writer reservation through failures.
 Contract 3 is the supported hourly floor; see
 [Qualified hourly history](hourly-history-v3.md) for the retired routes and the

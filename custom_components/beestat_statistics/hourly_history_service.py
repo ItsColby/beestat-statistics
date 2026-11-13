@@ -61,11 +61,24 @@ STAGE_HISTORY_SCHEMA = probatio.Schema(
     }
 )
 
+STAGE_CORRECTION_SCHEMA = probatio.Schema(
+    {
+        probatio.Required("config_entry_id"): cv.string,
+        probatio.Required("file_id"): probatio.All(
+            cv.string, probatio.Length(min=1, max=128)
+        ),
+        probatio.Required("sha256"): require_digest,
+    }
+)
+
 PLAN_HISTORY_SCHEMA = probatio.Schema(
     {
         probatio.Required("config_entry_id"): cv.string,
         probatio.Required("source_ids"): probatio.All(
             [require_digest], probatio.Length(min=1, max=MAX_SOURCE_CHUNKS), distinct
+        ),
+        probatio.Optional("correction_ids"): probatio.All(
+            [require_digest], probatio.Length(max=MAX_SOURCE_CHUNKS), distinct
         ),
         probatio.Required("quantity_ids"): _QUANTITIES,
         probatio.Required("start"): cv.datetime,
