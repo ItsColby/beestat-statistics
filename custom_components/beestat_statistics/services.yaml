@@ -159,6 +159,7 @@ plan_hourly_history:
           options:
             - reject
             - before_first_provider
+            - provider_gaps
     daily_policy:
       required: true
       selector:

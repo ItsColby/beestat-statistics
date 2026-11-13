@@ -339,8 +339,12 @@ detail_offset: 0
 detail_limit: 100
 ```
 
-`archive_policy` is `reject` or `before_first_provider`. The consumer and recovery
-bindings are explicit operator declarations retained in the plan, not proof
+`archive_policy` is `reject`, `before_first_provider`, or `provider_gaps`.
+The last admits qualified archive points wherever a provider point is absent,
+including gaps after the first provider point. Provider nulls and deletions are
+present points, not gaps; conflicting observations remain blocked. The accepted
+policy persists into routine refreshes and applies to all retained archive sources.
+The consumer and recovery bindings are explicit operator declarations retained in the plan, not proof
 that this service has validated another product or created a backup. Planning
 reads immutable sources, detached current configuration/journal and fenced
 bounded native rows. It performs no writes or reconciliation. Pending or

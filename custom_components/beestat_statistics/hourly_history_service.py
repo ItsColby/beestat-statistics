@@ -71,7 +71,7 @@ PLAN_HISTORY_SCHEMA = probatio.Schema(
         probatio.Required("start"): cv.datetime,
         probatio.Required("end"): cv.datetime,
         probatio.Required("archive_policy"): probatio.In(
-            ("reject", "before_first_provider")
+            ("reject", "before_first_provider", "provider_gaps")
         ),
         probatio.Required("daily_policy"): DAILY_POLICY,
         probatio.Required("operation_id"): _SHORT_TEXT,

@@ -694,7 +694,8 @@ class HistoryWriter:
         for source in sources:
             require_digest(source)
         if (
-            request["archive_policy"] not in {"reject", "before_first_provider"}
+            request["archive_policy"]
+            not in {"reject", "before_first_provider", "provider_gaps"}
             or request["daily_policy"] != DAILY_POLICY
         ):
             raise HourlyImportError("history_policy_invalid")
@@ -868,7 +869,11 @@ class HistoryWriter:
             if provider_supersedes is not None
             else history.get("provider_supersedes", {})
         )
-        archive_policy = request["archive_policy"] == "before_first_provider"
+        archive_policy = (
+            "provider_gaps"
+            if request["archive_policy"] == "provider_gaps"
+            else request["archive_policy"] == "before_first_provider"
+        )
         merged = await self.cpu(
             merge_source_bundle,
             sources,

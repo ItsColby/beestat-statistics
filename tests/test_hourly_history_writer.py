@@ -1134,6 +1134,35 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["status"], "blocked")
         self.assertEqual(self.store.calls, 0)
 
+    async def test_gap_policy_survives_replay_and_routine_refresh(self):
+        request = await self.request(archive_policy="provider_gaps")
+        _, apply = await self.accept(request)
+        self.assertEqual(
+            (await self.writer.async_accept_history(apply, context=self.context))[
+                "status"
+            ],
+            "accepted",
+        )
+        await self.complete()
+        old_sources = set(self.store.value["history"]["source_ids"])
+        empty = await self.stage(acquisition="empty-gap-policy", empty=True)
+        await self.writer.async_refresh_history(
+            {
+                "source_ids": [empty],
+                "start": START.isoformat(),
+                "end": (START + 2 * HOUR).isoformat(),
+            },
+            context=self.context,
+        )
+        await self.complete()
+        self.assertTrue(old_sources <= set(self.store.value["history"]["source_ids"]))
+        operation = json.loads(
+            await self.store.async_read_object(
+                "operation", self.store.value["operation"]["object"]
+            )
+        )
+        self.assertEqual(operation["request"]["archive_policy"], "provider_gaps")
+
     async def test_empty_routine_window_preserves_admitted_values_and_source_ids(self):
         await self.accept()
         await self.complete()
