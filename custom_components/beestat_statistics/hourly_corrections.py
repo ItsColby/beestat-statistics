@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .hourly_history_contract import (
     canonical_json,
@@ -205,11 +206,11 @@ def _validate_entry(
         or any(_evidence(item) not in refs for item in evidence)
     ):
         raise ValueError("history_correction_evidence_invalid")
-    _validate_interpretation(entry["interpretation"], timezone)
+    _validate_interpretation(entry["interpretation"], timezone, start)
     _validate_points_shape(entry, descriptor, start)
 
 
-def _validate_interpretation(value: Any, timezone: Any) -> None:
+def _validate_interpretation(value: Any, timezone: Any, start: datetime) -> None:
     if not isinstance(value, dict) or set(value) != {
         "timezone",
         "fold",
@@ -225,6 +226,13 @@ def _validate_interpretation(value: Any, timezone: Any) -> None:
         or not isinstance(conversion, str)
         or not 1 <= len(conversion) <= 1024
     ):
+        raise ValueError("history_correction_interpretation_invalid")
+    try:
+        local = start.astimezone(ZoneInfo(timezone))
+    except (ZoneInfoNotFoundError, ValueError) as err:
+        raise ValueError("history_correction_interpretation_invalid") from err
+    ambiguous = local.replace(fold=0).utcoffset() != local.replace(fold=1).utcoffset()
+    if (ambiguous and fold != local.fold) or (fold is not None and fold != local.fold):
         raise ValueError("history_correction_interpretation_invalid")
 
 

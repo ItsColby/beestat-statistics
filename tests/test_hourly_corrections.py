@@ -1,6 +1,7 @@
 """Reviewed corrections retain source evidence and fail closed on changes."""
 
 from copy import deepcopy
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -201,4 +202,35 @@ def test_interpretation_and_canonical_start_are_required(scenario, change):
     else:
         entry["start"] = entry["start"].replace("+00:00", "Z")
     with pytest.raises(ValueError):
+        validate_document(doc, binding, {qid: item.descriptor})
+
+
+@pytest.mark.parametrize("hour,expected", [(5, 0), (6, 1)])
+def test_ambiguous_hour_requires_matching_fold(scenario, hour, expected):
+    _, item, qid, _, _, doc, binding, _ = scenario
+    entry = doc["entries"][0]
+    start = datetime.fromisoformat(f"2026-11-01T{hour:02}:00:00+00:00")
+    entry.update(
+        start=start.isoformat(),
+        dependency_start=start.isoformat(),
+        dependency_end=(start + timedelta(hours=1)).isoformat(),
+        action="hold",
+        points=[],
+        reason="ambiguous",
+    )
+    binding["timezone"] = "America/New_York"
+    entry["interpretation"]["timezone"] = binding["timezone"]
+    for fold in (None, 1 - expected):
+        entry["interpretation"]["fold"] = fold
+        with pytest.raises(ValueError, match="interpretation_invalid"):
+            validate_document(doc, binding, {qid: item.descriptor})
+    entry["interpretation"]["fold"] = expected
+    validate_document(doc, binding, {qid: item.descriptor})
+
+
+def test_unambiguous_timezone_allows_null_but_not_wrong_fold(scenario):
+    _, item, qid, _, _, doc, binding, _ = scenario
+    validate_document(doc, binding, {qid: item.descriptor})
+    doc["entries"][0]["interpretation"]["fold"] = 1
+    with pytest.raises(ValueError, match="interpretation_invalid"):
         validate_document(doc, binding, {qid: item.descriptor})
