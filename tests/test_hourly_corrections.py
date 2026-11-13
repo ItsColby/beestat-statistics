@@ -16,12 +16,12 @@ from custom_components.beestat_statistics.hourly_history_contract import digest
 from custom_components.beestat_statistics.hourly_history_values import (
     build_history_series,
 )
-from tests.test_hourly_history_values import HourlyHistoryValuesTest
+from tests import test_hourly_history_values as fixture
 
 
 @pytest.fixture
 def scenario():
-    helper = HourlyHistoryValuesTest()
+    helper = fixture.HourlyHistoryValuesTest()
     helper.setUp()
     series, identity = helper.build()
     items = build_history_series(series, identity)
