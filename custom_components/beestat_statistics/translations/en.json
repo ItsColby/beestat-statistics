@@ -310,7 +310,7 @@
       "message": "An active Home Assistant administrator must call this action."
     },
     "raw_points_invalid": {
-      "message": "Choose one configured thermostat or room sensor and an explicit time window of at most 31 elapsed days. Use timestamps with UTC offsets and no fractional seconds."
+      "message": "Choose one configured thermostat or room sensor and an explicit time window of at most 30 elapsed days. Use timestamps with UTC offsets and no fractional seconds."
     },
     "raw_points_failed": {
       "message": "The raw point read did not finish. Check the integration status and retry a smaller window if necessary."
@@ -372,7 +372,7 @@
         },
         "end": {
           "name": "End timestamp",
-          "description": "Inclusive timestamp after start, at most 31 elapsed days later, with an explicit UTC offset and no fractional seconds."
+          "description": "Inclusive timestamp after start, at most 30 elapsed days later, with an explicit UTC offset and no fractional seconds."
         }
       }
     },

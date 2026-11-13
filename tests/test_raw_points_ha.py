@@ -163,7 +163,12 @@ async def test_native_admin_context_and_invalid_identity_make_no_transport_call(
     for changes in (
         {"resource_id": 2},
         {"resource": "runtime_sensor", "resource_id": 99},
-        {"start": (NOW - timedelta(days=32)).isoformat()},
+        {"start": (NOW - timedelta(days=31)).isoformat()},
+        {
+            "resource": "runtime_sensor",
+            "resource_id": 10,
+            "start": (NOW - timedelta(days=31)).isoformat(),
+        },
         {"start": NOW.replace(tzinfo=None).isoformat()},
         {"end": NOW.replace(microsecond=1).isoformat()},
     ):
@@ -172,6 +177,27 @@ async def test_native_admin_context_and_invalid_identity_make_no_transport_call(
     assert session.call_count == 0
     for spy in forbidden:
         spy.assert_not_called()
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize(
+    "resource,resource_id", [("runtime_thermostat", 1), ("runtime_sensor", 10)]
+)
+async def test_native_action_accepts_30_day_window(
+    hass, hass_admin_user, freezer, monkeypatch, resource, resource_id
+):
+    entry, _, _, session, _ = await _runtime(hass, freezer, monkeypatch, [{"data": []}])
+    result = await _call(
+        hass,
+        entry,
+        Context(user_id=hass_admin_user.id),
+        resource=resource,
+        resource_id=resource_id,
+        start=(NOW - timedelta(days=30)).isoformat(),
+    )
+    assert result["status"] == "success"
+    assert result["limits"]["max_days"] == 30
+    assert session.call_count == 1
 
 
 @pytest.mark.usefixtures("unload_entries")

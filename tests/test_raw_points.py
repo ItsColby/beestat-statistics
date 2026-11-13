@@ -85,12 +85,21 @@ class RawPointsTest(unittest.IsolatedAsyncioTestCase):
             ("runtime_thermostat", 0, START, END),
             ("runtime_thermostat", 1, START.replace(tzinfo=None), END),
             ("runtime_thermostat", 1, START, START),
-            ("runtime_thermostat", 1, START, START + timedelta(days=31, seconds=1)),
+            ("runtime_thermostat", 1, START, START + timedelta(days=30, seconds=1)),
+            ("runtime_thermostat", 1, START, START + timedelta(days=31)),
             ("runtime_thermostat", 1, START, END.replace(microsecond=1)),
         )
         for args in invalid:
             with self.subTest(args=args), self.assertRaises(ValueError):
                 self.raw.parse_raw_point_request(*args)
+        for resource, resource_id in (
+            ("runtime_thermostat", 1),
+            ("runtime_sensor", 10),
+        ):
+            request = self.raw.parse_raw_point_request(
+                resource, resource_id, START, START + timedelta(days=30)
+            )
+            self.assertEqual(request.end - request.start, timedelta(days=30))
         request = self.raw.parse_raw_point_request("runtime_sensor", 10, START, END)
         precise_metadata_time = START.replace(microsecond=123456)
         self.assertEqual(

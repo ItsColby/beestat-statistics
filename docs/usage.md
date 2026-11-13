@@ -376,7 +376,7 @@ response_variable: raw_points
 Use `runtime_sensor` with a configured sensor ID for room-sensor points. Both
 timestamps require an explicit UTC offset and whole seconds. The provider's
 `between` bounds are inclusive, the end must follow the start, and the window
-cannot exceed 31 elapsed days. Adjacent requests can therefore repeat their shared
+cannot exceed 30 elapsed days. Adjacent requests can therefore repeat their shared
 boundary point; retain that provenance when reconciling responses.
 
 Check `status` before consuming `data`. A success retains the source's order,
