@@ -242,15 +242,16 @@ def assess_change_day(
 
 def _daily_runtime(
     row: Mapping[str, Any] | None,
-    duration: float,
     expected: int,
 ) -> tuple[float | None, float | None]:
     if row is None:
         return None, float(expected * _STEP)
     count = finite_nonnegative(row.get("count"), expected)
-    if count is not None and not count.is_integer():
-        count = None
-    fan = finite_nonnegative(row.get("sum_fan"), duration)
+    if "count" in row and (count is None or not count.is_integer()):
+        # A summary ahead of this horizon cannot establish which runtime
+        # occurred inside it. Invalid counts are not absent coverage metadata.
+        return None, None
+    fan = finite_nonnegative(row.get("sum_fan"), expected * _STEP)
     if fan is None or (count is not None and fan > count * _STEP):
         return None, None
     return fan, (expected - count) * _STEP if count is not None else None
@@ -271,8 +272,12 @@ def _daily_observations(
         elapsed = max(0.0, (min(end, horizon) - start).total_seconds())
         expected = floor(elapsed / _STEP)
         if expected:
-            fan, gap = _daily_runtime(
-                days.get(day), (end - start).total_seconds(), expected
+            # A daily aggregate has no timestamps proving which samples fall
+            # before a partial-day horizon, even when its count fits the window.
+            fan, gap = (
+                _daily_runtime(days.get(day), expected)
+                if horizon >= end
+                else (None, float(expected * _STEP))
             )
             yield day, fan, gap
         day += timedelta(days=1)

@@ -215,6 +215,68 @@ class FilterRuntimeTest(unittest.TestCase):
         self.assertIsNone(observation.threshold_reached(1))
         self.assertFalse(observation.threshold_reached(2))
 
+    def test_daily_summary_cannot_prove_runtime_beyond_source_horizon(self) -> None:
+        day = date(2026, 7, 6)
+        noon = datetime(2026, 7, 6, 12, tzinfo=UTC)
+        for row in (
+            {"count": 1, "sum_fan": 300},
+            {"count": 288, "sum_fan": 86400},
+            {"count": 288, "sum_fan": 3600},
+            {"sum_fan": 86400},
+            {"count": -1, "sum_fan": 3600},
+            {"count": 1.5, "sum_fan": 300},
+        ):
+            with self.subTest(row=row):
+                rows = [{"date": day.isoformat(), **row}]
+                observed = runtime.build_filter_runtime_observation(
+                    rows,
+                    changed_date=day - timedelta(days=1),
+                    changed_at=None,
+                    change_day=None,
+                    source_data_end=noon - timedelta(minutes=5),
+                    evaluated_at=noon,
+                    local_tz=UTC_ZONE,
+                )
+                self.assertIsNone(observed.observed_seconds)
+                self.assertIsNone(observed.threshold_reached(1 / 12))
+                self.assertIsNone(
+                    runtime.observed_threshold_date(
+                        rows,
+                        changed_date=day - timedelta(days=1),
+                        change_day=None,
+                        lifetime_hours=1 / 12,
+                        local_tz=UTC_ZONE,
+                        source_data_end=noon - timedelta(minutes=5),
+                        evaluated_at=noon,
+                    )
+                )
+
+        # The same complete summary becomes usable once the horizon covers it.
+        end = noon + timedelta(hours=12)
+        recovered = runtime.build_filter_runtime_observation(
+            [{"date": day.isoformat(), "count": 288, "sum_fan": 86400}],
+            changed_date=day - timedelta(days=1),
+            changed_at=None,
+            change_day=None,
+            source_data_end=end - timedelta(minutes=5),
+            evaluated_at=end,
+            local_tz=UTC_ZONE,
+        )
+        self.assertEqual(recovered.observed_seconds, 86400)
+        self.assertTrue(recovered.threshold_reached(24))
+        for count in (-1, 1.5, 289, None):
+            with self.subTest(invalid_complete_day_count=count):
+                observed = runtime.build_filter_runtime_observation(
+                    [{"date": day.isoformat(), "count": count, "sum_fan": 300}],
+                    changed_date=day - timedelta(days=1),
+                    changed_at=None,
+                    change_day=None,
+                    source_data_end=end - timedelta(minutes=5),
+                    evaluated_at=end,
+                    local_tz=UTC_ZONE,
+                )
+                self.assertIsNone(observed.observed_seconds)
+
     def test_source_uncertainty_excludes_elapsed_tail_but_retains_gap_corrections(
         self,
     ) -> None:

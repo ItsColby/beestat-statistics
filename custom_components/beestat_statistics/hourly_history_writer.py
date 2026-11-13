@@ -1769,6 +1769,7 @@ class HistoryWriter:
         manifest, batches, _ = await self.plan(
             normalized, context, order, supersedes, changed_only=True
         )
+        await self.validate_native_rows(root, batches, context)
         if any(batch["dispositions"].get("source_conflict") for batch in batches):
             await self.save_holds(root, batches, request["source_ids"], context)
             return {
@@ -1852,7 +1853,7 @@ class HistoryWriter:
                 "error": "source_conflict",
                 "has_pending": False,
             }
-        if not await self.new_ready_hours(root, batches, context):
+        if not await self.validate_native_rows(root, batches, context):
             return {"status": "unchanged", "changed_rows": 0}
         return await self.accept(
             {**normalized, "plan_digest": digest(manifest)},
@@ -1860,22 +1861,32 @@ class HistoryWriter:
             changed_only=True,
         )
 
-    async def new_ready_hours(
+    async def validate_native_rows(
         self,
         root: dict[str, Any],
         batches: list[dict[str, Any]],
         context: dict[str, Any],
     ) -> bool:
+        """Validate routine native ownership and report newly closed hours."""
+        newly_ready = False
         for batch in batches:
             selection = root["history"]["selections"][batch["quantity_id"]]
             old = await self.proof(selection, batch["month"], context)
+            first, end = bounds(batch["start"], batch["end"])
+            native = {row["start"]: row for row in batch["before"]}
+            if any(
+                hour.get("row") != native.get(hour["start"])
+                for hour in old["hours"]
+                if first <= utc(hour["start"]) < end
+            ):
+                raise HourlyImportError("history_routine_native_row_changed")
             statuses = {hour["start"]: hour["status"] for hour in old["hours"]}
             if any(
                 hour["status"] == "ready" and statuses.get(hour["start"]) != "ready"
                 for hour in batch["proof"]["hours"]
             ):
-                return True
-        return False
+                newly_ready = True
+        return newly_ready
 
     def validate_deltas(
         self,

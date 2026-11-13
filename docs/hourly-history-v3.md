@@ -409,7 +409,10 @@ source revision. A changed month's batch covers only the span from its first to
 its last touched hour (changed proof hour, changed row, held or conflicted
 hour); its proof still covers the whole month. Because hours are independent, a
 past-hour correction re-proves only that hour's month. A pass with no new
-observation and no newly closed hour writes nothing. A changed source that
+observation and no newly closed hour writes nothing. If a routine pass finds a
+native row changed or missing relative to its committed proof, it reports
+unverified history and preserves that external edit; reconciliation requires an
+explicit reviewed plan. A changed source that
 alters no proof or row is admitted without a native batch. Proofs written by
 earlier releases also carry the whole-window revision; readers ignore it, and
 the first accepted routine pass after an upgrade re-proves each window month
