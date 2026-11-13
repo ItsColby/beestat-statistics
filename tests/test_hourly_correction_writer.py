@@ -13,6 +13,7 @@ import pytest
 from custom_components.beestat_statistics import hourly_corrections as correction
 from custom_components.beestat_statistics import hourly_history_writer as history
 from custom_components.beestat_statistics.hourly_history_contract import digest
+from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import_core import HourlyImportError
 from tests import test_hourly_history_writer as fixture
 
@@ -29,10 +30,14 @@ async def adopted():
         await helper.asyncTearDown()
 
 
-async def prepare(helper, *, actions=("replace", "hold"), predecessor=None):
+async def prepare(
+    helper, *, actions=("replace", "hold"), predecessor=None, source_ids=None
+):
     request = await helper.request(
         expected_revision=helper.store.value["revision"], operation_id="reviewed-repair"
     )
+    if source_ids is not None:
+        request["source_ids"] = source_ids
     writer = helper.writer._history_writer()
     sources, merged = await writer.source_view(
         request, helper.store.value["history"], helper.context
@@ -67,7 +72,9 @@ async def prepare(helper, *, actions=("replace", "hold"), predecessor=None):
                 ]
                 if action == "replace"
                 else [],
-                "predecessor": predecessor,
+                "predecessor": predecessor[number]
+                if isinstance(predecessor, tuple)
+                else predecessor,
                 "reason": "UTC occurrence is unqualified" if action == "hold" else None,
                 "interpretation": {
                     "timezone": helper.context["timezone"],
@@ -317,3 +324,51 @@ async def test_first_activation_protects_dependencies_across_restart(
     )
     assert not batches
     assert manifest["corrections"] == helper.store.value["history"]["corrections"]
+
+
+async def test_routine_conflict_and_stale_correction_fence_survives_restart(adopted):
+    helper = adopted
+    request, receipt, _ = await prepare(helper, actions=("replace",))
+    await apply(helper, request)
+    await helper.complete()
+    incoming = await helper.stage(fan=300, acquisition="unordered-conflict")
+    window = {"start": request["start"], "end": request["end"]}
+    before = deepcopy(helper.recorder.rows)
+    result = await helper.writer.async_refresh_history(
+        {**window, "source_ids": [incoming]}, context=helper.context
+    )
+    assert result["error"] == "source_conflict"
+    assert helper.recorder.rows == before
+    assert not result["has_pending"]
+
+    helper.writer = helper.fresh()
+    await helper.writer._load()
+    query = {**window, "quantity_ids": [fixture.KEY], "contract_version": 3}
+    material = await helper.writer.async_history_material(query, context=helper.context)
+    holds = material["source_holds"][fixture.KEY]
+    assert [(hold["start"], hold["reason"]) for hold in holds] == [
+        (fixture.START.isoformat(), "source_timestamp_unplaced"),
+        ((fixture.START + fixture.HOUR).isoformat(), "source_conflict"),
+    ]
+    buckets = history_response(query, material, helper.context)["series"][0]["buckets"]
+    assert [bucket["value"] for bucket in buckets] == [None, None]
+    assert [bucket["failure_reason"] for bucket in buckets] == [
+        "source_timestamp_unplaced",
+        "source_conflict",
+    ]
+
+    reviewed, _, _ = await prepare(
+        helper,
+        actions=("replace", "hold"),
+        predecessor=(receipt["correction_id"], None),
+        source_ids=[incoming],
+    )
+    reviewed["operation_id"] = "reviewed-recovery"
+    await apply(helper, reviewed)
+    await helper.complete()
+    helper.writer = helper.fresh()
+    material = await helper.writer.async_history_material(query, context=helper.context)
+    assert not material["source_holds"][fixture.KEY]
+    buckets = history_response(query, material, helper.context)["series"][0]["buckets"]
+    assert [bucket["value"] for bucket in buckets] == [0.25, None]
+    assert buckets[1]["failure_reason"] == "source_timestamp_unplaced"
