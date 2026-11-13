@@ -12,7 +12,12 @@ from copy import deepcopy
 from hashlib import sha256
 from typing import Any, cast
 
-from .hourly_corrections import validate_document, validate_points
+from .hourly_corrections import (
+    raw_witness,
+    resolution_witness,
+    validate_document,
+    validate_points,
+)
 from .hourly_history_contract import (
     MAX_SOURCE_BYTES,
     bounds,
@@ -258,7 +263,7 @@ class Corrections:
         provider_supersedes: Any,
         context: dict[str, Any],
     ) -> None:
-        """Resolution policy changes require a sealed batch for every correction."""
+        """Fence omitted corrections only when their resolved evidence changes."""
         if not state or not index:
             return
         history = state["history"]
@@ -279,12 +284,57 @@ class Corrections:
         if not changed:
             return
         first, end = bounds(request["start"], request["end"])
-        if any(
-            key not in request["quantity_ids"] or not first <= utc(stamp) < end
-            for key, hours in index.items()
-            for stamp in hours
-        ):
-            raise HourlyImportError("history_correction_replan_required")
+        documents: dict[str, dict[str, Any]] = {}
+        checked: set[tuple[Any, ...]] = set()
+        for key, hours in index.items():
+            for stamp, reference in hours.items():
+                if key in request["quantity_ids"] and first <= utc(stamp) < end:
+                    continue
+                if request["archive_policy"] != prior["request"]["archive_policy"]:
+                    raise HourlyImportError("history_correction_replan_required")
+                object_id = reference["object"]
+                if object_id not in documents:
+                    documents[object_id] = await self.document(object_id, context)
+                entry = documents[object_id]["entries"][reference["entry"]]
+                descriptor = entry["descriptor"]
+                dependency_key = (
+                    descriptor["thermostat_id"],
+                    descriptor["sensor_id"],
+                    entry["dependency_start"],
+                    entry["dependency_end"],
+                )
+                if dependency_key in checked:
+                    continue
+                dependency = {
+                    "start": entry["dependency_start"],
+                    "end": entry["dependency_end"],
+                    "source_ids": [],
+                    "archive_policy": prior["request"]["archive_policy"],
+                }
+                before_sources, before = await self.writer.source_view(
+                    dependency, history, context
+                )
+                after_sources, after = await self.writer.source_view(
+                    dependency, history, context, provider_order, provider_supersedes
+                )
+                args = (descriptor, dependency["start"], dependency["end"])
+                old = await self.writer.cpu(
+                    resolution_witness, before, before_sources, *args, context=context
+                )
+                new = await self.writer.cpu(
+                    resolution_witness, after, after_sources, *args, context=context
+                )
+                if old != new:
+                    raise HourlyImportError("history_correction_replan_required")
+                old_raw = await self.writer.cpu(
+                    raw_witness, before, *args, context=context
+                )
+                new_raw = await self.writer.cpu(
+                    raw_witness, after, *args, context=context
+                )
+                if old_raw != new_raw:
+                    raise HourlyImportError("history_correction_replan_required")
+                checked.add(dependency_key)
 
     async def protected_sources(
         self,
