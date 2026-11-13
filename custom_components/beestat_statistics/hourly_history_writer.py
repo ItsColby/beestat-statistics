@@ -645,7 +645,6 @@ class HistoryWriter:
         for source_id in reachable:
             sealed = await self.read_object("manifest", source_id, context)
             kept.add(sealed.get("sha256", ""))
-        kept.update(await Corrections(self).originals(history, context))
         retired: list[tuple[str, str]] = []
         for source_id, original in candidates:
             if original not in kept:

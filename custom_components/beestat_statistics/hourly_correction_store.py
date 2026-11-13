@@ -84,7 +84,7 @@ class Corrections:
         )
         for original in document["originals"]:
             raw = await self.writer.manager._store.async_read_object(
-                "source", original["sha256"]
+                "evidence", original["sha256"]
             )
             await self.writer.guard(context)
             if sha256(raw).hexdigest() != original["sha256"]:
@@ -128,10 +128,12 @@ class Corrections:
         if set(originals) != {item["sha256"] for item in document["originals"]}:
             raise ValueError("history_correction_original_missing")
         for reference, raw in originals.items():
-            actual = await self.writer.manager._store.async_write_object("source", raw)
+            actual = await self.writer.manager._store.async_write_object(
+                "evidence", raw
+            )
             await self.writer.guard(context)
             stored = await self.writer.manager._store.async_read_object(
-                "source", reference
+                "evidence", reference
             )
             await self.writer.guard(context)
             if actual != reference or stored != raw:
@@ -283,20 +285,6 @@ class Corrections:
             for stamp in hours
         ):
             raise HourlyImportError("history_correction_replan_required")
-
-    async def originals(
-        self, history: dict[str, Any], context: dict[str, Any]
-    ) -> set[str]:
-        originals: set[str] = set()
-        references = {
-            item["object"]
-            for hours in history.get("corrections", {}).values()
-            for item in hours.values()
-        }
-        for reference in references:
-            document = await self.document(reference, context)
-            originals.update(item["sha256"] for item in document["originals"])
-        return originals
 
     async def protected_sources(
         self,

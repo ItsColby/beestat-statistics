@@ -71,7 +71,7 @@ async def prepare(helper, *, actions=("replace", "hold"), predecessor=None):
                 "reason": "UTC occurrence is unqualified" if action == "hold" else None,
                 "interpretation": {
                     "timezone": helper.context["timezone"],
-                    "fold": number,
+                    "fold": None,
                     "unit_conversion": "Runtime seconds per five-minute interval; native mean percent",
                 },
             }

@@ -328,7 +328,13 @@ The document has exactly `format: reviewed_quantity_correction_v1`, `binding`
 `qualification` (a list of `sha256` and `locator` pairs), `points` (twelve
 timestamped row objects for replacement, otherwise empty), and `predecessor`
 (null or a digest). `reason` is a required string for a hold and null otherwise.
-Staging retains immutable originals and the document; it
+Each entry also requires `interpretation`: `timezone` must match the binding,
+`fold` identifies the actual repeated local occurrence (0 for the first, 1 for
+the second; null only when the local hour is unambiguous), and `unit_conversion`
+describes how the evidence's units become the normalized point fields. The UTC
+`start` must agree with that timezone and fold. The ordinary sample builder
+validates the twelve replacement points; aggregates are never supplied directly.
+Staging retains immutable originals in a separate evidence namespace and the document; it
 does not change the active root. Explicit holds remain visible in coverage.
 Raw delta evidence remains unchanged.
 
