@@ -572,7 +572,7 @@
         },
         "archive_policy": {
           "name": "Archive admission policy",
-          "description": "Reject archives, or explicitly qualify archive-only points before the first provider point. Conflicting observations remain blocked."
+          "description": "Reject archives, qualify archive-only points before the first provider point, or qualify them wherever a provider point is absent. Conflicting observations remain blocked."
         },
         "daily_policy": {
           "name": "Daily history policy",

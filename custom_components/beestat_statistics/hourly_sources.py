@@ -922,7 +922,7 @@ def _ordered_points(sources: list[dict[str, Any]]) -> dict[str, Any]:
 def _resolve_slot(
     candidates: list[dict[str, Any]],
     *,
-    archive_policy: bool,
+    archive_policy: bool | str,
     first_provider: datetime | None,
     stamp: datetime,
     provider_predecessors: Mapping[str, set[str]],
@@ -959,7 +959,9 @@ def _resolve_slot(
                 }
             ),
         }, False
-    if not archive_policy or first_provider is None or stamp >= first_provider:
+    if archive_policy is False or (
+        archive_policy is True and (first_provider is None or stamp >= first_provider)
+    ):
         return None, False
     if len({_observation(item["row"]) for item in archives}) != 1:
         return None, True
@@ -994,7 +996,7 @@ def _provider_winners(
 def merge_source_bundle(
     sources: Sequence[dict[str, Any]],
     *,
-    archive_policy: bool = False,
+    archive_policy: bool | str = False,
     provider_order: Mapping[str, Sequence[str]] | None = None,
     provider_supersedes: Mapping[str, Mapping[str, Sequence[str]]] | None = None,
     first_provider: Mapping[str, str | datetime] | None = None,
@@ -1005,6 +1007,8 @@ def merge_source_bundle(
     metadata. The planner must apply it before producing verified hour rows.
     Empty provider acquisitions contribute evidence, not deletion tombstones.
     """
+    if type(archive_policy) is not bool and archive_policy != "provider_gaps":
+        raise ValueError("history_source_archive_policy_invalid")
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for source in sources:
         groups[_acquisition_key(source["manifest"])].append(source)

@@ -9,7 +9,9 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from unittest.mock import patch
 
+from custom_components.beestat_statistics import config_model
 from custom_components.beestat_statistics import hourly_sources as sources
+from custom_components.beestat_statistics import hourly_statistics as hourly
 
 
 def identity():
@@ -387,6 +389,107 @@ class HourlySourcesTest(unittest.IsolatedAsyncioTestCase):
             result["slots"][row()["timestamp"]]["confidence"], ["archive_qualified"]
         )
         self.assertEqual(alone["resources"]["runtime_sensor:10"]["rows"], [])
+
+    async def test_provider_gaps_admits_only_absent_slots_and_keeps_lineage(self):
+        provider = await self.stage([row(0), row(10), row(20, deleted=True)])
+        archive = await self.stage(
+            [row(5), row(15), row(20)],
+            manifest(source_kind="archive", acquisition_id="cache"),
+        )
+        legacy = await self.merged([provider, archive], archive=True)
+        gaps = await self.merged([provider, archive], archive="provider_gaps")
+        result = gaps["resources"]["runtime_sensor:10"]
+        self.assertEqual(
+            result["rows"], [row(0), row(5), row(10), row(15), row(20, deleted=True)]
+        )
+        self.assertEqual(
+            result["slots"][row(15)["timestamp"]]["source_ids"], [archive["source_id"]]
+        )
+        self.assertEqual(
+            result["slots"][row(15)["timestamp"]]["confidence"], ["archive_qualified"]
+        )
+        self.assertEqual(result["conflict_hours"], [])
+        self.assertNotEqual(gaps["source_revision"], legacy["source_revision"])
+        self.assertEqual(
+            gaps, await self.merged([provider, archive], archive="provider_gaps")
+        )
+        self.assertEqual(len(legacy["resources"]["runtime_sensor:10"]["rows"]), 3)
+
+    async def test_provider_gaps_quarantines_null_provider_archive_conflict(self):
+        provider = await self.stage([row(0, temperature=None)])
+        archive = await self.stage(
+            [row(0)], manifest(source_kind="archive", acquisition_id="cache")
+        )
+        merged = await self.merged([provider, archive], archive="provider_gaps")
+        result = merged["resources"]["runtime_sensor:10"]
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(result["conflict_hours"], [row()["timestamp"]])
+
+    async def test_provider_gaps_quarantines_disagreeing_archives(self):
+        archive = await self.stage(
+            [row(5, temperature=70), row(5, temperature=71)],
+            manifest(source_kind="archive", acquisition_id="cache"),
+        )
+        merged = await self.merged([archive], archive="provider_gaps")
+        result = merged["resources"]["runtime_sensor:10"]
+        self.assertEqual(result["conflict_hours"], [row()["timestamp"]])
+
+    async def test_provider_gaps_preserves_unopposed_null_for_builder(self):
+        provider = await self.stage(
+            [
+                row(index * 5, temperature=None if index == 0 else 72)
+                for index in range(12)
+            ]
+        )
+        archive = await self.stage(
+            [row(5)], manifest(source_kind="archive", acquisition_id="cache")
+        )
+        merged = await self.merged([provider, archive], archive="provider_gaps")
+        result = merged["resources"]["runtime_sensor:10"]
+        self.assertEqual(result["rows"][0], row(0, temperature=None))
+        self.assertEqual(result["conflict_hours"], [])
+        start = datetime(2026, 9, 1, tzinfo=UTC)
+        end = start + timedelta(hours=1)
+        config = config_model.BeestatConfig(
+            thermostats=(config_model.ConfiguredThermostat(1, "zone", "Zone"),),
+            sensors=(
+                config_model.ConfiguredSensor(
+                    sensor_id=10,
+                    slug="room",
+                    name="Room",
+                    thermostat_id=1,
+                    thermostat_slug="zone",
+                    include_temperature=True,
+                    include_air_quality=False,
+                    include_co2=False,
+                    include_voc=False,
+                ),
+            ),
+        )
+        series = hourly.build_hourly_statistics(
+            {},
+            {10: result["rows"]},
+            config,
+            start=start,
+            end=end,
+            evaluated_at=end,
+            source_end_by_thermostat={1: end - timedelta(minutes=5)},
+        )
+        bucket = next(
+            item
+            for item in series
+            if item.statistic_id == "beestat:room_temperature_hourly_v2"
+        ).hours[0]
+        self.assertEqual(
+            (bucket.reason, bucket.invalid_slots, bucket.values),
+            ("invalid_slots", 1, None),
+        )
+
+    def test_unknown_archive_policy_is_rejected(self):
+        with self.assertRaisesRegex(
+            ValueError, "history_source_archive_policy_invalid"
+        ):
+            sources.merge_source_bundle([], archive_policy="unknown")
 
     async def test_equal_cross_source_observations_coalesce_provenance(self):
         provider = await self.stage([row(runtime_sensor_id=123)])
