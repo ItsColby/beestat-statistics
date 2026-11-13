@@ -223,7 +223,7 @@ class HourlyHistoryValuesTest(unittest.TestCase):
             self.item(result, "cool_runtime_hours").hours[0].reason, "ready"
         )
 
-    def test_quantity_denominator_keeps_voc_blocked_and_optional_rules_unchanged(
+    def test_quantity_denominator_includes_voc_and_keeps_optional_rules_unchanged(
         self,
     ):
         config = config_model.BeestatConfig(
@@ -259,24 +259,18 @@ class HourlyHistoryValuesTest(unittest.TestCase):
             {item.descriptor["admission"] for item in result if item is not voc},
             {"eligible"},
         )
-        self.assertEqual(voc.hours, ())
-        self.assertEqual(voc.blocked_reason, "voc_unit_unresolved")
-        self.assertEqual(voc.descriptor["admission"], "blocked")
-        # Every quantity kind's real descriptor, including the blocked one, is
+        self.assertEqual(voc.hours[0].values, {"mean": 75, "min": 75, "max": 75})
+        self.assertIsNone(voc.blocked_reason)
+        self.assertEqual(voc.descriptor["admission"], "eligible")
+        # Every quantity kind's real descriptor is
         # the consumer-visible series descriptor of the history response.
-        others = [item for item in result if item is not voc]
         contract.assert_key_sets(
             self,
             (
                 (
                     "descriptor",
-                    [item.descriptor for item in others],
+                    [item.descriptor for item in result],
                     contract.DESCRIPTOR,
-                ),
-                (
-                    "blocked descriptor",
-                    [voc.descriptor],
-                    contract.DESCRIPTOR | {"blocked_reason"},
                 ),
                 (
                     "representation",
@@ -354,7 +348,7 @@ class HourlyHistoryValuesTest(unittest.TestCase):
         )
         self.assertEqual(
             self.item(result, "voc_concentration", sensor=True).descriptor["admission"],
-            "blocked",
+            "eligible",
         )
 
     def test_unmapped_daily_exception_does_not_accept_malformed_sensor_identity(self):

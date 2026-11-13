@@ -15,6 +15,47 @@ from custom_components.beestat_statistics import config_model, statistics_builde
 class StatisticsBuilderTest(unittest.TestCase):
     """Validate daily external statistic shape and accumulation."""
 
+    def test_concentrations_preserve_source_scale_and_reject_invalid_values(
+        self,
+    ) -> None:
+        config = replace(
+            self.config,
+            sensors=(
+                replace(
+                    self.config.sensors[0],
+                    include_temperature=False,
+                    include_co2=True,
+                    include_voc=True,
+                    occupancy_entity_id=None,
+                ),
+            ),
+        )
+        readings = [0, 30, 90, -1, None, True, float("nan"), float("inf"), "bad"]
+        rows = [
+            {
+                "sensor_id": 10,
+                "timestamp": f"2026-07-01T12:{index * 5:02}:00-04:00",
+                "co2_concentration": value,
+                "voc_concentration": value,
+            }
+            for index, value in enumerate(readings)
+        ]
+        result = statistics_builder.build_sensor_statistics(
+            {10: rows}, self.local_tz, config
+        )
+        self.assertEqual(len(result), 2)
+        for quantity, unit in (("co2", "ppm"), ("voc", "ppb")):
+            with self.subTest(quantity=quantity):
+                item = _series(
+                    result, f"beestat:room_sensor_a_{quantity}_concentration"
+                )
+                self.assertEqual(item.metadata["unit_of_measurement"], unit)
+                self.assertEqual(item.metadata["unit_class"], "unitless")
+                self.assertEqual(item.source_rows, 3)
+                self.assertEqual(item.statistics[0]["mean"], 40)
+                self.assertEqual(item.statistics[0]["min"], 0)
+                self.assertEqual(item.statistics[0]["max"], 90)
+
     def setUp(self) -> None:
         self.local_tz = ZoneInfo("America/New_York")
         self.config = config_model.BeestatConfig(

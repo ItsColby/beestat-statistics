@@ -96,7 +96,12 @@ Daily measurement series include indoor/outdoor humidity, outdoor temperature,
 heat/cool setpoints, and selected room-sensor temperature, air quality, CO2, and
 TVOC. Occupancy history is included for a room sensor with an occupancy mapping.
 Temperature statistics use °F; humidity, air quality, and occupancy use percent;
-CO2 uses ppm; the legacy TVOC declaration uses ppb. Five-minute point history is
+CO2 uses ppm; TVOC uses ppb with the source value unchanged (multiplier 1).
+[Beestat's runtime export](https://github.com/beestat/app/blob/2460cf2dc63fdbb247325f60c2b213c240dabb2d/api/runtime.php#L1087-L1093)
+define that historical unit. Home Assistant's native Ecobee `actualVOC` path
+declares µg/m³; it is a separate source contract, not a conversion for this history.
+Negative concentrations and nonnumeric or nonfinite values are omitted.
+Five-minute point history is
 aggregated into daily mean/min/max rows, not imported as five-minute Recorder history. Available source
 fields determine which statistics have values.
 Home Assistant can convert temperature statistics to its preferred display unit.
@@ -114,13 +119,13 @@ Runtime values are logical hours of observed operation; stable native destinatio
 use rate rows so a missing hour cannot break later totals. Discover the exact
 IDs and physical quantities through `get_configuration`; do not construct IDs
 from names. Admission freezes legacy writes for selected quantities while other
-enabled quantities, including VOC, continue daily imports. Existing daily history
+enabled, unselected quantities continue daily imports. Existing daily history
 and charts retain their IDs until you update their consumers.
 
 An hourly value requires twelve valid five-minute slots and a closed source hour.
-Missing or invalid observations are gaps, never zero activity. VOC hourly
-statistics remain blocked until the source's units are established. New quantities
-require explicit admission. Disabling or renaming a selected quantity does not
+Missing or invalid observations are gaps, never zero activity. VOC is eligible
+for hourly statistics in ppb, without rescaling. New quantities require explicit
+admission. Disabling or renaming a selected quantity does not
 restart its daily writer.
 
 Use `get_hourly_coverage` with `contract_version: 3` alongside hourly charts. It

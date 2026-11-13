@@ -119,8 +119,7 @@ def build_hourly_statistics(
 
     Bounds are inclusive start/exclusive end and must land on UTC hours.
     The source horizon is the last observed interval *start*, not acquisition
-    time. A missing horizon blocks eligibility. VOC emits metadata only while
-    its source unit is unresolved. Misrouted resource identities block the
+    time. A missing horizon blocks eligibility. Misrouted resource identities block the
     affected series instead of being silently assigned to the mapping key.
     Per-series bounds restrict quality evidence as well as hourly values;
     measurement_end does not shorten cumulative source windows.
@@ -203,9 +202,6 @@ def build_hourly_statistics(
                 quantity_end,
                 evaluated_at,
                 horizon,
-                blocked_reason=(
-                    "voc_unit_unresolved" if spec.field == "voc_concentration" else None
-                ),
             )
         )
     return tuple(series)
@@ -411,7 +407,7 @@ def _measurement_range(value: float | None, field: str) -> float | None:
         return None
     if field in {"indoor_humidity", "outdoor_humidity", "air_quality"}:
         return value if 0 <= value <= 100 else None
-    if field == "co2_concentration" and value < 0:
+    if field in {"co2_concentration", "voc_concentration"} and value < 0:
         return None
     return value
 

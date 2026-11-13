@@ -43,8 +43,12 @@ Runtime stores a component-runtime rate in `%`; logical hourly amount is mean /
 components both contribute. Degree days store positive departures from 65°F in
 `temperature_delta`, `°F`; logical amount is mean / 24, including DST days.
 Measurement rows retain genuine sample mean/min/max. Rate rows have no invented
-extrema. All v3 metadata uses arithmetic mean and `has_sum: false`. VOC remains
-in the inventory with blocked admission until its unit contract is established.
+extrema. All v3 metadata uses arithmetic mean and `has_sum: false`. VOC is
+eligible in ppb with multiplier 1, matching
+[Beestat's historical export](https://github.com/beestat/app/blob/2460cf2dc63fdbb247325f60c2b213c240dabb2d/api/runtime.php#L1087-L1093).
+Admission is explicit; eligibility does not select a quantity or change its
+existing daily history. Both concentration paths reject negative values,
+preserve valid zeroes and apply no upper cap.
 
 ## Read logical history
 
@@ -148,7 +152,7 @@ eligible_intervals:
 
 `admission` is `eligible` or `blocked`. Eligible means the method/unit/physical
 contract can be selected; it says nothing about data completeness. Blocked
-descriptors contain `blocked_reason`; VOC uses `voc_unit_unresolved`.
+descriptors contain `blocked_reason`.
 `writer_status` is `unselected`, `reserved`, or `adopted`. A reservation excludes
 the legacy writer even while an operation is incomplete or blocked. Adopted
 means a saved owner exists, not that every requested bucket is verified.
@@ -167,8 +171,7 @@ means a saved owner exists, not that every requested bucket is verified.
 | `unverified_native` | Native rows, metadata or proof do not establish the committed value; value null |
 | `blocked` | Quantity/source contract cannot support a value; inspect `failure_reason` |
 
-`failure_reason` is null or one of `voc_unit_unresolved`,
-`resource_identity_mismatch`, `source_timestamp_unplaced`,
+`failure_reason` is null or one of `resource_identity_mismatch`, `source_timestamp_unplaced`,
 `source_horizon_unsettled`, `source_conflict`, `invalid_slots`, `missing_slots`,
 or `source_evidence_invalid`. An unrecognized internal source failure is exposed
 as `source_evidence_invalid`, never an arbitrary provider message.
@@ -374,7 +377,7 @@ Cancellation cannot turn uncertain effects into
 success or a new plan. Recovery uses that same immutable intent; a third native
 state or metadata mismatch holds the operation. Partially verified batches do
 not mean the full operation is complete. Reservations persist through failures,
-disablement and reload; unrelated legacy quantities, including VOC, keep their
+disablement and reload; unselected legacy quantities keep their
 existing writer.
 
 V3 adoption changes the journal contract so older releases fail closed.

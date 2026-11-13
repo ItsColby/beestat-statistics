@@ -99,8 +99,10 @@ reconciliation remain unchanged.
 An entry retains daily imports until explicit `plan_hourly_history` and
 `apply_hourly_history` admission. Each admitted physical quantity reserves its
 legacy aliases immediately, including while its operation is pending or blocked.
-Other enabled quantities continue daily imports, including VOC whose hourly unit
-contract is unresolved. Renaming, disabling or removing an admitted quantity
+Other enabled, unselected quantities continue daily imports. VOC measurements
+use Beestat's ppb values unchanged in both daily and hourly statistics; the
+separate native Ecobee `actualVOC` declaration does not change that contract.
+Renaming, disabling or removing an admitted quantity
 cannot reopen its daily writer. Reusing a reserved alias or changing its source
 parent fails closed. Daily summaries remain available to the filter engine.
 

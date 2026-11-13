@@ -190,11 +190,7 @@ class BeestatStatisticsImporter:
             replace(
                 item,
                 hours=(),
-                blocked_reason=(
-                    item.blocked_reason
-                    if item.blocked_reason == "voc_unit_unresolved"
-                    else None
-                ),
+                blocked_reason=None,
             )
             for item in inventory
         )

@@ -478,10 +478,12 @@ def build_sensor_statistics(
 def _measurement_value(
     value: float | None, unit_class: str | None, unit: str
 ) -> float | None:
-    """Validate scaled absolute temperatures without changing other quantities."""
+    """Validate absolute temperatures and nonnegative source concentrations."""
 
     if unit_class == STATISTIC_UNIT_CLASS_TEMPERATURE:
         return absolute_temperature_value(value, unit, tenth_fahrenheit_source=True)
+    if unit in {"ppm", "ppb"} and value is not None and value < 0:
+        return None
     return value
 
 
