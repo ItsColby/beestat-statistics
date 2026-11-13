@@ -529,6 +529,32 @@ class HourlyHistoryQueryTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "history_view_changed"):
             self.result(following)
 
+    def test_full_capacity_year_can_page_beyond_the_previous_offset_limit(self):
+        quantities = [QUANTITY] + [
+            self.add_quantity(f"thermostat:{index}:heat_runtime")
+            for index in range(2, 65)
+        ]
+        request = self.request(
+            end=START + timedelta(days=366), quantity_ids=quantities, page_size=1
+        )
+        first = self.result(request)
+        total = 64 * 366 * 24
+        self.assertEqual(first["pagination"]["total_buckets"], total)
+        last = self.result(
+            {
+                **request,
+                "offset": total - 1,
+                "view_token": first["view_token"],
+                "evaluated_at": first["evaluated_at"],
+            }
+        )
+        self.assertEqual(last["view_token"], first["view_token"])
+        self.assertFalse(last["pagination"]["has_more"])
+        self.assertEqual(last["series"][0]["descriptor"]["quantity_id"], quantities[-1])
+        self.assertEqual(last["series"][0]["buckets"][0]["end"], request["end"])
+        with self.assertRaisesRegex(ValueError, "history_quantities_invalid"):
+            self.result({**request, "quantity_ids": [*quantities, "extra"]})
+
     def test_pages_require_token_and_fixed_evaluation_and_reject_future_evaluation(
         self,
     ):

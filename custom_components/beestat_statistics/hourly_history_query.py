@@ -19,6 +19,7 @@ from .hourly_history_contract import (
     CONTRACT_VERSION,
     DAILY_POLICY,
     MAX_BUCKETS,
+    MAX_DAYS,
     MAX_QUANTITIES,
     METADATA_FIELDS,
     METHOD_VERSION,
@@ -152,7 +153,7 @@ def _query(request: Mapping[str, Any], context: Mapping[str, Any]) -> _Query:
     ):
         raise ValueError("history_policy_invalid")
     page_size = _integer(request.get("page_size", MAX_BUCKETS), 1, MAX_BUCKETS)
-    offset = _integer(request.get("offset", 0), 0, 40 * 366 * 24)
+    offset = _integer(request.get("offset", 0), 0, MAX_QUANTITIES * MAX_DAYS * 24)
     evaluated_at = _evaluation(request, context, offset)
     timezone = context["timezone"]
     ZoneInfo(timezone)  # Validate the calendar owner even for an hourly response.

@@ -398,7 +398,7 @@
         },
         "quantity_ids": {
           "name": "Quantity IDs",
-          "description": "Select 1–40 distinct physical quantity IDs from Get Beestat configuration."
+          "description": "Select 1–64 distinct physical quantity IDs from Get Beestat configuration."
         },
         "period": {
           "name": "Bucket period",
@@ -560,7 +560,7 @@
         },
         "quantity_ids": {
           "name": "Quantity IDs",
-          "description": "From 1 to 40 distinct physical quantity IDs from Get Beestat configuration."
+          "description": "From 1 to 64 distinct physical quantity IDs from Get Beestat configuration."
         },
         "start": {
           "name": "Start hour",

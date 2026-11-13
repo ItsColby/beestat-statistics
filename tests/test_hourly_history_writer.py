@@ -254,7 +254,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         original_id = await self.stage(fan=fan, acquisition=acquisition)
         original = (
             await sources.async_load_source_bundle(
-                self.store, [original_id], identity()
+                self.store, [original_id], self.context["identity"]
             )
         )[0]
         raw = await self.store.async_read_object("source", original["sha256"])
@@ -272,7 +272,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         prepared = delta_builder.prepare_history_delta(
             [{"manifest": manifest, "original_bytes": raw}],
             baseline,
-            identity=identity(),
+            identity=self.context["identity"],
             start=request["start"],
             end=request["end"],
             evaluated_at=self.context["evaluated_at"],
@@ -287,10 +287,109 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 chunk["content"],
                 chunk["manifest"],
                 chunk["sha256"],
-                identity(),
+                self.context["identity"],
             )
             ids.append(receipt["source_id"])
         return {**request, "source_ids": ids}
+
+    async def test_41st_adoption_preserves_existing_quantities_and_routine_refresh(
+        self,
+    ):
+        bases = list(identity()["resources"]) + [
+            f"beestat:zone_{index}_fan_runtime_hours_hourly_v2"
+            for index in range(2, 42)
+        ]
+        self.context["identity"] = {
+            **identity(),
+            "resources": {
+                base: {
+                    "thermostat_id": index,
+                    "sensor_id": None,
+                    "quantity": "fan_runtime_hours",
+                }
+                for index, base in enumerate(bases, 1)
+            },
+        }
+        self.context["config"] = model.BeestatConfig(
+            thermostats=tuple(
+                model.ConfiguredThermostat(
+                    thermostat_id=index,
+                    slug="zone" if index == 1 else f"zone_{index}",
+                    name=f"Zone {index}",
+                )
+                for index in range(1, 42)
+            ),
+            sensors=(),
+        )
+        self.context["descriptors"] = [
+            item.descriptor
+            for item in representation.build_history_series(
+                tuple(source(statistic_id=base) for base in bases),
+                self.context["identity"],
+            )
+        ]
+        quantities = [item["quantity_id"] for item in self.context["descriptors"]]
+        first_source = await self.stage()
+        original_source = (
+            await sources.async_load_source_bundle(
+                self.store, [first_source], self.context["identity"]
+            )
+        )[0]
+        original_rows = json.loads(
+            await self.store.async_read_object("source", original_source["sha256"])
+        )
+        source_ids = [first_source]
+        for index in range(2, 42):
+            content = json.dumps(
+                [{**row, "thermostat_id": index} for row in original_rows]
+            ).encode()
+            declaration = {
+                **original_source["manifest"],
+                "resource_id": index,
+                "thermostat_id": index,
+                "acquisition_id": f"read-zone-{index}",
+                "original_sha256": sha256(content).hexdigest(),
+                "original_byte_count": len(content),
+            }
+            receipt = await sources.async_stage_source(
+                self.store,
+                content,
+                declaration,
+                sha256(content).hexdigest(),
+                self.context["identity"],
+            )
+            source_ids.append(receipt["source_id"])
+        await self.accept(
+            await self.request(quantity_ids=quantities[:40], source_ids=source_ids)
+        )
+        await self.complete()
+        original = deepcopy(self.store.value["history"]["selections"])
+        await self.accept(
+            await self.request(
+                quantity_ids=quantities[40:],
+                source_ids=source_ids,
+                operation_id="additional-adoption",
+                expected_revision=self.store.value["revision"],
+            )
+        )
+        await self.complete()
+        selections = self.store.value["history"]["selections"]
+        self.assertEqual(len(selections), 41)
+        self.assertEqual({key: selections[key] for key in original}, original)
+        refresh = await self.delta_request()
+        accepted = await self.writer.async_refresh_history(
+            refresh, context=self.context
+        )
+        self.assertEqual(accepted["status"], "accepted", accepted)
+        await self.complete()
+        operation = json.loads(
+            self.store.objects["operation", self.store.value["operation"]["object"]]
+        )
+        self.assertEqual(set(operation["request"]["quantity_ids"]), set(quantities))
+        self.assertEqual(len(self.store.value["history"]["selections"]), 41)
+        self.assertEqual(
+            [row.mean for row in self.recorder.rows[NATIVE].values()], [100, 100]
+        )
 
     async def test_plan_blocks_adoption_beyond_quantity_limit(self):
         second = "beestat:zone_cool_runtime_hours_hourly_v2"

@@ -28,6 +28,10 @@ from custom_components.beestat_statistics.hourly_history_contract import (
     MAX_SOURCE_BYTES,
     ROUTINE_QUANTITIES_EXCEEDED,
 )
+from custom_components.beestat_statistics.hourly_history_service import (
+    COVERAGE_HISTORY_SCHEMA,
+    PLAN_HISTORY_SCHEMA,
+)
 from custom_components.beestat_statistics.hourly_import_core import (
     MARKER,
     HourlyImportError,
@@ -48,6 +52,45 @@ from tests.hourly_history_support import (
     _stage,
     _upload,
 )
+
+
+@pytest.mark.parametrize("action", ["coverage", "plan"])
+def test_native_quantity_schemas_accept_64_and_reject_65(action):
+    request = {
+        "config_entry_id": "fixture",
+        "quantity_ids": [
+            f"thermostat:{index}:fan_runtime_hours" for index in range(64)
+        ],
+        "start": START,
+        "end": END,
+    }
+    if action == "coverage":
+        schema = COVERAGE_HISTORY_SCHEMA
+        request["contract_version"] = 3
+    else:
+        schema = PLAN_HISTORY_SCHEMA
+        request.update(
+            source_ids=["a" * 64],
+            archive_policy="reject",
+            daily_policy="complete_points_else_legacy_day",
+            operation_id="capacity-fixture",
+            expected_revision=0,
+            consumer_contract={
+                "contract_version": 3,
+                "consumers": [
+                    {
+                        "consumer_id": "fixture",
+                        "version": "1",
+                        "history_contract": 3,
+                        "daily_policy": "complete_points_else_legacy_day",
+                    }
+                ],
+            },
+            recovery_reference="consistent-recovery-fixture",
+        )
+    assert len(schema(request)["quantity_ids"]) == 64
+    with pytest.raises(probatio.Invalid):
+        schema({**request, "quantity_ids": [*request["quantity_ids"], "extra"]})
 
 
 @pytest.mark.parametrize("change_context", ["none", "configuration", "unload"])
@@ -276,7 +319,7 @@ async def test_apply_reports_routine_quantity_limit_with_recovery_text(
             Context(user_id=hass_admin_user.id),
         )
     assert raised.value.translation_key == "hourly_routine_quantities_exceeded"
-    assert raised.value.translation_placeholders == {"limit": "40"}
+    assert raised.value.translation_placeholders == {"limit": "64"}
 
 
 @pytest.mark.usefixtures("unload_entries")
@@ -310,7 +353,7 @@ async def test_apply_reaches_routine_quantity_limit_through_the_writer(
             context,
         )
     assert raised.value.translation_key == "hourly_routine_quantities_exceeded"
-    assert raised.value.translation_placeholders == {"limit": "40"}
+    assert raised.value.translation_placeholders == {"limit": "64"}
     assert await runtime.store.async_load() == state
 
 
