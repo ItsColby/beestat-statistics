@@ -14,7 +14,13 @@ from typing import Any
 
 from .const import HOURLY_V2_SUFFIX
 from .hourly_history_contract import canonical_json, digest
-from .hourly_history_writer import HistoryWriter, partition, status, validate_root
+from .hourly_history_writer import (
+    _ROOT_VERSIONS,
+    HistoryWriter,
+    partition,
+    status,
+    validate_root,
+)
 from .hourly_import_core import (
     MARKER,
     HourlyImportError,
@@ -64,13 +70,16 @@ class HourlyImportManager:
     def history_status(self) -> dict[str, Any]:
         result = status(self._state)
         state = self._state
-        if state is None and (self._entry.data.get(MARKER) or {}).get("version") == 3:
+        if (
+            state is None
+            and (self._entry.data.get(MARKER) or {}).get("version") in _ROOT_VERSIONS
+        ):
             result.update(
                 status="blocked",
                 error=self._error or "history_state_unavailable",
                 has_pending=False,
             )
-        if state and state.get("version") == 3:
+        if state and state.get("version") in _ROOT_VERSIONS:
             if self.has_pending_store_save():
                 result.update(
                     status="blocked",
@@ -84,7 +93,7 @@ class HourlyImportManager:
                     has_pending=False,
                 )
             marker = self._entry.data.get(MARKER)
-            expected = {"version": 3, "token": state["token"]}
+            expected = {"version": state["version"], "token": state["token"]}
             prepared = state["phase"] == "prepared" and marker == state.get(
                 "previous_marker"
             )
@@ -145,7 +154,7 @@ class HourlyImportManager:
     def history_quantity_ids(self) -> tuple[str, ...]:
         """Return only cached physically adopted/reserved v3 quantities."""
         state = self._state or {}
-        if state.get("version") != 3:
+        if state.get("version") not in _ROOT_VERSIONS:
             return ()
         return tuple(sorted(state["history"]["selections"]))
 
@@ -156,7 +165,7 @@ class HourlyImportManager:
 
     async def _check_history_root_fence(self, state: dict[str, Any] | None) -> None:
         """A durable immutable fence rejects a predecessor even with an old marker."""
-        if state is None or state.get("version") != 3:
+        if state is None or state.get("version") not in _ROOT_VERSIONS:
             return
         if self.has_pending_store_save():
             raise HourlyImportError("history_store_write_pending")
@@ -278,7 +287,7 @@ class HourlyImportManager:
         # A new intent must suppress before yielding. Completion, including
         # removal of that suppression, is visible only after verified persistence.
         if state.get("pending") or (
-            state.get("version") == 3 and state.get("phase") == "prepared"
+            state.get("version") in _ROOT_VERSIONS and state.get("phase") == "prepared"
         ):
             self._state = state
         task = self._hass.async_create_task(self._store.async_save(deepcopy(state)))

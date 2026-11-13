@@ -309,13 +309,16 @@ def _pending_windows(windows: list[list[str]]) -> tuple[tuple[datetime, datetime
 
 def _source_holds(
     holds: list[dict[str, Any]],
-) -> list[tuple[datetime, datetime, list[str]]]:
+) -> list[tuple[datetime, datetime, list[str], str]]:
     result = []
     for hold in holds:
         start, end = utc(hold["start"]), utc(hold["end"])
         if start >= end:
             raise ValueError("history_source_hold_invalid")
-        result.append((start, end, _strings(hold.get("source_ids", []))))
+        reason = hold.get("reason", "source_conflict")
+        if reason not in {"source_conflict", "source_timestamp_unplaced"}:
+            raise ValueError("history_source_hold_invalid")
+        result.append((start, end, _strings(hold.get("source_ids", [])), reason))
     return result
 
 
@@ -350,15 +353,21 @@ def _hour(
     native: dict[str, Any] | None,
     metadata_ok: bool,
     pending: tuple[tuple[datetime, datetime], ...],
-    holds: list[tuple[datetime, datetime, list[str]]],
+    holds: list[tuple[datetime, datetime, list[str], str]],
 ) -> dict[str, Any]:
     end = start + _HOUR
     reason = _hour_reason(query, descriptor, start, proof, native, metadata_ok, pending)
     active_holds = [
-        source_ids for first, stop, source_ids in holds if first < end and stop > start
+        (source_ids, cause)
+        for first, stop, source_ids, cause in holds
+        if first < end and stop > start
     ]
     if active_holds and reason != "pending":
-        reason = "conflict"
+        reason = (
+            "blocked"
+            if any(cause == "source_timestamp_unplaced" for _, cause in active_holds)
+            else "conflict"
+        )
     bucket = _empty_bucket(start, end, query.evaluated_at, reason)
     bucket["failure_reason"] = _failure_reason(descriptor, proof, reason)
     if proof is not None:
@@ -370,8 +379,14 @@ def _hour(
             }
         )
     if active_holds:
-        bucket["failure_reason"] = "source_conflict"
-        bucket["source_ids"] = sorted(set(bucket["source_ids"]).union(*active_holds))
+        bucket["failure_reason"] = (
+            "source_timestamp_unplaced" if reason == "blocked" else "source_conflict"
+        )
+        bucket["source_ids"] = sorted(
+            set(bucket["source_ids"]).union(*(ids for ids, _ in active_holds))
+        )
+        if reason == "blocked":
+            bucket["valid_slots"] = 0
     if reason != "ready" or native is None:
         return bucket
     value = _logical_value(descriptor["kind"], native["mean"])
