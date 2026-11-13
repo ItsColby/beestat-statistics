@@ -1544,6 +1544,82 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.value, saved)
         self.assertEqual(len(self.store.objects), objects)
 
+    async def test_newly_closed_batch_cannot_bypass_later_native_drift(self):
+        self.context["evaluated_at"] = (
+            START + HOUR + timedelta(minutes=57)
+        ).isoformat()
+        await self.accept()
+        await self.complete()
+        self.context["evaluated_at"] = (START + 3 * HOUR).isoformat()
+        self.recorder.rows[NATIVE][START] = HourlyStatisticRow(START, mean=99)
+        saved = deepcopy(self.store.value)
+        before = (len(self.store.objects), len(self.recorder.submissions))
+        original_plan = writer.HistoryWriter.plan
+
+        async def newly_closed_month_first(owner, *args, **kwargs):
+            manifest, batches, state = await original_plan(owner, *args, **kwargs)
+            # Validation must protect all months regardless of batch order.
+            return manifest, list(reversed(batches)), state
+
+        with (
+            unittest.mock.patch.object(
+                writer.HistoryWriter, "plan", newly_closed_month_first
+            ),
+            self.assertRaisesRegex(
+                core.HourlyImportError, "history_routine_native_row_changed"
+            ),
+        ):
+            await self.writer.async_refresh_history(
+                {
+                    "start": START.isoformat(),
+                    "end": (START + 2 * HOUR).isoformat(),
+                    "source_ids": [],
+                },
+                context=self.context,
+            )
+        self.assertEqual(self.store.value, saved)
+        self.assertEqual(
+            (len(self.store.objects), len(self.recorder.submissions)), before
+        )
+        self.assertEqual(self.recorder.rows[NATIVE][START].mean, 99)
+        self.assertNotIn(START + HOUR, self.recorder.rows[NATIVE])
+
+    async def test_routine_refresh_reports_changed_or_missing_native_row(self):
+        await self.accept()
+        await self.complete()
+        request = {
+            "start": START.isoformat(),
+            "end": (START + 2 * HOUR).isoformat(),
+            "source_ids": [],
+        }
+        correction = await self.delta_request()
+        original = self.recorder.rows[NATIVE][START]
+        saved = deepcopy(self.store.value)
+        before = (len(self.store.objects), len(self.recorder.submissions))
+        for replacement in (HourlyStatisticRow(START, mean=99), None):
+            with self.subTest(replacement=replacement):
+                if replacement is None:
+                    del self.recorder.rows[NATIVE][START]
+                else:
+                    self.recorder.rows[NATIVE][START] = replacement
+                for refresh in (request, correction):
+                    with self.assertRaisesRegex(
+                        core.HourlyImportError, "history_routine_native_row_changed"
+                    ):
+                        await self.writer.async_refresh_history(
+                            refresh, context=self.context
+                        )
+                self.assertEqual(self.store.value, saved)
+                self.assertEqual(
+                    (len(self.store.objects), len(self.recorder.submissions)), before
+                )
+                self.assertEqual(self.recorder.rows[NATIVE].get(START), replacement)
+                self.recorder.rows[NATIVE][START] = original
+        self.assertEqual(
+            await self.writer.async_refresh_history(request, context=self.context),
+            {"status": "unchanged", "changed_rows": 0},
+        )
+
     async def test_retained_rows_without_adequate_source_horizon_never_gain_credit(
         self,
     ):

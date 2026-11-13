@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 from unittest.mock import AsyncMock, Mock
 
@@ -26,6 +27,7 @@ from tests.hourly_history_support import (
     _content,
     _manifest,
     _plan_request,
+    _provider,
     _runtime,
     _stage,
 )
@@ -75,6 +77,64 @@ async def test_native_commit_has_mean_only_row_and_verified_checkpoint(
     saved = await runtime.store.async_load()
     assert saved["pending"] is None
     assert saved["history"]["coverage_revision"] == 1
+
+
+@pytest.mark.usefixtures("unload_entries")
+@pytest.mark.parametrize("corrected_source", [False, True])
+async def test_routine_refresh_preserves_native_edit_until_reviewed_reconciliation(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path, corrected_source
+):
+    runtime, _apply = await _accepted(
+        hass, hass_admin_user, freezer, monkeypatch, tmp_path
+    )
+    manager = runtime.importer.hourly
+    context = runtime.importer._history_context()
+    await manager.async_advance_history(context=context)
+    original = await runtime.recorder.async_snapshot_range(NATIVE, START, END)
+    runtime.recorder.submit(original.metadata, (replace(original.rows[0], mean=99),))
+    saved = await runtime.store.async_load()
+    with pytest.raises(HourlyImportError, match="history_routine_native_row_changed"):
+        await manager.async_refresh_history(
+            {"start": START.isoformat(), "end": END.isoformat(), "source_ids": []},
+            context=context,
+        )
+    assert await runtime.store.async_load() == saved
+    assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
+        0
+    ].mean == pytest.approx(99)
+    rows = json.loads(_content())
+    if corrected_source:
+        for row in rows:
+            row["fan"] = 150
+    _provider(runtime, monkeypatch, rows=rows)
+    async with runtime.importer._lock:
+        reason = await runtime.importer._async_refresh_hourly_history(
+            lookback_days=1, rebuilding=False
+        )
+    assert reason == "history_refresh_unverified"
+    assert await runtime.store.async_load() == saved
+    assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
+        0
+    ].mean == pytest.approx(99)
+
+    plan = await manager.async_plan_history(
+        {
+            **_plan_request(runtime, saved["history"]["source_ids"][0]),
+            "operation_id": "reviewed-native-reconciliation",
+            "expected_revision": saved["revision"],
+        },
+        context=context,
+    )
+    assert plan["status"] == "planned"
+    await manager.async_accept_history(
+        {**plan["request"], "plan_digest": plan["plan_digest"]}, context=context
+    )
+    assert (await manager.async_advance_history(context=context))[
+        "status"
+    ] == "completed"
+    assert (await runtime.recorder.async_snapshot_range(NATIVE, START, END)).rows[
+        0
+    ].mean == pytest.approx(25)
 
 
 @pytest.mark.usefixtures("unload_entries")
