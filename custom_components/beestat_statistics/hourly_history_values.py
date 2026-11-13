@@ -59,7 +59,6 @@ def build_history_series(
     Account/entry admission and persistence belong to the calling manager.
 
     This is a description, not admission: unsaved writers remain unselected.
-    VOC remains in the returned denominator with blocked admission and no rows.
     """
     resources = identity.get("resources")
     if not isinstance(resources, Mapping):
@@ -102,16 +101,10 @@ def build_history_series(
                 raise ValueError("history_legacy_identity_collision")
             aliases[alias] = physical_id
         blocked = item.blocked_reason
-        if resource["quantity"] == "voc_concentration":
-            blocked = "voc_unit_unresolved"
         if blocked:
             descriptor["blocked_reason"] = blocked
             descriptor["admission"] = "blocked"
-        hours = (
-            ()
-            if resource["quantity"] == "voc_concentration"
-            else tuple(_hour(hour, factor) for hour in item.hours)
-        )
+        hours = tuple(_hour(hour, factor) for hour in item.hours)
         result.append(
             HistorySeries(
                 descriptor,

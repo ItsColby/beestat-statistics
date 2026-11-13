@@ -1733,6 +1733,92 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.calls, saves)
         self.assertEqual(self.recorder.reads, reads)
 
+    async def test_voc_admission_writes_and_freezes_only_selected_daily_series(self):
+        voc_id = "beestat:room_voc_concentration_hourly_v2"
+        key = "sensor:10:voc_concentration"
+        bound = identity()
+        bound["resources"][voc_id] = {
+            "thermostat_id": 1,
+            "sensor_id": 10,
+            "quantity": "voc_concentration",
+        }
+        self.context["identity"] = bound
+        self.context["config"] = replace(
+            self.context["config"],
+            sensors=(
+                model.ConfiguredSensor(
+                    sensor_id=10,
+                    slug="room",
+                    name="Room",
+                    thermostat_id=1,
+                    thermostat_slug="zone",
+                    include_temperature=False,
+                    include_air_quality=False,
+                    include_co2=False,
+                    include_voc=True,
+                ),
+            ),
+        )
+        item = source((75, 85), start=START, cumulative=False, statistic_id=voc_id)
+        item.metadata.update(unit_of_measurement="ppb", unit_class=None)
+        descriptors = representation.build_history_series((item,), bound)
+        self.context["descriptors"].extend(x.descriptor for x in descriptors)
+        partition = await self.writer.async_writer_partition(bound)
+        self.assertIn("beestat:room_voc_concentration", partition.legacy_statistic_ids)
+        rows = [
+            {
+                "sensor_id": 10,
+                "timestamp": (START + i * timedelta(minutes=5)).isoformat(),
+                "voc_concentration": 75 + i // 12 * 10,
+            }
+            for i in range(24)
+        ]
+        content = json.dumps(rows).encode()
+        declaration = {
+            "contract_version": 3,
+            "config_entry_id": self.entry.entry_id,
+            "api_base": bound["api_base"],
+            "account_anchors": bound["account_anchors"],
+            "resource": "runtime_sensor",
+            "resource_id": 10,
+            "thermostat_id": 1,
+            "source_kind": "provider",
+            "acquisition_id": "voc-read",
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "format": "json",
+            "start": START.isoformat(),
+            "end": (START + 2 * HOUR).isoformat(),
+            "acquired_at": self.context["evaluated_at"],
+            "source_end": (START + 2 * HOUR - timedelta(minutes=5)).isoformat(),
+            "unit_contract": "beestat_points_v1",
+            "original_sha256": sha256(content).hexdigest(),
+            "original_byte_count": len(content),
+            "chunk_byte_offset": 0,
+        }
+        receipt = await sources.async_stage_source(
+            self.store, content, declaration, sha256(content).hexdigest(), bound
+        )
+        request = await self.request(
+            source_ids=[receipt["source_id"]], quantity_ids=[key]
+        )
+        await self.accept(request)
+        await self.complete()
+        self.writer = self.fresh()
+        partition = await self.writer.async_writer_partition(bound)
+        self.assertNotIn(
+            "beestat:room_voc_concentration", partition.legacy_statistic_ids
+        )
+        self.assertIn("beestat:zone_fan_runtime_hours", partition.legacy_statistic_ids)
+        request.update(contract_version=3)
+        material = await self.writer.async_history_material(
+            request, context=self.context
+        )
+        response = history_response(request, material, self.context)
+        self.assertEqual(
+            [b["value"] for b in response["series"][0]["buckets"]], [75, 85]
+        )
+
     async def test_partition_rejects_rebound_alias_account_and_marker_without_effects(
         self,
     ):

@@ -49,7 +49,6 @@ _PROOF_REASONS = frozenset(
 )
 _KNOWN_FAILURES = frozenset(
     {
-        "voc_unit_unresolved",
         "resource_identity_mismatch",
         "source_timestamp_unplaced",
         "source_horizon_unsettled",
@@ -403,10 +402,7 @@ def _hour_reason(
 ) -> str:
     if any(first < start + _HOUR and end > start for first, end in pending):
         return "pending"
-    if (
-        descriptor.get("admission") == "blocked"
-        or descriptor.get("quantity") == "voc_concentration"
-    ):
+    if descriptor.get("admission") == "blocked":
         return "blocked"
     if start + _HOUR > query.evaluated_at:
         return "provisional"
@@ -435,8 +431,6 @@ def _failure_reason(
         if descriptor.get("admission") == "blocked"
         else (proof or {}).get("status")
     )
-    if descriptor.get("quantity") == "voc_concentration":
-        value = "voc_unit_unresolved"
     if isinstance(value, str) and value in _KNOWN_FAILURES:
         return str(value)
     return "source_evidence_invalid" if reason == "blocked" else None
@@ -614,8 +608,9 @@ def _point_day(
     verified: list[dict[str, Any]],
 ) -> dict[str, Any]:
     amount = descriptor["kind"] != "measurement"
-    total = _sum([item["value"] for item in verified])
-    value = total if amount or total is None else total / len(verified)
+    values = [item["value"] for item in verified]
+    total = _sum(values) if amount else None
+    value = total if amount else _mean(values)
     reason = "partial" if verified else _absent_day_reason(included)
     bucket = _empty_bucket(start, end, query.evaluated_at, reason)
     bucket.update(
@@ -831,11 +826,22 @@ def _summary(
             "complete_total": total if len(eligible) == len(buckets) else None,
             "eligible_amount": _sum([item["value"] for item in eligible]),
         }
-    total = _sum([item["value"] for item in verified])
     return {
         **common,
-        "observed_mean": None if total is None else total / len(verified),
+        "observed_mean": _mean([item["value"] for item in verified]),
         "observed_min": min((item["min"] for item in verified), default=None),
         "observed_max": max((item["max"] for item in verified), default=None),
         "summary_basis": "verified_point_hours",
     }
+
+
+def _mean(values: list[float]) -> float | None:
+    """Average finite measurements without overflowing their intermediate sum."""
+    if not values:
+        return None
+    scale = max(abs(value) for value in values)
+    return (
+        scale * (math.fsum(value / scale for value in values) / len(values))
+        if scale
+        else 0.0
+    )

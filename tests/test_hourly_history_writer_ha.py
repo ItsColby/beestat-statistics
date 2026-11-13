@@ -6,12 +6,14 @@ import asyncio
 import json
 from copy import deepcopy
 from dataclasses import replace
+from datetime import timedelta
 from hashlib import sha256
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.core import Context
 
+from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import import (
     _SAVES,
@@ -77,6 +79,96 @@ async def test_native_commit_has_mean_only_row_and_verified_checkpoint(
     saved = await runtime.store.async_load()
     assert saved["pending"] is None
     assert saved["history"]["coverage_revision"] == 1
+
+
+@pytest.mark.usefixtures("unload_entries")
+async def test_native_voc_selection_preserves_ppb_samples_and_coverage(
+    hass, freezer, monkeypatch, tmp_path
+):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    data = runtime.coordinator.data
+    runtime.coordinator.data = replace(
+        data,
+        config=replace(
+            data.config,
+            sensors=(
+                ConfiguredSensor(
+                    10, "room", "Room", 1, "zone_a", True, False, False, True
+                ),
+            ),
+        ),
+        sensor_rows=({"id": 10, "thermostat_id": 1},),
+    )
+    native = HourlyRecorder(hass)
+    runtime.importer.hourly._recorder = native
+    context = runtime.importer._history_context()
+    key = "sensor:10:voc_concentration"
+    native_id = "beestat:room_voc_concentration_hourly_v3"
+    descriptor = next(
+        item for item in context["descriptors"] if item["quantity_id"] == key
+    )
+    assert descriptor["admission"] == "eligible"
+    assert descriptor["writer_status"] == "unselected"
+    assert descriptor["logical_unit"] == "ppb"
+    assert descriptor["representation"]["unit_class"] == "unitless"
+    assert descriptor["representation"]["logical_multiplier"] == 1
+    partition = await runtime.importer.hourly.async_writer_partition(
+        context["identity"]
+    )
+    assert "beestat:room_voc_concentration" in partition.legacy_statistic_ids
+    content = json.dumps(
+        [
+            {
+                "sensor_id": 10,
+                "timestamp": (START + timedelta(minutes=5 * i)).isoformat(),
+                "voc_concentration": i * 10,
+            }
+            for i in range(12)
+        ]
+    ).encode()
+    checksum = sha256(content).hexdigest()
+    manifest = {
+        **_manifest(runtime),
+        "resource": "runtime_sensor",
+        "resource_id": 10,
+        "original_sha256": checksum,
+        "original_byte_count": len(content),
+    }
+    receipt = await async_stage_source(
+        runtime.store, content, manifest, checksum, context["identity"]
+    )
+    request = {**_plan_request(runtime, receipt["source_id"]), "quantity_ids": [key]}
+    manager = runtime.importer.hourly
+    plan = await manager.async_plan_history(request, context=context)
+    assert plan["status"] == "planned", plan
+    accepted = await manager.async_accept_history(
+        {**plan["request"], "plan_digest": plan["plan_digest"]}, context=context
+    )
+    assert accepted["status"] == "accepted"
+    assert (await manager.async_advance_history(context=context))[
+        "status"
+    ] == "completed"
+    recovered = HourlyImportManager(
+        hass, runtime.entry, store=runtime.store, recorder=native
+    )
+    partition = await recovered.async_writer_partition(context["identity"])
+    assert "beestat:room_voc_concentration" not in partition.legacy_statistic_ids
+    snapshot = await native.async_snapshot_range(native_id, START, END)
+    assert snapshot.complete and len(snapshot.rows) == 1
+    assert snapshot.metadata["unit_of_measurement"] == "ppb"
+    assert snapshot.metadata["unit_class"] == "unitless"
+    row = snapshot.rows[0]
+    assert (row.mean, row.min, row.max) == pytest.approx((55, 0, 110))
+    query = {
+        "contract_version": 3,
+        "quantity_ids": [key],
+        "start": START.isoformat(),
+        "end": END.isoformat(),
+    }
+    material = await recovered.async_history_material(query, context=context)
+    bucket = history_response(query, material, context)["series"][0]["buckets"][0]
+    assert bucket["value"] == pytest.approx(55)
+    assert bucket["eligible_intervals"]
 
 
 @pytest.mark.usefixtures("unload_entries")

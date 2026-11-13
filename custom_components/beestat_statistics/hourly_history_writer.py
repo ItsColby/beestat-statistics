@@ -165,11 +165,7 @@ def _validate_history(history: dict[str, Any]) -> None:
     native_ids: set[str] = set()
     for key, selected in history["selections"].items():
         descriptor = selected["descriptor"]
-        if (
-            key != quantity_id(descriptor)
-            or key != descriptor["quantity_id"]
-            or descriptor["quantity"] == "voc_concentration"
-        ):
+        if key != quantity_id(descriptor) or key != descriptor["quantity_id"]:
             raise ValueError("history_selection_invalid")
         if (
             descriptor["statistic_id"] in native_ids

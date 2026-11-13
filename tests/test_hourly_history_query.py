@@ -193,6 +193,37 @@ class HourlyHistoryQueryTest(unittest.TestCase):
         self.assertEqual(series["summary"]["observed_max"], 76)
         self.assertEqual(series["summary"]["summary_basis"], "verified_point_hours")
 
+    def test_voc_hour_and_day_queries_preserve_large_finite_means(self):
+        identifier = self.add_quantity("sensor:2:voc_concentration", "measurement")
+        descriptor = self.material["descriptors"][-1]
+        descriptor.update(sensor_id=2, logical_unit="ppb")
+        for key in ("expected_metadata", "native_metadata"):
+            self.material[key][identifier].update(
+                unit_of_measurement="ppb", unit_class="unitless"
+            )
+        for index in range(2):
+            self.point(
+                START + index * HOUR,
+                mean=1e308,
+                low=1e308,
+                high=1e308,
+                quantity=identifier,
+            )
+        for period in ("hour", "day"):
+            with self.subTest(period=period):
+                series = self.result(
+                    self.request(
+                        end=START + 2 * HOUR,
+                        quantity_ids=[identifier],
+                        period=period,
+                    )
+                )["series"][0]
+                self.assertEqual(series["summary"]["observed_mean"], 1e308)
+                for bucket in series["buckets"]:
+                    self.assertEqual(bucket["value"], 1e308)
+                    self.assertEqual(bucket["min"], 1e308)
+                    self.assertEqual(bucket["max"], 1e308)
+
     def test_missing_proof_native_and_committed_states_stay_distinct(self):
         self.assertEqual(self.bucket()["reason"], "unassessed")
         self.point(committed=False)
@@ -219,9 +250,11 @@ class HourlyHistoryQueryTest(unittest.TestCase):
 
     def test_blocked_descriptors_and_unrecognized_proof_codes_are_sanitized(self):
         descriptor = self.material["descriptors"][0]
-        descriptor.update(admission="blocked", blocked_reason="voc_unit_unresolved")
+        descriptor.update(
+            admission="blocked", blocked_reason="resource_identity_mismatch"
+        )
         self.assertEqual(self.bucket()["reason"], "blocked")
-        self.assertEqual(self.bucket()["failure_reason"], "voc_unit_unresolved")
+        self.assertEqual(self.bucket()["failure_reason"], "resource_identity_mismatch")
         descriptor.update(admission="eligible")
         self.point(status="unexpected provider payload")
         self.assertEqual(self.bucket()["reason"], "blocked")
@@ -240,25 +273,24 @@ class HourlyHistoryQueryTest(unittest.TestCase):
         self.assertEqual(series["summary"]["verified_hours"], 1)
         self.assertEqual(series["summary"]["expected_hours"], 2)
 
-    def test_blocked_voc_day_preserves_reason_and_qualification_with_pending_priority(
+    def test_blocked_day_preserves_reason_and_qualification_with_pending_priority(
         self,
     ):
         self.material["descriptors"][0].update(
-            quantity="voc_concentration",
             admission="blocked",
-            blocked_reason="voc_unit_unresolved",
+            blocked_reason="resource_identity_mismatch",
         )
         request = self.request(end=START + 24 * HOUR, period="day")
         bucket = self.bucket(request)
         self.assertEqual(bucket["reason"], "blocked")
-        self.assertEqual(bucket["failure_reason"], "voc_unit_unresolved")
+        self.assertEqual(bucket["failure_reason"], "resource_identity_mismatch")
         self.assertIsNone(bucket["value"])
         self.material["pending_affected"][QUANTITY] = [
             [START.isoformat(), (START + HOUR).isoformat()]
         ]
         bucket = self.bucket(request)
         self.assertEqual(bucket["reason"], "pending")
-        self.assertEqual(bucket["failure_reason"], "voc_unit_unresolved")
+        self.assertEqual(bucket["failure_reason"], "resource_identity_mismatch")
 
     def test_current_bucket_remains_provisional_and_elapsed_time_does_not_commit(self):
         self.context["evaluated_at"] = (START + timedelta(minutes=30)).isoformat()

@@ -647,11 +647,24 @@ class HourlyStatisticsTest(unittest.TestCase):
         item = self.item(self.build(source_end_by_thermostat={}), "room_a_temperature")
         self.assertEqual(item.blocked_reason, "source_horizon_unavailable")
 
-    def test_voc_is_a_blocked_successor_without_trusted_values(self):
+    def test_voc_uses_ppb_samples_and_requires_complete_valid_hours(self):
         item = self.item(self.build(), "room_a_voc_concentration")
-        self.assertEqual(item.blocked_reason, "voc_unit_unresolved")
-        self.assertEqual(item.hours, ())
+        self.assertIsNone(item.blocked_reason)
+        self.assertEqual(item.metadata["unit_of_measurement"], "ppb")
+        self.assertEqual(item.hours[0].values, {"mean": 75, "min": 75, "max": 75})
         self.assertEqual(item.source_rows, 12)
+        rows = self.sensor_rows()
+        rows[0]["voc_concentration"] = 0
+        rows[1]["voc_concentration"] = 1e100
+        item = self.item(self.build(sensor_rows=rows), "room_a_voc_concentration")
+        self.assertEqual(item.hours[0].values["min"], 0)
+        self.assertEqual(item.hours[0].values["max"], 1e100)
+        rows[0]["voc_concentration"] = -1
+        rows.pop()
+        item = self.item(self.build(sensor_rows=rows), "room_a_voc_concentration")
+        self.assertEqual(item.hours[0].invalid_slots, 1)
+        self.assertEqual(item.hours[0].missing_slots, 1)
+        self.assertIsNone(item.hours[0].values)
 
     def test_legacy_detailed_hardware_survives_all_zero_correction(self):
         rows = self.thermostat_rows(compressor_1=0, compressor_2=0)
