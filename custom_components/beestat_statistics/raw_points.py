@@ -13,7 +13,7 @@ from .api import BeestatClient, BeestatRawReadError, BeestatRawResponse
 from .config_model import BeestatConfig
 from .hourly_history_contract import MAX_SOURCE_BYTES, MAX_SOURCE_ROWS
 
-RAW_POINT_MAX_DAYS = 31
+RAW_POINT_MAX_DAYS = 30
 RAW_POINT_MAX_ROWS = MAX_SOURCE_ROWS
 RAW_POINT_MAX_BYTES = MAX_SOURCE_BYTES
 type PointResource = Literal["runtime_thermostat", "runtime_sensor"]
@@ -69,7 +69,7 @@ def parse_raw_point_request(
     if start_utc.microsecond or end_utc.microsecond:
         raise ValueError("Raw point timestamps must use whole seconds")
     if end_utc <= start_utc or end_utc - start_utc > timedelta(days=RAW_POINT_MAX_DAYS):
-        raise ValueError("Raw point window must be positive and at most 31 days")
+        raise ValueError("Raw point window must be positive and at most 30 days")
     return RawPointRequest(selected_resource, resource_id, start_utc, end_utc)
 
 
