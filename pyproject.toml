@@ -81,7 +81,7 @@ addopts = "-p no:respx"
 [dependency-groups]
 dev = ["pre-commit==4.6.2"]
 ha-current = [
-  "homeassistant==2026.11.0",
-  "pytest-homeassistant==2026.11.0",
+  "homeassistant==2026.11.1",
+  "pytest-homeassistant==2026.11.1",
   "mypy==2.3.0",
 ]
