@@ -18,7 +18,7 @@ from typing import Any, Literal, TypedDict
 CONTRACT_VERSION = 3
 METHOD_VERSION = "five_minute_complete_hour_v3"
 DAILY_POLICY = "complete_points_else_legacy_day"
-MAX_QUANTITIES = 40
+MAX_QUANTITIES = 64
 ROUTINE_QUANTITIES_EXCEEDED = "history_routine_quantities_exceeded"
 MAX_DAYS = 366
 MAX_BUCKETS = 4096

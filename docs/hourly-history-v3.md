@@ -67,7 +67,7 @@ page_size: 4096
 offset: 0
 ```
 
-`start` is inclusive and `end` exclusive, both whole UTC hours. Select 1–40
+`start` is inclusive and `end` exclusive, both whole UTC hours. Select 1–64
 distinct explicit quantity IDs and at most 366 elapsed days. `period` is `hour`
 or `day`; day boundaries follow the response timezone and must not split stored
 UTC hours. No prorating occurs. The response returns at most `page_size` buckets
