@@ -137,7 +137,7 @@ def validate_document(
         raise ValueError("history_correction_entries_invalid")
     seen: set[tuple[str, datetime]] = set()
     for entry in entries:
-        _validate_entry(entry, descriptors, set(refs), seen)
+        _validate_entry(entry, descriptors, set(refs), seen, binding.get("timezone"))
     return deepcopy(document)
 
 
@@ -146,6 +146,7 @@ def _validate_entry(
     descriptors: dict[str, dict[str, Any]],
     refs: set[tuple[str, str]],
     seen: set[tuple[str, datetime]],
+    timezone: Any,
 ) -> None:
     fields = {
         "descriptor",
@@ -159,6 +160,7 @@ def _validate_entry(
         "points",
         "predecessor",
         "reason",
+        "interpretation",
     }
     if (
         not isinstance(entry, dict)
@@ -185,6 +187,8 @@ def _validate_entry(
     ):
         raise ValueError("history_correction_descriptor_changed")
     start = utc(entry["start"], whole_hour=True)
+    if not isinstance(entry["start"], str) or entry["start"] != start.isoformat():
+        raise ValueError("history_correction_entry_invalid")
     first, stop = _window(entry["dependency_start"], entry["dependency_end"])
     if not first <= start or start + _HOUR > stop or (qid, start) in seen:
         raise ValueError("history_correction_entry_invalid")
@@ -201,7 +205,27 @@ def _validate_entry(
         or any(_evidence(item) not in refs for item in evidence)
     ):
         raise ValueError("history_correction_evidence_invalid")
+    _validate_interpretation(entry["interpretation"], timezone)
     _validate_points_shape(entry, descriptor, start)
+
+
+def _validate_interpretation(value: Any, timezone: Any) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "timezone",
+        "fold",
+        "unit_conversion",
+    }:
+        raise ValueError("history_correction_interpretation_invalid")
+    fold, conversion = value["fold"], value["unit_conversion"]
+    if (
+        not isinstance(timezone, str)
+        or not timezone
+        or value["timezone"] != timezone
+        or (fold is not None and (type(fold) is not int or fold not in (0, 1)))
+        or not isinstance(conversion, str)
+        or not 1 <= len(conversion) <= 1024
+    ):
+        raise ValueError("history_correction_interpretation_invalid")
 
 
 def _validate_points_shape(

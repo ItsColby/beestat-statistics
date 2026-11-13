@@ -66,6 +66,11 @@ def scenario():
         "points": helper.thermostat_rows(indoor_humidity=55),
         "predecessor": None,
         "reason": None,
+        "interpretation": {
+            "timezone": "UTC",
+            "fold": None,
+            "unit_conversion": "percent unchanged",
+        },
     }
     binding = {"timezone": "UTC", "method_version": descriptor["method_version"]}
     doc = {
@@ -158,3 +163,42 @@ def test_invalid_samples_cannot_be_staged(scenario):
     doc["entries"][0]["points"][0]["indoor_humidity"] = None
     with pytest.raises(ValueError, match="points_unqualified"):
         validate_points(doc, context)
+
+
+@pytest.mark.parametrize(
+    "quantity,expected", [("fan_runtime_hours", 50), ("heating_degree_days", 25)]
+)
+def test_runtime_and_degree_day_samples_use_native_builder(
+    scenario, quantity, expected
+):
+    helper, _, _, merged, sources, doc, _, context = scenario
+    series, identity = helper.build()
+    item = helper.item(build_history_series(series, identity), quantity)
+    doc["entries"][0]["descriptor"] = item.descriptor
+    doc["entries"][0]["points"] = helper.thermostat_rows(outdoor_temperature=40)
+    validate_points(doc, context)
+    qid = item.descriptor["quantity_id"]
+    output, _ = project(
+        {qid: item},
+        merged,
+        sources,
+        [{"correction_id": digest(doc), "document": doc}],
+        context,
+    )
+    assert output[qid].hours[0].values["mean"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("change", ["timezone", "fold", "conversion", "start"])
+def test_interpretation_and_canonical_start_are_required(scenario, change):
+    _, item, qid, _, _, doc, binding, _ = scenario
+    entry = doc["entries"][0]
+    if change == "timezone":
+        entry["interpretation"]["timezone"] = "America/New_York"
+    elif change == "fold":
+        entry["interpretation"]["fold"] = True
+    elif change == "conversion":
+        entry["interpretation"]["unit_conversion"] = ""
+    else:
+        entry["start"] = entry["start"].replace("+00:00", "Z")
+    with pytest.raises(ValueError):
+        validate_document(doc, binding, {qid: item.descriptor})
