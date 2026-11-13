@@ -413,6 +413,75 @@ async def test_stage_upload_lease_and_cleanup_run_in_executor_after_durable_rete
 
 
 @pytest.mark.usefixtures("unload_entries")
+async def test_correction_upload_requires_admin_and_forwards_bounded_bytes(
+    hass, hass_admin_user, freezer, monkeypatch, tmp_path
+):
+    runtime = await _runtime(hass, freezer, monkeypatch, tmp_path)
+    content = b'{"document":{},"originals":[]}'
+    upload_path, events = _upload(
+        runtime, monkeypatch, tmp_path, content, verify_retained=False
+    )
+    stage = AsyncMock(return_value={"correction_id": "a" * 64})
+    monkeypatch.setattr(
+        runtime.importer.hourly,
+        "_history_writer",
+        lambda: SimpleNamespace(stage_correction=stage),
+    )
+    request = {
+        "config_entry_id": runtime.entry.entry_id,
+        "file_id": "opaque-upload-fixture",
+        "sha256": sha256(content).hexdigest(),
+    }
+    with pytest.raises(HomeAssistantError):
+        await _call(runtime, "stage_hourly_correction", request, Context())
+    assert events == []
+    response = await _call(
+        runtime, "stage_hourly_correction", request, Context(user_id=hass_admin_user.id)
+    )
+    assert response == {"correction_id": "a" * 64}
+    assert events == ["entered", "cleaned"]
+    assert not upload_path.exists()
+    assert stage.await_args.args[:2] == (content, request["sha256"])
+    assert callable(stage.await_args.args[2]["check_current"])
+    runtime.submit.assert_not_called()
+
+
+def test_plan_correction_ids_are_bounded_distinct_digests():
+    request = {
+        "config_entry_id": "fixture",
+        "source_ids": ["a" * 64],
+        "quantity_ids": [QUANTITY],
+        "start": START,
+        "end": END,
+        "archive_policy": "reject",
+        "daily_policy": "complete_points_else_legacy_day",
+        "operation_id": "fixture",
+        "expected_revision": 0,
+        "consumer_contract": {
+            "contract_version": 3,
+            "consumers": [
+                {
+                    "consumer_id": "fixture",
+                    "version": "1",
+                    "history_contract": 3,
+                    "daily_policy": "complete_points_else_legacy_day",
+                }
+            ],
+        },
+        "recovery_reference": "fixture",
+    }
+    assert PLAN_HISTORY_SCHEMA({**request, "correction_ids": ["b" * 64]})[
+        "correction_ids"
+    ] == ["b" * 64]
+    with pytest.raises(probatio.Invalid):
+        PLAN_HISTORY_SCHEMA({**request, "correction_ids": ["b" * 64] * 2})
+    with pytest.raises(probatio.Invalid):
+        PLAN_HISTORY_SCHEMA(
+            {**request, "correction_ids": [f"{i:064x}" for i in range(2049)]}
+        )
+
+
+@pytest.mark.usefixtures("unload_entries")
 @pytest.mark.parametrize("rejected", ["identity", "window", "incomplete", "shape"])
 async def test_native_rest_upload_rejects_invalid_inner_export_before_retention(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, rejected

@@ -313,6 +313,30 @@ are not proven. Conflicting evidence quarantines the affected hour. A shorter or
 empty successful response does not delete previously admitted observations;
 explicit ordered corrections/tombstones do not resurrect older archive values.
 
+## Stage a reviewed quantity correction
+
+Upload a JSON bundle through Home Assistant's authenticated `/api/file_upload`
+route and call `beestat_statistics.stage_hourly_correction` with the loaded
+`config_entry_id`, native `file_id` and exact uploaded-byte `sha256`. An active
+administrator is required. The bundle is at most 8 MiB and has exactly
+`document` and `originals`; each original contains `sha256` and `content_base64`.
+The document has exactly `format: reviewed_quantity_correction_v1`, `binding`
+(the writer's binding for the entry), a nonempty `converter_version`,
+`originals` (each `sha256` and `locator`) and `entries`. Each entry contains
+`descriptor`, `start`, `action` (`replace`, `hold`, or `withdraw`),
+`dependency_start`, `dependency_end`, `raw_witness`, `resolution_witness`,
+`qualification` (a list of `sha256` and `locator` pairs), `points` (twelve
+timestamped row objects for replacement, otherwise empty), and `predecessor`
+(null or a digest). `reason` is a required string for a hold and null otherwise.
+Staging retains immutable originals and the document; it
+does not change the active root. Explicit holds remain visible in coverage.
+Raw delta evidence remains unchanged.
+
+After activation, persisted root version 4 is required. Rollback requires a
+full consistent backup of the root, its object namespace, Recorder data,
+entry and marker, configuration and matching component versions; changing code
+alone is insufficient.
+
 ## Plan and apply one exact operation
 
 `beestat_statistics.plan_hourly_history` requires an active admin and:
@@ -320,6 +344,7 @@ explicit ordered corrections/tombstones do not resurrect older archive values.
 ```yaml
 config_entry_id: example_entry
 source_ids: [<sealed-source-manifest-sha256>]
+correction_ids: [<staged-correction-document-sha256>]
 quantity_ids: [thermostat:101:fan_runtime_hours]
 start: '2026-09-01T00:00:00+00:00'
 end: '2026-09-02T00:00:00+00:00'
@@ -339,6 +364,7 @@ detail_offset: 0
 detail_limit: 100
 ```
 
+`correction_ids` is optional and accepts at most 2,048 distinct digests.
 `archive_policy` is `reject`, `before_first_provider`, or `provider_gaps`.
 The last admits qualified archive points wherever a provider point is absent,
 including gaps after the first provider point. Provider nulls and deletions are

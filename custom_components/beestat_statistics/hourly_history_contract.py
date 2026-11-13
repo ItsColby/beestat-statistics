@@ -32,6 +32,7 @@ MAX_SOURCE_CHUNKS = 2048
 MAX_SOURCE_RESOURCES = 128
 MAX_JSON_DEPTH = 16
 SERVICE_STAGE_HOURLY_SOURCE = "stage_hourly_source"
+SERVICE_STAGE_HOURLY_CORRECTION = "stage_hourly_correction"
 SERVICE_PLAN_HOURLY_HISTORY = "plan_hourly_history"
 SERVICE_APPLY_HOURLY_HISTORY = "apply_hourly_history"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -152,6 +153,7 @@ def capabilities() -> dict[str, Any]:
             "configuration": "beestat_statistics.get_configuration",
             "coverage": "beestat_statistics.get_hourly_coverage",
             "stage": f"beestat_statistics.{SERVICE_STAGE_HOURLY_SOURCE}",
+            "stage_correction": f"beestat_statistics.{SERVICE_STAGE_HOURLY_CORRECTION}",
             "plan": f"beestat_statistics.{SERVICE_PLAN_HOURLY_HISTORY}",
             "apply": f"beestat_statistics.{SERVICE_APPLY_HOURLY_HISTORY}",
         },

@@ -262,6 +262,29 @@ class BeestatStatisticsImporter:
                 identity,
             )
 
+    async def async_stage_hourly_correction(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Stage a bounded uploaded correction under the import lock."""
+        async with self._lock:
+            context = self._history_context()
+            content = await self._hass.async_add_executor_job(
+                self._read_uploaded_correction, request["file_id"]
+            )
+            context["check_current"]()
+            receipt = await self.hourly._history_writer().stage_correction(
+                content, request["sha256"], context
+            )
+            context["check_current"]()
+            return receipt
+
+    def _read_uploaded_correction(self, file_id: str) -> bytes:
+        with (
+            process_uploaded_file(self._hass, file_id) as path,
+            path.open("rb") as source,
+        ):
+            return source.read(MAX_SOURCE_BYTES + 1)
+
     async def async_plan_hourly_history(
         self, request: dict[str, Any]
     ) -> dict[str, Any]:

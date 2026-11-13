@@ -1,5 +1,8 @@
 {
   "services": {
+    "stage_hourly_correction": {
+      "service": "mdi:database-edit-outline"
+    },
     "stage_hourly_source": {
       "service": "mdi:database-import-outline"
     },
