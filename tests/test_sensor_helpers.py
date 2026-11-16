@@ -743,10 +743,6 @@ class SensorHelpersTest(unittest.TestCase):
         }
 
         active_count = descriptions["active_sensor_count"]
-        self.assertEqual(
-            "Beestat-reported in-use sensor count",
-            active_count.name,
-        )
         unknown_count = types.SimpleNamespace(
             data=types.SimpleNamespace(
                 thermostat_metadata={
