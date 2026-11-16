@@ -483,7 +483,7 @@ when importing it into Home Assistant.
 Normal operation needs no automation; there are no custom device triggers or
 conditions.
 
-To uninstall, remove the integration entry, remove its HACS installation if
+To uninstall, remove the integration entry, remove its Marketplace download if
 present, and restart Home Assistant after removing the integration files.
 Native integration entities are removed and future imports stop; imported
 external statistics may remain. Shared HomeKit/Ecobee devices are preserved.
