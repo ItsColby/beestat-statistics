@@ -230,6 +230,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
             platform.removeprefix("Platform.").lower()
             for platform in _module_literal("__init__.py", "PLATFORMS", unparse=True)
         ]
+        self.assertTrue(platforms, "PLATFORMS in __init__.py is empty")
         for platform in platforms:
             relative_path = f"custom_components/beestat_statistics/{platform}.py"
             translation_keys = _literal_translation_keys(ROOT / relative_path)
