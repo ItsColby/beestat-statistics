@@ -79,13 +79,7 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         menu_labels = strings["options"]["step"]["init"]["menu_options"]
         self.assertEqual(
             set(menu_labels),
-            {
-                "timing",
-                "source_scope",
-                "confirm_automatic_mappings",
-                "thermostat_mapping",
-                "sensor_mapping",
-            },
+            set(_module_literal("config_flow.py", "OPTIONS_MENU")),
         )
         self.assertTrue(all(label.strip() for label in menu_labels.values()))
 
@@ -232,12 +226,12 @@ class HomeAssistantQualityStaticTest(unittest.TestCase):
         )
         icons = _json_file("custom_components/beestat_statistics/icons.json")
 
-        for platform, relative_path in {
-            "binary_sensor": "custom_components/beestat_statistics/binary_sensor.py",
-            "button": "custom_components/beestat_statistics/button.py",
-            "date": "custom_components/beestat_statistics/date.py",
-            "sensor": "custom_components/beestat_statistics/sensor.py",
-        }.items():
+        platforms = [
+            platform.removeprefix("Platform.").lower()
+            for platform in _module_literal("__init__.py", "PLATFORMS", unparse=True)
+        ]
+        for platform in platforms:
+            relative_path = f"custom_components/beestat_statistics/{platform}.py"
             translation_keys = _literal_translation_keys(ROOT / relative_path)
             self.assertGreater(
                 len(translation_keys),
@@ -311,6 +305,29 @@ def _is_logger_call(node: ast.AST) -> bool:
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "_LOGGER"
     )
+
+
+def _module_literal(filename: str, name: str, *, unparse: bool = False) -> list:
+    """Read a top-level list/tuple constant without importing the module."""
+    tree = ast.parse(
+        (ROOT / "custom_components/beestat_statistics" / filename).read_text(
+            encoding="utf-8"
+        )
+    )
+    for node in tree.body:
+        target = (
+            node.target
+            if isinstance(node, ast.AnnAssign)
+            else node.targets[0]
+            if isinstance(node, ast.Assign)
+            else None
+        )
+        if isinstance(target, ast.Name) and target.id == name:
+            elements = node.value.elts  # type: ignore[union-attr]
+            if unparse:
+                return [ast.unparse(element) for element in elements]
+            return [ast.literal_eval(element) for element in elements]
+    raise AssertionError(f"{name} not found in {filename}")
 
 
 def _json_file(relative_path: str) -> dict:
