@@ -40,13 +40,11 @@ PARALLEL_UPDATES = 1
 BUTTON_DESCRIPTIONS: tuple[ButtonEntityDescription, ...] = (
     ButtonEntityDescription(
         key="refresh_runtime",
-        name="Refresh runtime",
         translation_key="refresh_runtime",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     ButtonEntityDescription(
         key="import_statistics",
-        name="Import statistics",
         translation_key="import_statistics",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
@@ -135,7 +133,6 @@ class BeestatFilterChangedButton(
     """Mark an HVAC filter as changed today."""
 
     _attr_has_entity_name = True
-    _attr_name = "Mark filter changed"
     _attr_translation_key = "mark_filter_changed"
     _attr_entity_category = EntityCategory.CONFIG
 

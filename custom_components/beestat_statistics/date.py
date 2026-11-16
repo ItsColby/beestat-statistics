@@ -73,7 +73,6 @@ class BeestatFilterChangedDate(
     """Native filter-changed date for Beestat filter-runtime calculations."""
 
     _attr_has_entity_name = True
-    _attr_name = "Filter changed date"
     _attr_translation_key = "filter_changed_date"
     _attr_entity_category = EntityCategory.CONFIG
     _unrecorded_attributes = frozenset(

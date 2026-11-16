@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
@@ -24,6 +28,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import EntityPlatform
+from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from pytest_homeassistant.common import (
     MockConfigEntry,
@@ -31,6 +36,10 @@ from pytest_homeassistant.common import (
 )
 
 from custom_components.beestat_statistics import async_remove_config_entry_device
+from custom_components.beestat_statistics import binary_sensor as binary_sensor_platform
+from custom_components.beestat_statistics import button as button_platform
+from custom_components.beestat_statistics import date as date_platform
+from custom_components.beestat_statistics import sensor as sensor_platform
 from custom_components.beestat_statistics.api import (
     BeestatApiError,
     BeestatAuthError,
@@ -776,3 +785,86 @@ async def test_button_press_maps_and_records_errors(
         reauth.assert_called_once_with(coordinator.hass)
     else:
         reauth.assert_not_called()
+
+
+def _entities_by_platform(
+    coordinator: BeestatRuntimeDataCoordinator,
+) -> dict[str, list[Any]]:
+    """Build every entity each platform creates for a thermostat with a sensor."""
+
+    now = coordinator.data.metadata_sync_success_at
+    coordinator.async_set_updated_data(
+        coordinator._build_runtime_data(
+            [],
+            [{"id": 1, "name": "Zone A", "timezone": "UTC"}],
+            [{"id": 10, "thermostat_id": 1, "identifier": "rs:10", "name": "Hall"}],
+            now,
+            now,
+            True,
+            None,
+            None,
+            evaluated_at=now,
+        )
+    )
+    return {
+        "binary_sensor": binary_sensor_platform._build_entities(coordinator),
+        "button": button_platform._build_entities(coordinator, Mock()),
+        "date": date_platform._build_entities(coordinator),
+        "sensor": sensor_platform._build_entities(coordinator),
+    }
+
+
+def _resolved_names(
+    entities_by_platform: dict[str, list[Any]], translations: dict[str, str]
+) -> dict[tuple[str, str], Any]:
+    """Resolve names with Home Assistant's own rule, as platform setup would."""
+
+    names: dict[tuple[str, str], Any] = {}
+    for domain, entities in entities_by_platform.items():
+        for entity in entities:
+            entity.platform_data = SimpleNamespace(platform_name=DOMAIN, domain=domain)
+            names[(domain, entity.unique_id)] = entity._name_internal(
+                None, translations
+            )
+    return names
+
+
+async def test_entity_names_resolve_from_translations_only(
+    coordinator: BeestatRuntimeDataCoordinator,
+) -> None:
+    """Every entity is named by en.json, never by a second code-side copy."""
+
+    strings = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "custom_components/beestat_statistics/translations/en.json"
+        ).read_text(encoding="utf-8")
+    )
+    translations = {
+        f"component.{DOMAIN}.entity.{domain}.{key}.name": value["name"]
+        for domain, keys in strings["entity"].items()
+        for key, value in keys.items()
+    }
+    entities = _entities_by_platform(coordinator)
+    names = _resolved_names(entities, translations)
+
+    if os.environ.get("BEESTAT_NAME_DUMP"):
+        Path(os.environ["BEESTAT_NAME_DUMP"]).write_text(
+            json.dumps({f"{d}/{u}": n for (d, u), n in names.items()}, indent=1),
+            encoding="utf-8",
+        )
+
+    assert sum(len(items) for items in entities.values()) > 60
+    for domain, items in entities.items():
+        for entity in items:
+            label = f"{domain}/{entity.unique_id}"
+            assert entity.has_entity_name, label
+            assert entity.translation_key, label
+            assert not hasattr(entity, "_attr_name"), label
+            description = getattr(entity, "entity_description", None)
+            if description is not None:
+                assert description.name is UNDEFINED, label
+            assert (
+                names[(domain, entity.unique_id)]
+                == (strings["entity"][domain][entity.translation_key]["name"])
+            ), label

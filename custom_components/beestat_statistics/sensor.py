@@ -82,7 +82,6 @@ class ThermostatSettingSensorSpec:
     """One deliberately selected, read-only Ecobee setting projection."""
 
     key: str
-    name: str
     setting_key: str
     value_type: str
     device_class: SensorDeviceClass | None = None
@@ -92,7 +91,6 @@ class ThermostatSettingSensorSpec:
 THERMOSTAT_SETTING_SENSOR_SPECS = (
     ThermostatSettingSensorSpec(
         "compressor_minimum_off_time",
-        "Compressor minimum off time",
         "compressorProtectionMinTime",
         "integer",
         SensorDeviceClass.DURATION,
@@ -100,7 +98,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "compressor_minimum_outdoor_temperature",
-        "Compressor minimum outdoor temperature",
         "compressorProtectionMinTemp",
         "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
@@ -108,7 +105,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "heat_cool_minimum_delta",
-        "Heat cool minimum delta",
         "heatCoolMinDelta",
         "temperature",
         SensorDeviceClass.TEMPERATURE_DELTA,
@@ -116,13 +112,11 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "hold_action",
-        "Hold action",
         "holdAction",
         "text",
     ),
     ThermostatSettingSensorSpec(
         "temperature_correction",
-        "Temperature correction",
         "tempCorrection",
         "temperature",
         SensorDeviceClass.TEMPERATURE_DELTA,
@@ -130,7 +124,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "heating_differential",
-        "Heating differential",
         "stage1HeatingDifferentialTemp",
         "temperature",
         SensorDeviceClass.TEMPERATURE_DELTA,
@@ -138,7 +131,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "cooling_differential",
-        "Cooling differential",
         "stage1CoolingDifferentialTemp",
         "temperature",
         SensorDeviceClass.TEMPERATURE_DELTA,
@@ -146,7 +138,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "heating_dissipation_time",
-        "Heating dissipation time",
         "stage1HeatingDissipationTime",
         "integer",
         SensorDeviceClass.DURATION,
@@ -154,7 +145,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "cooling_dissipation_time",
-        "Cooling dissipation time",
         "stage1CoolingDissipationTime",
         "integer",
         SensorDeviceClass.DURATION,
@@ -162,7 +152,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "hot_temperature_alert",
-        "Hot temperature alert threshold",
         "hotTempAlert",
         "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
@@ -170,7 +159,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "cold_temperature_alert",
-        "Cold temperature alert threshold",
         "coldTempAlert",
         "absolute_temperature",
         SensorDeviceClass.TEMPERATURE,
@@ -178,7 +166,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "high_humidity_alert",
-        "High humidity alert threshold",
         "humidityHighAlert",
         "nonnegative_integer",
         SensorDeviceClass.HUMIDITY,
@@ -186,7 +173,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "low_humidity_alert",
-        "Low humidity alert threshold",
         "humidityLowAlert",
         "nonnegative_integer",
         SensorDeviceClass.HUMIDITY,
@@ -194,21 +180,18 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "last_service_date",
-        "Last service date",
         "lastServiceDate",
         "date",
         SensorDeviceClass.DATE,
     ),
     ThermostatSettingSensorSpec(
         "service_reminder_date",
-        "Service reminder date",
         "remindMeDate",
         "date",
         SensorDeviceClass.DATE,
     ),
     ThermostatSettingSensorSpec(
         "service_reminder_interval",
-        "Service reminder interval",
         "monthsBetweenService",
         "integer",
         None,
@@ -216,7 +199,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
     ),
     ThermostatSettingSensorSpec(
         "playback_volume",
-        "Playback volume",
         "playbackVolume",
         "audio_integer",
         None,
@@ -228,7 +210,6 @@ THERMOSTAT_SETTING_SENSOR_SPECS = (
 GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     BeestatSensorEntityDescription(
         key="status",
-        name="Status",
         translation_key="status",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda coordinator: coordinator.status,
@@ -237,7 +218,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="runtime_sync_last_success",
-        name="Runtime sync last success",
         translation_key="runtime_sync_last_success",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -248,7 +228,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="metadata_sync_last_success",
-        name="Metadata sync last success",
         translation_key="metadata_sync_last_success",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -260,7 +239,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="runtime_summary_row_count",
-        name="Runtime summary row count",
         translation_key="runtime_summary_row_count",
         native_unit_of_measurement="rows",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -271,7 +249,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="statistics_last_import_success",
-        name="Last import success",
         translation_key="statistics_last_import_success",
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -280,7 +257,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="statistics_imported_series",
-        name="Imported series",
         translation_key="statistics_imported_series",
         native_unit_of_measurement="series",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -290,7 +266,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="statistics_imported_rows",
-        name="Imported rows",
         translation_key="statistics_imported_rows",
         native_unit_of_measurement="rows",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -300,7 +275,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="statistics_source_rows",
-        name="Source rows",
         translation_key="statistics_source_rows",
         native_unit_of_measurement="rows",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -310,7 +284,6 @@ GLOBAL_SENSOR_DESCRIPTIONS: tuple[BeestatSensorEntityDescription, ...] = (
     ),
     BeestatSensorEntityDescription(
         key="statistics_skipped_windows",
-        name="Skipped windows",
         translation_key="statistics_skipped_windows",
         native_unit_of_measurement="windows",
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -562,7 +535,6 @@ def _thermostat_sensor_descriptions(
     descriptions: tuple[BeestatSensorEntityDescription, ...] = (
         BeestatSensorEntityDescription(
             key="runtime_summary_latest_date",
-            name="Runtime summary latest date",
             translation_key="runtime_summary_latest_date",
             device_class=SensorDeviceClass.DATE,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -575,7 +547,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="runtime_summary_lag_days",
-            name="Runtime summary lag days",
             translation_key="runtime_summary_lag_days",
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.DAYS,
@@ -590,7 +561,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="current_comfort_profile",
-            name="Current comfort profile",
             translation_key="current_comfort_profile",
             entity_registry_enabled_default=False,
             entity_category=EntityCategory.DIAGNOSTIC,
@@ -610,7 +580,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="scheduled_comfort_profile",
-            name="Scheduled comfort profile",
             translation_key="scheduled_comfort_profile",
             available_fn=partial(
                 _thermostat_metadata_available,
@@ -628,7 +597,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="next_scheduled_comfort_profile_time",
-            name="Next scheduled comfort profile time",
             translation_key="next_scheduled_comfort_profile_time",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TIMESTAMP,
@@ -648,7 +616,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="active_sensor_count",
-            name="Beestat-reported in-use sensor count",
             translation_key="active_sensor_count",
             entity_registry_enabled_default=False,
             native_unit_of_measurement="sensors",
@@ -666,7 +633,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="current_profile_room_temperature_spread",
-            name="Configured profile room temperature spread",
             translation_key="current_profile_room_temperature_spread",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TEMPERATURE_DELTA,
@@ -691,7 +657,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="cloud_data_end",
-            name="Cloud data end",
             translation_key="cloud_data_end",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.TIMESTAMP,
@@ -712,7 +677,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="cloud_data_lag_minutes",
-            name="Cloud data lag minutes",
             translation_key="cloud_data_lag_minutes",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
@@ -731,7 +695,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="active_alert_count",
-            name="Active alert count",
             translation_key="active_alert_count",
             entity_registry_enabled_default=False,
             native_unit_of_measurement="alerts",
@@ -752,7 +715,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="active_alert_category",
-            name="Active alert category",
             translation_key="active_alert_category",
             entity_category=EntityCategory.DIAGNOSTIC,
             available_fn=partial(
@@ -770,7 +732,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_runtime_hours",
-            name="Filter runtime hours",
             translation_key="filter_runtime_hours",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
@@ -789,7 +750,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_recent_runtime_hours_per_day",
-            name="Filter recent runtime hours per day",
             translation_key="filter_recent_runtime_hours_per_day",
             entity_registry_enabled_default=False,
             native_unit_of_measurement="h/d",
@@ -807,7 +767,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_remaining_runtime_hours",
-            name="Filter remaining runtime hours",
             translation_key="filter_remaining_runtime_hours",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DURATION,
@@ -831,7 +790,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_runtime_due_date",
-            name="Filter runtime due date",
             translation_key="filter_runtime_due_date",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DATE,
@@ -853,7 +811,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_max_age_due_date",
-            name="Filter max age due date",
             translation_key="filter_max_age_due_date",
             entity_registry_enabled_default=False,
             device_class=SensorDeviceClass.DATE,
@@ -875,7 +832,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_due_date",
-            name="Filter due date",
             translation_key="filter_due_date",
             device_class=SensorDeviceClass.DATE,
             available_fn=partial(
@@ -895,7 +851,6 @@ def _thermostat_sensor_descriptions(
         ),
         BeestatSensorEntityDescription(
             key="filter_days_remaining",
-            name="Filter days remaining",
             translation_key="filter_days_remaining",
             device_class=SensorDeviceClass.DURATION,
             native_unit_of_measurement=UnitOfTime.DAYS,
@@ -919,7 +874,6 @@ def _thermostat_sensor_descriptions(
     descriptions += tuple(
         BeestatSensorEntityDescription(
             key=spec.key,
-            name=spec.name,
             translation_key=spec.key,
             device_class=spec.device_class,
             native_unit_of_measurement=spec.unit,

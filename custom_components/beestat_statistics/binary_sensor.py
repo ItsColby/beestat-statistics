@@ -42,36 +42,32 @@ if TYPE_CHECKING:
 
 PARALLEL_UPDATES = 0
 
-_THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, str, bool], ...] = (
-    ("auto_away_enabled", "Auto away enabled", "autoAway", False),
-    ("follow_me_enabled", "Follow me enabled", "followMeComfort", False),
+_THERMOSTAT_SETTING_BINARY_SENSORS: tuple[tuple[str, str, bool], ...] = (
+    ("auto_away_enabled", "autoAway", False),
+    ("follow_me_enabled", "followMeComfort", False),
     (
         "smart_circulation_enabled",
-        "Smart circulation enabled",
         "smartCirculation",
         False,
     ),
-    ("preheating_enabled", "Preheating enabled", "disablePreHeating", True),
-    ("precooling_enabled", "Precooling enabled", "disablePreCooling", True),
+    ("preheating_enabled", "disablePreHeating", True),
+    ("precooling_enabled", "disablePreCooling", True),
     (
         "hot_temperature_alert_enabled",
-        "Hot temperature alert enabled",
         "hotTempAlertEnabled",
         False,
     ),
     (
         "cold_temperature_alert_enabled",
-        "Cold temperature alert enabled",
         "coldTempAlertEnabled",
         False,
     ),
     (
         "wifi_offline_alert_enabled",
-        "Wi-Fi offline alert enabled",
         "wifiOfflineAlert",
         False,
     ),
-    ("service_reminder_enabled", "Service reminder enabled", "serviceRemindMe", False),
+    ("service_reminder_enabled", "serviceRemindMe", False),
 )
 
 
@@ -137,12 +133,11 @@ def _build_entities(
             coordinator,
             thermostat,
             key=key,
-            name=name,
             setting_key=setting_key,
             inverted=inverted,
         )
         for thermostat in data.config.thermostats
-        for key, name, setting_key, inverted in (_THERMOSTAT_SETTING_BINARY_SENSORS)
+        for key, setting_key, inverted in (_THERMOSTAT_SETTING_BINARY_SENSORS)
     )
     entities.extend(
         BeestatThermostatAudioBinarySensor(coordinator, thermostat)
@@ -158,7 +153,6 @@ class BeestatThermostatAudioBinarySensor(
     """Expose microphone state when an Ecobee model supplies it."""
 
     _attr_has_entity_name = True
-    _attr_name = "Microphone enabled"
     _attr_translation_key = "microphone_enabled"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
@@ -226,7 +220,6 @@ class BeestatThermostatSettingBinarySensor(
         thermostat: ConfiguredThermostat,
         *,
         key: str,
-        name: str,
         setting_key: str,
         inverted: bool,
     ) -> None:
@@ -235,7 +228,6 @@ class BeestatThermostatSettingBinarySensor(
         self._thermostat = thermostat
         self._setting_key = setting_key
         self._inverted = inverted
-        self._attr_name = name
         self._attr_translation_key = key
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -288,7 +280,6 @@ class BeestatImportPartialProblemBinarySensor(
     """Expose partial Recorder import passes as a native diagnostic problem."""
 
     _attr_has_entity_name = True
-    _attr_name = "Import partial"
     _attr_translation_key = "statistics_import_partial"
     _attr_unique_id = "statistics_import_partial"
     _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
@@ -354,7 +345,6 @@ class BeestatHomeKitMappingIncompleteProblemBinarySensor(
     """Expose whether any discovered Beestat devices are not HomeKit-backed."""
 
     _attr_has_entity_name = True
-    _attr_name = "HomeKit mapping incomplete"
     _attr_translation_key = "homekit_mapping_incomplete"
     _attr_unique_id = "homekit_mapping_incomplete"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -430,7 +420,6 @@ class BeestatSensorInUseBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, sensor.device_id)
         self._sensor = sensor
-        self._attr_name = "Beestat-reported sensor in use"
         self._attr_translation_key = "sensor_in_use"
         self._attr_unique_id = sensor_entity_unique_id(
             sensor.sensor_id, "sensor_in_use"
@@ -508,7 +497,6 @@ class BeestatThermostatAlertProblemBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
-        self._attr_name = "Active alert"
         self._attr_translation_key = "active_alert"
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -566,7 +554,6 @@ class BeestatEquipmentAlertProblemBinarySensor(
 ):
     """Expose equipment-looking Beestat/Ecobee alerts as HA problems."""
 
-    _attr_name = "Equipment alert"
     _attr_translation_key = "equipment_alert"
     _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
     _attr_entity_registry_enabled_default = True
@@ -577,7 +564,6 @@ class BeestatEquipmentAlertProblemBinarySensor(
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator, thermostat)
-        self._attr_name = "Equipment alert"
         self._attr_translation_key = "equipment_alert"
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -608,7 +594,6 @@ class BeestatFilterDueProblemBinarySensor(
     """Expose whether the thermostat filter is due now."""
 
     _attr_has_entity_name = True
-    _attr_name = "Filter due"
     _attr_translation_key = "filter_due"
     _attr_device_class: BinarySensorDeviceClass | None = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -703,7 +688,6 @@ class BeestatFilterDueProblemBinarySensor(
 class BeestatFilterDueSoonProblemBinarySensor(BeestatFilterDueProblemBinarySensor):
     """Expose when a thermostat filter is inside the notice window."""
 
-    _attr_name = "Filter due soon"
     _attr_translation_key = "filter_due_soon"
     _attr_device_class = None
 
@@ -713,7 +697,6 @@ class BeestatFilterDueSoonProblemBinarySensor(BeestatFilterDueProblemBinarySenso
         thermostat: ConfiguredThermostat,
     ) -> None:
         super().__init__(coordinator, thermostat)
-        self._attr_name = "Filter due soon"
         self._attr_translation_key = "filter_due_soon"
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
@@ -754,7 +737,6 @@ class BeestatRuntimeStaleProblemBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
-        self._attr_name = "Runtime summary stale"
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
             "runtime_summary_stale",
@@ -822,7 +804,6 @@ class BeestatCloudDataStaleProblemBinarySensor(
         super().__init__(coordinator)
         link_entity_to_device(self, coordinator.hass, thermostat.device_id)
         self._thermostat = thermostat
-        self._attr_name = "Cloud data stale"
         self._attr_unique_id = thermostat_entity_unique_id(
             thermostat.thermostat_id,
             "cloud_data_stale",
