@@ -15,10 +15,9 @@ You need Home Assistant **2026.11.1 or later**, Recorder, and a Beestat API key
 for an account that exposes at least one identifiable thermostat. Matching local
 HomeKit/Ecobee devices are useful but are not required for history imports.
 
-1. [Open Beestat Statistics in the Marketplace](https://my.home-assistant.io/redirect/marketplace_repository/?owner=ItsColby&repository=beestat-statistics&category=integration),
-   or, in **Settings > Marketplace**, select **Add from link** and enter
-   `https://github.com/ItsColby/beestat-statistics`. Adding a custom repository
-   asks you to connect GitHub through device sign-in.
+1. In **Settings > Marketplace**, select **Add from link**, enter
+   `https://github.com/ItsColby/beestat-statistics` and select **Add**. Adding a
+   custom repository asks you to connect GitHub through device sign-in.
 2. Install the integration and restart Home Assistant.
 3. Under **Settings > Devices & services**, add **Beestat Statistics** and enter
    the API key. Keep the default API URL unless you need another supported
