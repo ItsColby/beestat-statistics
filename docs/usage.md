@@ -464,7 +464,10 @@ data:
 - **Hourly holds or incomplete charts:** inspect `hourly_statistics` and
   `get_hourly_coverage`. Missing observations, pending reconciliation, changed
   source identity and incompatible metadata need different recovery. Preserve the
-  saved intent after a conflict; do not replace missing observations with zero.
+  saved intent when reconciliation is pending. During a source dispute, native
+  charts can still show previously committed values while qualified coverage
+  returns null. See [routine source holds](hourly-history-v3.md#routine-corrections-after-adoption)
+  for recovery. Do not replace missing observations with zero.
 - **Unexpected filter estimate:** inspect the effective date source, boundary
   status, recent complete-day count, and runtime quality before changing policy.
   Use corrections for erroneous records, not another replacement action.
