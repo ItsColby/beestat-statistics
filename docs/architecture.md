@@ -17,6 +17,11 @@ The normal flow is:
 
 Runtime refreshes and imports have separate locks. Scheduled import requests coalesce to one running pass plus one pending follow-up through [`task_coalescer.py`](../custom_components/beestat_statistics/task_coalescer.py). This bounds repeated timer/helper events without dropping the need to reconcile current state. Entry-owned background tasks, listeners, and timers stop on unload; retained coordinator/importer references reject new work. The startup import reuses the initial refresh by skipping another sync request.
 
+If Beestat explicitly reports that synchronization did not run after the
+initial refresh retries, setup reads the data already available from Beestat.
+The integration still requires successful reads, leaves sync timestamps unset,
+and starts the normal coverage-checked Recorder import after setup.
+
 ## Identity and configuration
 
 Connection data, mutable options, source identity, and presentation names have different lifetimes. [`config_payload.py`](../custom_components/beestat_statistics/config_payload.py) owns the stored representation; [`config_model.py`](../custom_components/beestat_statistics/config_model.py) resolves it into effective thermostat and sensor models.
