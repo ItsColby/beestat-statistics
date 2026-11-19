@@ -23,6 +23,7 @@ from .api import (
     BeestatApiError,
     BeestatAuthError,
     BeestatClient,
+    BeestatSyncRejectedError,
     exception_fingerprint,
 )
 from .config_model import (
@@ -525,7 +526,15 @@ class BeestatRuntimeDataCoordinator(DataUpdateCoordinator[BeestatRuntimeData]):
 
     async def _async_update_data(self) -> BeestatRuntimeData:
         try:
-            return await self._async_fetch_runtime_data(skip_sync=False)
+            try:
+                return await self._async_fetch_runtime_data(skip_sync=False)
+            except BeestatSyncRejectedError:
+                if self.data is not None:
+                    raise
+                _LOGGER.warning(
+                    "Beestat declined startup synchronization; reading available data"
+                )
+                return await self._async_fetch_runtime_data(skip_sync=True)
         except BeestatAuthError:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN,

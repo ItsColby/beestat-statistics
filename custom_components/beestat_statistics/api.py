@@ -29,6 +29,10 @@ class BeestatAuthError(BeestatApiError):
     """Raised when Beestat rejects the configured API key."""
 
 
+class BeestatSyncRejectedError(BeestatApiError):
+    """Raised when a successful API response reports that synchronization did not run."""
+
+
 class _BeestatNonRetryableError(BeestatApiError):
     """Raised when another identical request cannot plausibly correct the error."""
 
@@ -383,7 +387,7 @@ class BeestatClient:
                     payload, resource, method, require_envelope_data=trace is not None
                 )
                 if method == "sync" and data is False:
-                    raise BeestatApiError(
+                    raise BeestatSyncRejectedError(
                         f"{resource}.{method} returned an unsuccessful response "
                         "[failure=sync_false]"
                     )
@@ -410,7 +414,12 @@ class BeestatClient:
                 await asyncio.sleep(2**attempt)
 
         assert last_error is not None
-        raise BeestatApiError(
+        error_type = (
+            BeestatSyncRejectedError
+            if isinstance(last_error, BeestatSyncRejectedError)
+            else BeestatApiError
+        )
+        raise error_type(
             f"Failed Beestat call {resource}.{method}: {self.redact_error(last_error)} "
             f"[attempts={attempt}; "
             f"final_http_status={status if status is not None else 'unavailable'}]"

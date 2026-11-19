@@ -162,7 +162,12 @@ class ApiResponseTest(unittest.IsolatedAsyncioTestCase):
                     "runtime.sync returned an unsuccessful response "
                     f"[failure={failure}] [attempts=3; final_http_status=200]",
                 )
-                self.assertEqual(type(raised.exception), self.api.BeestatApiError)
+                expected_type = (
+                    self.api.BeestatSyncRejectedError
+                    if failure == "sync_false"
+                    else self.api.BeestatApiError
+                )
+                self.assertEqual(type(raised.exception), expected_type)
                 self.assertEqual(session.call_count, 3)
                 self.assertEqual(
                     [call.args for call in sleep.await_args_list], [(2,), (4,)]
