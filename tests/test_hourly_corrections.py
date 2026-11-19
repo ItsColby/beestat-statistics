@@ -101,6 +101,16 @@ def apply(scenario):
     )
 
 
+@pytest.mark.parametrize("field", ["identity", "timezone", "method_version"])
+def test_active_document_still_requires_current_binding(scenario, field):
+    _, item, qid, _, _, doc, binding, _ = scenario
+    sealed = {**binding, "identity": {"entry_id": "entry"}, "config_digest": "a" * 64}
+    doc = {**doc, "binding": sealed}
+    current = {**sealed, "config_digest": "b" * 64, field: "changed"}
+    with pytest.raises(ValueError, match="history_correction_document_invalid"):
+        validate_document(doc, current, {qid: item.descriptor}, active=True)
+
+
 def test_replacement_and_equal_reacquisition(scenario):
     helper, _, qid, merged, sources, doc, _, _ = scenario
     before = deepcopy(merged)

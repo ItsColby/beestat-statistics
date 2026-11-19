@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 
@@ -12,6 +13,7 @@ import pytest
 
 from custom_components.beestat_statistics import hourly_corrections as correction
 from custom_components.beestat_statistics import hourly_history_writer as history
+from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.hourly_history_contract import digest
 from custom_components.beestat_statistics.hourly_history_query import history_response
 from custom_components.beestat_statistics.hourly_import_core import HourlyImportError
@@ -221,6 +223,78 @@ async def test_dependency_change_fails_closed_and_partial_plan_cannot_admit_it(a
     assert all(
         row.mean is None for row in helper.recorder.rows[fixture.NATIVE].values()
     )
+
+
+async def test_active_correction_survives_unrelated_sensor_rename(adopted):
+    helper = adopted
+    sensor = ConfiguredSensor(
+        sensor_id=2,
+        slug="room",
+        name="Old Room",
+        thermostat_id=1,
+        thermostat_slug="zone",
+        include_temperature=True,
+        include_air_quality=False,
+        include_co2=False,
+        include_voc=False,
+    )
+    config = replace(helper.context["config"], sensors=(sensor,))
+    helper.context["config"] = config
+    request, receipt, document = await prepare(helper)
+    await apply(helper, request)
+    await helper.complete()
+    index = deepcopy(helper.store.value["history"]["corrections"])
+    rows = deepcopy(helper.recorder.rows)
+    helper.context["config"] = replace(
+        config, sensors=(replace(sensor, name="New Room"),)
+    )
+
+    writer = helper.writer._history_writer()
+    assert writer.binding(helper.context) != document["binding"]
+    replay = {
+        **request,
+        "operation_id": "after-sensor-rename",
+        "expected_revision": helper.store.value["revision"],
+    }
+    with pytest.raises(ValueError, match="history_correction_document_invalid"):
+        await writer.plan(replay, helper.context)
+
+    result = await helper.writer.async_refresh_history(
+        {"start": request["start"], "end": request["end"], "source_ids": []},
+        context=helper.context,
+    )
+    assert result == {"status": "unchanged", "changed_rows": 0}
+    assert helper.store.value["history"]["corrections"] == index
+    assert helper.recorder.rows == rows
+    assert (
+        await writer.read_object("correction", receipt["correction_id"], helper.context)
+        == document
+    )
+
+    changed = deepcopy(helper.context["descriptors"])
+    changed[0]["logical_unit"] = "incompatible"
+    with pytest.raises(ValueError, match="history_correction_descriptor_changed"):
+        correction.validate_document(
+            document,
+            writer.binding(helper.context),
+            {item["quantity_id"]: item for item in changed},
+            active=True,
+        )
+
+    later = fixture.START + 2 * fixture.HOUR
+    incoming = await helper.stage(start=later, hours=1, acquisition="new-hour")
+    result = await helper.writer.async_refresh_history(
+        {
+            "start": later.isoformat(),
+            "end": (later + fixture.HOUR).isoformat(),
+            "source_ids": [incoming],
+        },
+        context=helper.context,
+    )
+    assert result["status"] == "accepted", result
+    await helper.complete()
+    assert helper.recorder.rows[fixture.NATIVE][later].mean == 50
+    assert helper.store.value["history"]["corrections"] == index
 
 
 async def test_stale_plan_conflicting_corrections_and_explicit_withdrawal(adopted):
