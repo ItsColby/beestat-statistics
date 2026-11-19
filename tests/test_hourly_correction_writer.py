@@ -326,6 +326,46 @@ async def test_first_activation_protects_dependencies_across_restart(
     assert manifest["corrections"] == helper.store.value["history"]["corrections"]
 
 
+@pytest.mark.parametrize("second_action", ["replace", "hold"])
+async def test_routine_stale_correction_without_conflict_preserves_native_rows(
+    adopted, second_action
+):
+    helper = adopted
+    request, _, _ = await prepare(helper, actions=("replace", second_action))
+    await apply(helper, request)
+    await helper.complete()
+    incoming = await helper.stage(fan=300, acquisition="changed-reviewed-dependency")
+    window = {"start": request["start"], "end": request["end"]}
+    before = deepcopy(helper.recorder.rows)
+
+    result = await helper.writer.async_refresh_history(
+        {**window, "source_ids": [incoming]}, context=helper.context
+    )
+
+    assert result["status"] == "blocked", result
+    assert result["error"] == "source_timestamp_unplaced"
+    assert not result["has_pending"]
+    assert helper.recorder.rows == before
+
+    helper.writer = helper.fresh()
+    retained = await helper.writer.async_refresh_history(
+        {**window, "source_ids": []}, context=helper.context
+    )
+    assert retained["status"] == "blocked", retained
+    assert retained["error"] == "source_timestamp_unplaced"
+    assert retained["root_revision"] == result["root_revision"]
+    assert helper.recorder.rows == before
+
+    query = {**window, "quantity_ids": [fixture.KEY], "contract_version": 3}
+    material = await helper.writer.async_history_material(query, context=helper.context)
+    holds = material["source_holds"][fixture.KEY]
+    expected_starts = [fixture.START.isoformat()]
+    if second_action == "replace":
+        expected_starts.append((fixture.START + fixture.HOUR).isoformat())
+    assert [hold["start"] for hold in holds] == expected_starts
+    assert {hold["reason"] for hold in holds} == {"source_timestamp_unplaced"}
+
+
 async def test_routine_conflict_and_stale_correction_fence_survives_restart(adopted):
     helper = adopted
     request, receipt, _ = await prepare(helper, actions=("replace",))

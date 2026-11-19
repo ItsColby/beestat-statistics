@@ -1251,52 +1251,85 @@ class HistoryWriter:
                 require_digest(source_id)
         return value
 
-    async def save_holds(
+    async def block_disputed_source(
         self,
         root: dict[str, Any],
         batches: list[dict[str, Any]],
         source_ids: list[str],
         context: dict[str, Any],
-    ) -> bool:
-        """Fence disputed committed values without creating a Recorder intent."""
-        after = deepcopy(root)
-        index = after["history"].setdefault("source_holds", {})
-        changed = False
+    ) -> dict[str, Any] | None:
+        """Fence routine source disputes without creating a Recorder intent."""
+        reasons: set[str] = set()
+        after = None
         for batch in batches:
+            if not {"source_conflict", "source_timestamp_unplaced"}.intersection(
+                batch["dispositions"]
+            ):
+                continue
+            committed_values = {
+                row["start"] for row in batch["before"] if row["mean"] is not None
+            }
+            first, end = bounds(batch["start"], batch["end"])
+            disputed = {
+                hour["start"]: hour["status"]
+                for hour in batch["proof"]["hours"]
+                if first <= utc(hour["start"]) < end
+                and (
+                    hour["status"] == "source_conflict"
+                    or (
+                        hour["status"] == "source_timestamp_unplaced"
+                        and hour["start"] in committed_values
+                    )
+                )
+            }
+            if not disputed:
+                continue
+            reasons.update(disputed.values())
             key, month = batch["quantity_id"], batch["month"]
             hold = await self.hold(root["history"], key, month, context)
             intervals = {row["start"]: row for row in hold["intervals"]}
-            for hour in batch["proof"]["hours"]:
-                if hour["status"] not in {
-                    "source_conflict",
-                    "source_timestamp_unplaced",
-                } or not utc(batch["start"]) <= utc(hour["start"]) < utc(batch["end"]):
-                    continue
-                prior = intervals.get(hour["start"], {})
-                intervals[hour["start"]] = {
-                    "start": hour["start"],
-                    "end": (utc(hour["start"]) + _HOUR).isoformat(),
-                    "reason": hour["status"],
+            for stamp, reason in disputed.items():
+                prior = intervals.get(stamp, {})
+                intervals[stamp] = {
+                    "start": stamp,
+                    "end": (utc(stamp) + _HOUR).isoformat(),
+                    "reason": reason,
                     "source_ids": sorted(
                         set(source_ids) | set(prior.get("source_ids", ()))
                     ),
                 }
-            hold["intervals"] = [intervals[stamp] for stamp in sorted(intervals)]
-            if not intervals:
-                continue
-            reference = await self.write_object("operation", hold, context)
-            if index.get(key, {}).get(month) != reference:
+            updated = [intervals[stamp] for stamp in sorted(intervals)]
+            if updated != hold["intervals"]:
+                reference = await self.write_object(
+                    "operation", {**hold, "intervals": updated}, context
+                )
+                if after is None:
+                    after = deepcopy(root)
+                index = after["history"].setdefault("source_holds", {})
                 index.setdefault(key, {})[month] = reference
-                changed = True
-        if not changed:
-            return False
+        if not reasons:
+            return None
+        if after is not None:
+            await self.commit_source_holds(root, after, context)
+        return {
+            **status(root if after is None else self.manager._state),
+            "status": "blocked",
+            "error": "source_conflict"
+            if "source_conflict" in reasons
+            else "source_timestamp_unplaced",
+            "has_pending": False,
+        }
+
+    async def commit_source_holds(
+        self, root: dict[str, Any], after: dict[str, Any], context: dict[str, Any]
+    ) -> None:
         if digest(await self.root(context)) != digest(root):
             raise HourlyImportError("history_root_changed_before_hold")
         after["revision"] += 1
         after["token"] = digest(
             {
                 "previous_token": root["token"],
-                "source_holds": index,
+                "source_holds": after["history"]["source_holds"],
                 "revision": after["revision"],
             }
         )
@@ -1317,7 +1350,6 @@ class HistoryWriter:
         self.manager._state, self.manager._loaded = root, True
         await self.manager._save(after)
         await self.guard(context)
-        return True
 
     async def clear_holds(
         self, root: dict[str, Any], batch: dict[str, Any], context: dict[str, Any]
@@ -1872,14 +1904,10 @@ class HistoryWriter:
             normalized, context, order, supersedes, changed_only=True
         )
         await self.validate_native_rows(root, batches, context)
-        if any(batch["dispositions"].get("source_conflict") for batch in batches):
-            await self.save_holds(root, batches, request["source_ids"], context)
-            return {
-                **status(self.manager._state),
-                "status": "blocked",
-                "error": "source_conflict",
-                "has_pending": False,
-            }
+        if blocked := await self.block_disputed_source(
+            root, batches, request["source_ids"], context
+        ):
+            return blocked
         if deltas:
             baseline = await self.source_points(request, context)
             self.validate_deltas(deltas, baseline, first, end, context)
@@ -1946,16 +1974,10 @@ class HistoryWriter:
         manifest, batches, _state = await self.plan(
             normalized, context, changed_only=True
         )
-        if any(batch["dispositions"].get("source_conflict") for batch in batches):
-            # A held conflict needs a reviewed plan; a routine pass must not
-            # clear its committed value or drop its hold.
-            return {
-                **status(root),
-                "status": "blocked",
-                "error": "source_conflict",
-                "has_pending": False,
-            }
-        if not await self.validate_native_rows(root, batches, context):
+        newly_ready = await self.validate_native_rows(root, batches, context)
+        if blocked := await self.block_disputed_source(root, batches, [], context):
+            return blocked
+        if not newly_ready:
             return {"status": "unchanged", "changed_rows": 0}
         return await self.accept(
             {**normalized, "plan_digest": digest(manifest)},
