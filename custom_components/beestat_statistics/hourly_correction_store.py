@@ -78,7 +78,9 @@ class Corrections:
     def __init__(self, writer: Any) -> None:
         self.writer = writer
 
-    async def document(self, reference: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def document(
+        self, reference: str, context: dict[str, Any], *, active: bool = False
+    ) -> dict[str, Any]:
         document = await self.writer.read_object("correction", reference, context)
         await self.writer.cpu(
             validate_document,
@@ -86,6 +88,7 @@ class Corrections:
             self.writer.binding(context),
             {item["quantity_id"]: item for item in context["descriptors"]},
             context=context,
+            active=active,
         )
         for original in document["originals"]:
             raw = await self.writer.manager._store.async_read_object(
@@ -174,7 +177,9 @@ class Corrections:
             for stamp, item in hours.items():
                 reference, number = item["object"], item["entry"]
                 if reference not in documents:
-                    documents[reference] = await self.document(reference, context)
+                    documents[reference] = await self.document(
+                        reference, context, active=True
+                    )
                 entries = documents[reference]["entries"]
                 if (
                     number >= len(entries)
@@ -294,7 +299,9 @@ class Corrections:
                     raise HourlyImportError("history_correction_replan_required")
                 object_id = reference["object"]
                 if object_id not in documents:
-                    documents[object_id] = await self.document(object_id, context)
+                    documents[object_id] = await self.document(
+                        object_id, context, active=True
+                    )
                 entry = documents[object_id]["entries"][reference["entry"]]
                 descriptor = entry["descriptor"]
                 dependency_key = (
@@ -349,7 +356,9 @@ class Corrections:
             for reference in hours.values():
                 object_id = reference["object"]
                 if object_id not in documents:
-                    documents[object_id] = await self.document(object_id, context)
+                    documents[object_id] = await self.document(
+                        object_id, context, active=True
+                    )
                 entry = documents[object_id]["entries"][reference["entry"]]
                 descriptor = entry["descriptor"]
                 sensor = descriptor["sensor_id"]

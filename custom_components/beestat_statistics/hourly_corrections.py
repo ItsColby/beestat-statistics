@@ -113,6 +113,8 @@ def validate_document(
     document: dict[str, Any],
     binding: dict[str, Any],
     descriptors: dict[str, dict[str, Any]],
+    *,
+    active: bool = False,
 ) -> dict[str, Any]:
     """Validate the complete sealed contract against current identity and methods."""
     if (
@@ -120,9 +122,20 @@ def validate_document(
         or set(document)
         != {"format", "binding", "converter_version", "originals", "entries"}
         or document["format"] != "reviewed_quantity_correction_v1"
-        or document["binding"] != binding
+        or not isinstance(document["binding"], dict)
         or len(canonical_json(document)) > 8 * 1024 * 1024
     ):
+        raise ValueError("history_correction_document_invalid")
+    sealed_binding = document["binding"]
+    # A committed correction still binds each quantity below. Its original
+    # configuration digest records admission, which included unrelated metadata.
+    expected_binding = binding
+    if active:
+        expected_binding = {
+            **binding,
+            "config_digest": require_digest(sealed_binding.get("config_digest")),
+        }
+    if sealed_binding != expected_binding:
         raise ValueError("history_correction_document_invalid")
     version = document["converter_version"]
     if not isinstance(version, str) or not 1 <= len(version) <= 128:

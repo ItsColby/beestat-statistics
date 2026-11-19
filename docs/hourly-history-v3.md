@@ -338,6 +338,12 @@ Staging retains immutable originals in a separate evidence namespace and the doc
 does not change the active root. Explicit holds remain visible in coverage.
 Raw delta evidence remains unchanged.
 
+Staging and explicitly selecting a correction require the current entry binding.
+After activation, the sealed configuration digest records admission. Routine
+reuse keeps the original document and validates its entry identity, timezone,
+method, and corrected quantity descriptors, so a configuration change outside
+those quantities does not invalidate their reviewed evidence.
+
 After activation, persisted root version 4 is required. Rollback requires a
 full consistent backup of the root, its object namespace, Recorder data,
 entry and marker, configuration and matching component versions; changing code
