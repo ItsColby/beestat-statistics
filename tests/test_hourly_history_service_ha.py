@@ -631,24 +631,44 @@ async def test_context_change_during_native_read_discards_response_without_write
         else _request(runtime, service)
     )
     task = asyncio.create_task(_call(runtime, service, request, context))
-    await asyncio.wait_for(started.wait(), 1)
-    if changed == "runtime":
-        runtime.entry.runtime_data = SimpleNamespace(
-            client=runtime.client,
-            coordinator=runtime.coordinator,
-            importer=runtime.importer,
+    signal = asyncio.create_task(started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (signal, task), timeout=1, return_when=asyncio.FIRST_COMPLETED
         )
-    elif changed == "configuration":
-        data = runtime.coordinator.data
-        thermostat = replace(data.config.thermostats[0], name="Changed fixture")
-        runtime.coordinator.data = replace(
-            data, config=replace(data.config, thermostats=(thermostat,))
-        )
-    else:
-        runtime.coordinator.async_update_local_timezone(ZoneInfo("UTC"))
-    proceed.set()
-    with pytest.raises(HomeAssistantError):
-        await task
+        if task in done:
+            task.result()
+        if signal not in done:
+            if task in done:
+                raise AssertionError("Native read ended before reaching the barrier")
+            raise AssertionError(
+                "Native read did not reach the barrier within 1 second; "
+                "this real-time bound may fail under load. "
+                "Rerun the test when the host is less busy."
+            )
+        if changed == "runtime":
+            runtime.entry.runtime_data = SimpleNamespace(
+                client=runtime.client,
+                coordinator=runtime.coordinator,
+                importer=runtime.importer,
+            )
+        elif changed == "configuration":
+            data = runtime.coordinator.data
+            thermostat = replace(data.config.thermostats[0], name="Changed fixture")
+            runtime.coordinator.data = replace(
+                data, config=replace(data.config, thermostats=(thermostat,))
+            )
+        else:
+            runtime.coordinator.async_update_local_timezone(ZoneInfo("UTC"))
+        proceed.set()
+        with pytest.raises(HomeAssistantError):
+            await task
+    finally:
+        proceed.set()
+        for pending in (signal, task):
+            if not pending.done():
+                pending.cancel()
+        await asyncio.gather(signal, task, return_exceptions=True)
     assert not Path(runtime.store.path).exists()
     assert MARKER not in runtime.entry.data
     runtime.submit.assert_not_called()

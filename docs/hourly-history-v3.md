@@ -438,7 +438,13 @@ within the accepted 45-day policy. A pending operation resumes its sealed
 intent before a different acquisition can be accepted. The import pass advances
 the routine operation it accepts to completion or a hold under its own lock
 before recording its result, so Import partial reports only held or unverified
-work. Historical rebuilds outside this routine path require a new explicit plan.
+work. A routine source conflict, or a timestamp that the acquisition cannot
+place over an hour with a committed value, blocks the pass and records a
+durable hold without creating a pending Recorder write. Existing
+Recorder rows stay in place and may still appear in native charts. Qualified
+coverage returns null for the affected hours until an explicit reviewed plan
+resolves the hold. Historical rebuilds outside the routine path also require
+a new explicit plan.
 
 One acquisition resolves all ordered resource chunks, including invalid rows
 and tombstones, before comparison with a named committed source revision and
