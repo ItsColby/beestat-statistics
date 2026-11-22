@@ -1,4 +1,4 @@
-"""Read-only planning of independent-hour history operations.
+"""Planning and sealing of independent-hour history operations.
 
 A plan normalizes the request, assesses each quantity/month against its proof
 and native snapshot, and digests the result; nothing changes until a reviewed
