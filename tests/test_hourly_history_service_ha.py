@@ -21,7 +21,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from custom_components.beestat_statistics import hourly_history_writer
+from custom_components.beestat_statistics import hourly_history_planning
 from custom_components.beestat_statistics import importer as importer_module
 from custom_components.beestat_statistics.const import DOMAIN
 from custom_components.beestat_statistics.hourly_history_contract import (
@@ -340,7 +340,7 @@ async def test_apply_reaches_routine_quantity_limit_through_the_writer(
     plan = await _call(runtime, "plan_hourly_history", request, context)
     assert plan["status"] == "planned", plan
     # Adopting a second quantity now would exceed a limit of one.
-    monkeypatch.setattr(hourly_history_writer, "MAX_QUANTITIES", 1)
+    monkeypatch.setattr(hourly_history_planning, "MAX_QUANTITIES", 1)
     with pytest.raises(ServiceValidationError) as raised:
         await _call(
             runtime,

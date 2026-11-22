@@ -13,9 +13,13 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 from custom_components.beestat_statistics import config_model as model
+from custom_components.beestat_statistics import (
+    hourly_history_contract as history_contract,
+)
 from custom_components.beestat_statistics import hourly_history_delta as delta_builder
 from custom_components.beestat_statistics import hourly_history_io as history_io
 from custom_components.beestat_statistics import hourly_history_legacy as legacy_module
+from custom_components.beestat_statistics import hourly_history_planning as planning
 from custom_components.beestat_statistics import hourly_history_root as history_root
 from custom_components.beestat_statistics import (
     hourly_history_source_view as source_view,
@@ -218,7 +222,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             "start": START.isoformat(),
             "end": (START + 2 * HOUR).isoformat(),
             "archive_policy": "reject",
-            "daily_policy": writer.DAILY_POLICY,
+            "daily_policy": history_contract.DAILY_POLICY,
             "operation_id": "initial-adoption",
             "expected_revision": 0,
             "consumer_contract": {
@@ -228,7 +232,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                         "consumer_id": "fixture",
                         "version": "1",
                         "history_contract": 3,
-                        "daily_policy": writer.DAILY_POLICY,
+                        "daily_policy": history_contract.DAILY_POLICY,
                     }
                 ],
             },
@@ -420,13 +424,13 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             operation_id="second-adoption",
             expected_revision=self.writer._state["revision"],
         )
-        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
+        with unittest.mock.patch.object(planning, "MAX_QUANTITIES", 1):
             plan = await self.writer.async_plan_history(request, context=self.context)
         self.assertEqual(plan["status"], "blocked", plan)
         self.assertEqual(
             plan["blocking_reasons"], ["history_routine_quantities_exceeded"]
         )
-        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 2):
+        with unittest.mock.patch.object(planning, "MAX_QUANTITIES", 2):
             plan = await self.writer.async_plan_history(request, context=self.context)
         self.assertEqual(plan["status"], "planned", plan)
 
@@ -464,7 +468,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             operation_id="second-adoption",
             expected_revision=self.writer._state["revision"],
         )
-        with unittest.mock.patch.object(writer, "MAX_QUANTITIES", 1):
+        with unittest.mock.patch.object(planning, "MAX_QUANTITIES", 1):
             plan = await self.writer.async_plan_history(request, context=self.context)
         self.assertEqual(plan["status"], "planned", plan)
 
@@ -1485,7 +1489,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(resource["slots"]), 12)
         self.assertEqual(
             baseline["baseline_digest"],
-            writer.digest(
+            history_contract.digest(
                 {
                     key: value
                     for key, value in baseline.items()
@@ -1531,15 +1535,17 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             await self.stage(
                 start=old_start, hours=1, acquisition=f"catalog-retained-{index}"
             )
-            for index in range(writer.MAX_SOURCE_CHUNKS)
+            for index in range(history_contract.MAX_SOURCE_CHUNKS)
         ]
         catalog["source_ids"] = sorted(set(catalog["source_ids"]) | set(older_ids))
-        self.assertEqual(len(catalog["source_ids"]), writer.MAX_SOURCE_CHUNKS + 1)
+        self.assertEqual(
+            len(catalog["source_ids"]), history_contract.MAX_SOURCE_CHUNKS + 1
+        )
         history["source_catalog"][month] = await self.store.async_write_object(
-            "operation", writer.canonical_json(catalog)
+            "operation", history_contract.canonical_json(catalog)
         )
         history["first_provider"]["runtime_thermostat:1"] = old_start.isoformat()
-        history["source_revision"] = writer.digest(
+        history["source_revision"] = history_contract.digest(
             {
                 "catalog": history["source_catalog"],
                 "first_provider": history["first_provider"],
