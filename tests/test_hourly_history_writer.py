@@ -18,6 +18,9 @@ from custom_components.beestat_statistics import hourly_history_io as history_io
 from custom_components.beestat_statistics import hourly_history_legacy as legacy_module
 from custom_components.beestat_statistics import hourly_history_root as history_root
 from custom_components.beestat_statistics import (
+    hourly_history_source_view as source_view,
+)
+from custom_components.beestat_statistics import (
     hourly_history_values as representation,
 )
 from custom_components.beestat_statistics import hourly_history_writer as writer
@@ -2005,7 +2008,7 @@ class SupersessionContractionTest(unittest.TestCase):
             "runtime_sensor:2": {"y": ["x"]},
         }
         retired = {resource: ["b", "c"], "runtime_sensor:2": ["x"]}
-        result = writer._contract(relation, retired)
+        result = source_view._contract(relation, retired)
         self.assertEqual(result, {resource: {"d": ["a"], "e": ["a"]}})
         self.assertEqual(relation[resource]["c"], ["b"])
         roots = {resource: {"a", "d", "e"}}

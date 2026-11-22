@@ -18,7 +18,9 @@ import pytest
 from homeassistant.core import HomeAssistant
 
 from custom_components.beestat_statistics import backup
-from custom_components.beestat_statistics import hourly_history_writer as writer_module
+from custom_components.beestat_statistics import (
+    hourly_history_source_view as source_view,
+)
 from custom_components.beestat_statistics.hourly_history_contract import (
     canonical_json,
     digest,
@@ -804,11 +806,11 @@ async def test_refused_retirement_keeps_every_source_until_a_later_pass_retires(
     hass, hass_admin_user, freezer, monkeypatch, tmp_path, caplog
 ):
     runtime = await _adopted(hass, hass_admin_user, freezer, monkeypatch, tmp_path)
-    resolution = writer_module.source_resolution
+    resolution = source_view.source_resolution
     calls = iter(range(1_000))
     refused = True
     monkeypatch.setattr(
-        writer_module,
+        source_view,
         "source_resolution",
         lambda *args, **kwargs: next(calls) if refused else resolution(*args, **kwargs),
     )

@@ -13,7 +13,9 @@ import pytest
 
 from custom_components.beestat_statistics import hourly_corrections as correction
 from custom_components.beestat_statistics import hourly_history_root as history_root
-from custom_components.beestat_statistics import hourly_history_writer as history
+from custom_components.beestat_statistics import (
+    hourly_history_source_view as source_view,
+)
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.hourly_history_contract import digest
 from custom_components.beestat_statistics.hourly_history_query import history_response
@@ -361,14 +363,14 @@ async def test_first_activation_protects_dependencies_across_restart(
 ):
     helper = adopted
     request, _, _ = await prepare(helper)
-    original = history.source_redundancy
+    original = source_view.source_redundancy
     protected = []
 
     def assess(sources, **kwargs):
         protected.append(set(kwargs["protected"]))
         return original(sources, **kwargs)
 
-    monkeypatch.setattr(history, "source_redundancy", assess)
+    monkeypatch.setattr(source_view, "source_redundancy", assess)
     await apply(helper, request)
     assert protected
     # Every existing acquisition in the reviewed dependency remains protected,
