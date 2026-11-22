@@ -14,6 +14,7 @@ from hashlib import sha256
 
 from custom_components.beestat_statistics import config_model as model
 from custom_components.beestat_statistics import hourly_history_delta as delta_builder
+from custom_components.beestat_statistics import hourly_history_io as history_io
 from custom_components.beestat_statistics import hourly_history_legacy as legacy_module
 from custom_components.beestat_statistics import hourly_history_root as history_root
 from custom_components.beestat_statistics import (
@@ -708,7 +709,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_config_digest_is_pinned(self):
-        digest = writer._config_digest(self.with_sensor()["config"])
+        digest = history_io._config_digest(self.with_sensor()["config"])
         self.assertEqual(
             digest,
             "a41556f1894a11758ac4d2ab51161397c05cfef8aae316354279c9f7360c4ee8",
