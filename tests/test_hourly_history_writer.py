@@ -15,6 +15,7 @@ from hashlib import sha256
 from custom_components.beestat_statistics import config_model as model
 from custom_components.beestat_statistics import hourly_history_delta as delta_builder
 from custom_components.beestat_statistics import hourly_history_legacy as legacy_module
+from custom_components.beestat_statistics import hourly_history_root as history_root
 from custom_components.beestat_statistics import (
     hourly_history_values as representation,
 )
@@ -556,7 +557,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(manifest["binding"]["timezone_revision"], 1)
         self.store.value["history"]["selections"][KEY]["timezone_revision"] = 1
-        self.store.value = writer.sealed(self.store.value)
+        self.store.value = history_root.sealed(self.store.value)
         self.writer = self.fresh()
         restarted = {**self.context, "timezone_revision": 0}
         replay = await self.writer.async_accept_history(apply, context=restarted)
@@ -990,7 +991,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
                 ("operation", [response["operation"]], contract.OPERATION),
                 (
                     "unselected operation",
-                    [writer.status(None)],
+                    [history_root.status(None)],
                     contract.UNSELECTED_OPERATION,
                 ),
                 ("pagination", [response["pagination"]], contract.PAGINATION),
@@ -1210,7 +1211,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             (saved["phase"], saved["operation"]["status"]), ("prepared", "completed")
         )
         # The entry worker starts on has_pending and owns the marker step.
-        self.assertTrue(writer.status(saved)["has_pending"])
+        self.assertTrue(history_root.status(saved)["has_pending"])
         self.writer = self.fresh()
         result = await self.writer.async_advance_history(context=self.context)
         self.assertEqual(result["status"], "completed")
@@ -1543,7 +1544,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             }
         )
         root["revision"] += 1
-        self.store.value = writer.sealed(root)
+        self.store.value = history_root.sealed(root)
         self.writer = self.fresh()
         reads = []
         original_read = self.store.async_read_object
@@ -1778,7 +1779,7 @@ class HistoryWriterTest(unittest.IsolatedAsyncioTestCase):
             {"pending": {"generation": 2, "intent": {}}},
         ):
             with self.subTest(change=change):
-                self.store.value = writer.sealed({**saved, **change})
+                self.store.value = history_root.sealed({**saved, **change})
                 with self.assertRaises(core.HourlyImportError):
                     await self.fresh().async_writer_partition(identity())
         self.store.value = saved

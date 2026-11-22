@@ -12,6 +12,7 @@ from hashlib import sha256
 import pytest
 
 from custom_components.beestat_statistics import hourly_corrections as correction
+from custom_components.beestat_statistics import hourly_history_root as history_root
 from custom_components.beestat_statistics import hourly_history_writer as history
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
 from custom_components.beestat_statistics.hourly_history_contract import digest
@@ -317,7 +318,7 @@ async def test_stale_plan_conflicting_corrections_and_explicit_withdrawal(adopte
     downgraded = deepcopy(helper.store.value)
     downgraded["version"] = 3
     with pytest.raises(HourlyImportError, match="unsupported"):
-        history.validate_root(helper.writer, history.sealed(downgraded))
+        history_root.validate_root(helper.writer, history_root.sealed(downgraded))
 
 
 async def test_earlier_provider_anchor_and_policy_changes_require_full_replan(adopted):

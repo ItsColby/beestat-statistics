@@ -23,10 +23,10 @@ from custom_components.beestat_statistics.api import (
     BeestatReadAttempt,
 )
 from custom_components.beestat_statistics.config_model import ConfiguredSensor
+from custom_components.beestat_statistics.hourly_history_root import sealed
 from custom_components.beestat_statistics.hourly_history_runtime import (
     async_refresh_history,
 )
-from custom_components.beestat_statistics.hourly_history_writer import sealed
 from custom_components.beestat_statistics.hourly_import import HourlyImportManager
 from custom_components.beestat_statistics.hourly_import_core import HourlyImportError
 from tests.hourly_history_support import (
