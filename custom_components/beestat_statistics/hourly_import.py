@@ -14,13 +14,8 @@ from typing import Any
 
 from .const import HOURLY_V2_SUFFIX
 from .hourly_history_contract import canonical_json, digest
-from .hourly_history_writer import (
-    _ROOT_VERSIONS,
-    HistoryWriter,
-    partition,
-    status,
-    validate_root,
-)
+from .hourly_history_root import _ROOT_VERSIONS, partition, status, validate_root
+from .hourly_history_writer import HistoryWriter
 from .hourly_import_core import (
     MARKER,
     HourlyImportError,
